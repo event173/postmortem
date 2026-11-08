@@ -8,8 +8,10 @@ import "chessground/assets/chessground.base.css";
 import "chessground/assets/chessground.brown.css";
 import "chessground/assets/chessground.cburnett.css";
 import "./styles.css";
+import "./pieces.css";
 import { $, badgeHtml, esc, fig, store } from "./util";
 import { initStats, loadStats } from "./stats";
+import { errorSound, moveSound, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
 import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, startFocus } from "./openings";
 import { displayPrefs, initSettings } from "./settings";
@@ -425,6 +427,7 @@ async function selectGame(game: GameInfo, startPly = 0) {
   state.orientation = userColor(game) ?? "white";
   document.querySelectorAll<HTMLElement>(".game").forEach((el) => el.classList.toggle("active", el.dataset.id === game.id));
 
+  setupSound();
   board.set({
     fen: START_FEN,
     lastMove: undefined,
@@ -518,8 +521,11 @@ function goto(ply: number) {
 function show(ply: number) {
   const r = state.review;
   if (!r || training || boardTaken()) return;
+  const before = state.inVar ? -1 : state.ply;
   state.inVar = false;
   state.ply = Math.max(0, Math.min(ply, r.moves.length));
+  // Sound when stepping one move forward (as on Lichess).
+  if (state.ply === before + 1 && r.moves[state.ply - 1]) moveSound(r.moves[state.ply - 1].san);
   renderPosition();
 }
 
@@ -533,8 +539,10 @@ function showVar(index: number) {
 function showVarStep(index: number) {
   const v = state.variation;
   if (!v || training || boardTaken()) return;
+  const before = state.inVar ? state.varIndex : -1;
   state.inVar = true;
   state.varIndex = Math.max(0, Math.min(index, v.nodes.length));
+  if (state.varIndex === before + 1 && v.nodes[state.varIndex - 1]) moveSound(v.nodes[state.varIndex - 1].san);
   renderPosition();
 }
 
@@ -654,7 +662,11 @@ function moveShapes(m: { uci: string; classification: Class; bestUci: string | n
 
 let baseShapes: DrawShape[] = [];
 let liveShapes: DrawShape[] = [];
-const applyShapes = () => board.setAutoShapes([...baseShapes, ...liveShapes]);
+/** Review shapes – never while puzzles or openings own the board. */
+const applyShapes = () => {
+  if (boardTaken()) return;
+  board.setAutoShapes([...baseShapes, ...liveShapes]);
+};
 
 let positionToken = 0;
 
@@ -746,6 +758,7 @@ async function onUserMove(orig: Key, dest: Key, promotion?: string) {
   v.nodes.length = state.varIndex; // playing a different move replaces the rest of the line
   const node: VarNode = { ...played };
   v.nodes.push(node);
+  moveSound(node.san);
   state.inVar = true;
   state.varIndex = v.nodes.length;
   renderMoveList();
@@ -1166,9 +1179,11 @@ async function onTrainingMove(orig: Key, dest: Key, promotion?: string) {
   t.attempt = { played };
   t.showAttempt = true;
 
+  moveSound(played.san);
   if (played.uci === item.bestUci) {
     t.phase = "solved";
     finishItem(t.hint ? "hint" : "solved");
+    successSound();
     renderTraining();
     return;
   }
@@ -1185,10 +1200,12 @@ async function onTrainingMove(orig: Key, dest: Key, promotion?: string) {
   if (review && ACCEPTED.includes(review.classification)) {
     t.phase = "solved";
     finishItem(t.hint ? "hint" : "solved");
+    successSound();
     renderTraining();
     return;
   }
   t.phase = "wrong";
+  errorSound();
   renderTraining();
   // Let the user see the refuted try for a moment, then reset the position.
   trainTimer = window.setTimeout(() => {

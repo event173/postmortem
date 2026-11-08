@@ -38,3 +38,27 @@ export const store = {
     }
   },
 };
+
+const ROLES: Record<string, string> = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
+
+/** Pieces of a FEN as chessground <piece> elements (inside a .cg-wrap, so the
+ *  board's piece images apply – including the chosen piece set). */
+export function miniPieces(fen: string): string {
+  let html = "";
+  fen
+    .split(" ")[0]
+    .split("/")
+    .forEach((row, r) => {
+      let f = 0;
+      for (const ch of row) {
+        if (/\d/.test(ch)) {
+          f += Number(ch);
+          continue;
+        }
+        const color = ch === ch.toUpperCase() ? "white" : "black";
+        html += `<piece class="${ROLES[ch.toLowerCase()]} ${color}" style="transform:translate(${f * 100}%,${r * 100}%)"></piece>`;
+        f++;
+      }
+    });
+  return html;
+}

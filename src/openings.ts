@@ -13,7 +13,8 @@ import type { Key } from "chessground/types";
 
 import { windowLast } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
-import { $, badgeHtml, esc, fig, store } from "./util";
+import { $, badgeHtml, esc, fig, miniPieces, store } from "./util";
+import { errorSound, moveSound, setupSound, successSound } from "./sound";
 
 type Color = "white" | "black";
 
@@ -315,29 +316,6 @@ export async function startFocus(color: Color, family: string) {
 // ---------------------------------------------------------------------------
 // opening list (full width, board thumbnails)
 
-const ROLES: Record<string, string> = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
-
-/** Pieces of a FEN as chessground <piece> elements (reuses the board's piece images). */
-function miniPieces(fenStr: string): string {
-  let html = "";
-  fenStr
-    .split(" ")[0]
-    .split("/")
-    .forEach((row, r) => {
-      let f = 0;
-      for (const ch of row) {
-        if (/\d/.test(ch)) {
-          f += Number(ch);
-          continue;
-        }
-        const color = ch === ch.toUpperCase() ? "white" : "black";
-        html += `<piece class="${ROLES[ch.toLowerCase()]} ${color}" style="transform:translate(${f * 100}%,${r * 100}%)"></piece>`;
-        f++;
-      }
-    });
-  return html;
-}
-
 /** Fill thumbnails only when they scroll into view (149 boards stay light). */
 const thumbObserver = new IntersectionObserver(
   (entries) => {
@@ -533,6 +511,7 @@ function startDrill(d: Drill | null, t: number) {
   fen = d.fen;
   lastMove = undefined;
   step = 0;
+  setupSound();
   renderSidebar();
   continueLine(t);
 }
@@ -580,6 +559,7 @@ function continueLine(t: number) {
       if (t !== token) return;
       fen = played.fen;
       lastMove = played.uci;
+      moveSound(played.san);
       step++;
       continueLine(t);
     },
@@ -620,6 +600,7 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   if (!learning()) failed = true;
   wrongTry = played;
   phase = "wrong";
+  errorSound();
   showTry(played);
   timer = window.setTimeout(() => {
     if (t === token && phase === "wrong") render();
@@ -627,6 +608,7 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
 }
 
 function correct(played: PlayedMove, t: number) {
+  moveSound(played.san);
   fen = played.fen;
   lastMove = played.uci;
   step++;
@@ -650,6 +632,7 @@ async function showMove() {
 async function finish(t: number) {
   const d = drill!;
   phase = "done";
+  if (!failed) successSound();
 
   if (d.status === "practice" && consolidate) {
     // Consolidation run: count clean runs in a row; nothing is recorded.

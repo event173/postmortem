@@ -12,6 +12,7 @@ import type { Key } from "chessground/types";
 import { THEMES, gameWindow, setGameWindow, windowLast, type GameWindow } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo, type Theme } from "./types";
 import { $, badgeHtml, esc, fig } from "./util";
+import { errorSound, moveSound, setupSound, successSound } from "./sound";
 
 type Kind = "lichess" | "own";
 type Category = "weakness" | "mixed" | "own";
@@ -157,8 +158,59 @@ let engineBusy = false;
 let exploreNote = "";
 
 /** Puzzle over (solved, or solution fully shown): the board is free to explore. */
+/** Every position of the puzzle line so far (start, opponent's move, your moves …). */
+let history: { fen: string; lastMove?: string; check?: boolean }[] = [];
+/** Free moves branch off `history[exploreBase]`. */
+let exploreBase = 0;
+/** Position being looked at (index into positions()), null = the latest one. */
+let viewIndex: number | null = null;
+/** "Puzzle wiederholen": a replay doesn't count for the rating. */
+let replay = false;
+
 const finished = () => (phase === "solved" || phase === "failed") && !!puzzle && step >= puzzle.moves.length;
-const viewFen = () => (explore.length ? explore[explore.length - 1].fen : fen);
+
+interface Pos {
+  fen: string;
+  lastMove?: string;
+  check?: boolean;
+  review?: MoveReview;
+}
+
+/** The line up to the branch point, then the free moves. */
+function positions(): Pos[] {
+  return [
+    ...history.slice(0, exploreBase + 1),
+    ...explore.map((e) => ({ fen: e.fen, lastMove: e.uci, check: e.check, review: e.review })),
+  ];
+}
+const curIndex = () => viewIndex ?? positions().length - 1;
+const viewFen = () => positions()[curIndex()]?.fen ?? fen;
+
+/** Record the current line position (call after `fen`/`lastMove` changed). */
+function pushHistory(check = false) {
+  history.push({ fen, lastMove, check });
+  exploreBase = history.length - 1;
+}
+
+/** Moving in an earlier position: continue from there (drop what came after). */
+function branchAtView() {
+  const i = curIndex();
+  if (i <= exploreBase) {
+    exploreBase = i;
+    explore = [];
+  } else {
+    explore.length = i - exploreBase;
+  }
+  viewIndex = null;
+}
+
+function stepView(delta: number) {
+  if (!finished()) return;
+  const n = positions().length;
+  const i = Math.max(0, Math.min(curIndex() + delta, n - 1));
+  viewIndex = i === n - 1 ? null : i;
+  render();
+}
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
 const other = (c: Color): Color => (c === "white" ? "black" : "white");
@@ -197,6 +249,10 @@ export function puzzleKey(e: KeyboardEvent): boolean {
     loadNext();
     return true;
   }
+  if (finished() && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    stepView(e.key === "ArrowLeft" ? -1 : 1);
+    return true;
+  }
   return false;
 }
 
@@ -217,6 +273,10 @@ async function loadNext() {
   const t = ++token;
   clearTimeout(timer);
   phase = "loading";
+  // Clear the last puzzle's marks right away (no animation is running now, so
+  // the shape layer redraws immediately).
+  deps.board.setAutoShapes([]);
+  deps.board.setShapes([]);
   render();
   let p: Puzzle | null;
   try {
@@ -240,18 +300,30 @@ async function loadNext() {
   next = fetchPuzzle();
   next.catch(() => (next = null));
 
+  replay = false;
+  result = null;
+  beginPuzzle(t);
+}
+
+/** (Re)start the current puzzle from its first position. */
+function beginPuzzle(t: number) {
+  const p = puzzle!;
   fen = p.fen;
   step = 0;
   failed = false;
   hint = false;
-  result = null;
   ownVerdict = null;
   lastMove = undefined;
   lastTry = null;
   refute = null;
   explore = [];
   exploreNote = "";
+  history = [];
+  viewIndex = null;
+  pushHistory();
+  setupSound();
   deps.board.setShapes([]);
+  deps.board.setAutoShapes([]);
 
   if (p.kind === "lichess") {
     // You play the side that is *not* to move: the opponent's move comes first.
@@ -275,6 +347,8 @@ async function playOpponent(t: number) {
   if (t !== token) return;
   fen = played.fen;
   lastMove = played.uci;
+  pushHistory(played.check);
+  moveSound(played.san);
   step++;
   phase = "solve";
   render();
@@ -338,9 +412,12 @@ async function advance(played: PlayedMove, t: number) {
   const p = puzzle!;
   fen = played.fen;
   lastMove = played.uci;
+  pushHistory(played.check);
+  moveSound(played.san);
   step++;
   if (p.kind === "own" || step >= p.moves.length) {
     phase = "solved";
+    successSound();
     render();
     // Only the first try counts (as on Lichess): a failure was already recorded.
     if (!failed) await record(true);
@@ -354,6 +431,7 @@ async function advance(played: PlayedMove, t: number) {
 
 async function wrong(played: PlayedMove, t: number) {
   phase = "wrong";
+  errorSound();
   lastTry = { fenBefore: fen, played };
   showTry(played);
   if (!failed) {
@@ -368,7 +446,7 @@ async function wrong(played: PlayedMove, t: number) {
 
 async function record(solved: boolean) {
   const p = puzzle;
-  if (!p) return;
+  if (!p || replay) return;
   try {
     result = await invoke<RatingChange>("puzzle_record", {
       accounts: deps.accounts(),
@@ -386,6 +464,7 @@ async function record(solved: boolean) {
 async function exploreMove(orig: Key, dest: Key, promotion?: string) {
   const t = token;
   const before = viewFen();
+  branchAtView();
   let played: PlayedMove;
   try {
     played = await invoke<PlayedMove>("play_move", { fen: before, from: orig, to: dest, promotion });
@@ -395,6 +474,7 @@ async function exploreMove(orig: Key, dest: Key, promotion?: string) {
   if (t !== token) return;
   const m: ExploreMove = { fenBefore: before, fen: played.fen, uci: played.uci, san: played.san, check: played.check, pending: true };
   explore.push(m);
+  moveSound(m.san);
   exploreNote = "";
   render();
   try {
@@ -410,13 +490,17 @@ async function exploreMove(orig: Key, dest: Key, promotion?: string) {
 async function engineMove() {
   const t = token;
   const before = viewFen();
+  branchAtView();
   engineBusy = true;
   renderText();
   try {
     const line = await invoke<Refutation>("engine_line", { fen: before, plies: 1 });
     if (t !== token || viewFen() !== before) return;
     const mv = line.moves[0];
-    if (mv) explore.push({ fenBefore: before, ...mv, engine: true });
+    if (mv) {
+      explore.push({ fenBefore: before, ...mv, engine: true });
+      moveSound(mv.san);
+    }
     else exploreNote = "Keine Züge mehr – die Partie ist hier zu Ende.";
   } catch (e) {
     exploreNote = String(e);
@@ -516,6 +600,8 @@ async function showSolution() {
     if (t !== token) return;
     fen = played.fen;
     lastMove = played.uci;
+    pushHistory(played.check);
+    moveSound(played.san);
     step++;
     render();
     timer = window.setTimeout(playRest, deps.animMs() + 400);
@@ -530,6 +616,7 @@ function render(error?: string) {
   if (!active) return;
   const p = puzzle;
   const board = deps.board;
+  if (phase === "loading" || phase === "empty") board.setAutoShapes([]);
   if (p && phase !== "loading" && phase !== "empty" && phase !== "showing") {
     const me: Color = p.kind === "lichess" ? other(sideOf(p.fen)) : sideOf(p.fen);
     const shapes: DrawShape[] = [];
@@ -537,22 +624,24 @@ function render(error?: string) {
     if (hint && (phase === "solve" || phase === "wrong") && p.moves[step]) {
       shapes.push({ orig: sq(p.moves[step], true), brush: "green" });
     }
-    const last = explore[explore.length - 1];
-    if (phase === "solved" && lastMove && !last) {
-      shapes.push({ orig: sq(lastMove, false), customSvg: { html: badgeSvg("#7cad3f", "✓") } });
+    // The position being looked at (after the puzzle you can step through all of them).
+    const index = curIndex();
+    const pos = positions()[index] ?? { fen, lastMove };
+    const atSolution = index === history.length - 1 && index === exploreBase;
+    if (phase === "solved" && atSolution && pos.lastMove) {
+      shapes.push({ orig: sq(pos.lastMove, false), customSvg: { html: badgeSvg("#7cad3f", "✓") } });
     }
-    if (last?.review) {
-      const c = CLASSES[last.review.classification];
-      shapes.push({ orig: sq(last.uci, false), customSvg: { html: badgeSvg(c.color, esc(c.symbol)) } });
+    if (pos.review && pos.lastMove) {
+      const c = CLASSES[pos.review.classification];
+      shapes.push({ orig: sq(pos.lastMove, false), customSvg: { html: badgeSvg(c.color, esc(c.symbol)) } });
     }
-    const shownFen = viewFen();
-    const shownMove = last ? last.uci : lastMove;
+    const shownFen = pos.fen;
     board.set({
       fen: shownFen,
       orientation: me,
       turnColor: sideOf(shownFen),
-      lastMove: shownMove ? [sq(shownMove, true), sq(shownMove, false)] : undefined,
-      check: last ? last.check : false,
+      lastMove: pos.lastMove ? [sq(pos.lastMove, true), sq(pos.lastMove, false)] : undefined,
+      check: pos.check ?? false,
       movable: { color: undefined, dests: new Map() },
     });
     board.setAutoShapes(shapes);
@@ -651,7 +740,10 @@ function renderText(error?: string) {
 
   const me: Color = p.kind === "lichess" ? other(sideOf(p.fen)) : sideOf(p.fen);
   const side = me === "white" ? "Weiß" : "Schwarz";
-  head.innerHTML = categoryTag(p) + (p.rating ? `<span class="pz-puzzle-rating" title="Puzzle-Wertung">${p.rating}</span>` : "");
+  head.innerHTML =
+    categoryTag(p) +
+    (replay ? `<span class="pz-tag mixed" title="Wiederholungen zählen nicht für die Wertung">Wiederholung</span>` : "") +
+    (p.rating ? `<span class="pz-puzzle-rating" title="Puzzle-Wertung">${p.rating}</span>` : "");
 
   const delta = result ? `<span class="pz-delta ${result.delta >= 0 ? "up" : "down"}">${result.delta >= 0 ? "+" : ""}${Math.round(result.delta)}</span>` : "";
   switch (phase) {
@@ -714,9 +806,16 @@ function renderText(error?: string) {
     if (p.gameUrl && p.kind === "lichess") parts.push(`<span class="muted">Ursprung:</span> <span class="pz-url">${esc(p.gameUrl)}</span>`);
     extra.innerHTML = (finished() ? exploreText() : "") + parts.join("<br>") + (exploreNote ? `<br><span class="muted">${esc(exploreNote)}</span>` : "");
     const gameBtn = p.own ? `<button data-act="game">Partie öffnen</button>` : "";
+    const n = positions().length;
+    const i = curIndex();
     actions.innerHTML = finished()
-      ? `<button data-act="engine" ${engineBusy ? "disabled" : ""}>${engineBusy ? "Engine rechnet …" : "Engine zieht"}</button>
-         ${explore.length ? `<button data-act="undo">Zug zurück</button><button data-act="reset">Zur Ausgangsstellung</button>` : ""}
+      ? `<span class="pz-nav">
+           <button data-act="first" title="Zur Ausgangsstellung" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><rect x="2.5" y="3" width="2" height="10" rx="0.5"/><path d="M13.5 3.6v8.8a.6.6 0 0 1-.9.5L6.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
+           <button data-act="back" title="Zug zurück (←)" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M11.5 3.6v8.8a.6.6 0 0 1-.9.5L4.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
+           <button data-act="fwd" title="Zug vor (→)" ${i >= n - 1 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M4.5 3.6v8.8a.6.6 0 0 0 .9.5l6.3-4.4a.6.6 0 0 0 0-1L5.4 3.1a.6.6 0 0 0-.9.5Z"/></svg></button>
+         </span>
+         <button data-act="engine" ${engineBusy ? "disabled" : ""}>${engineBusy ? "Engine rechnet …" : "Engine zieht"}</button>
+         <button data-act="replay" title="Nochmal von vorn – zählt nicht für die Wertung">Puzzle wiederholen</button>
          ${gameBtn}
          <button data-act="next" class="primary end">Nächstes Puzzle →</button>`
       : `${gameBtn}<button data-act="next" class="primary end">Nächstes Puzzle →</button>`;
@@ -767,16 +866,23 @@ function bindActions() {
           case "engine":
             engineMove();
             break;
-          case "undo":
-            explore.pop();
-            exploreNote = "";
+          case "first":
+            viewIndex = 0;
             render();
             break;
-          case "reset":
-            explore = [];
-            exploreNote = "";
-            render();
+          case "back":
+            stepView(-1);
             break;
+          case "fwd":
+            stepView(1);
+            break;
+          case "replay": {
+            clearTimeout(timer);
+            replay = true;
+            result = null;
+            beginPuzzle(++token);
+            break;
+          }
           case "game":
             if (puzzle?.own) deps.openGame(puzzle.own.gameId, puzzle.own.ply);
             break;

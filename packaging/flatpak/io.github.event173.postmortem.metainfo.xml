@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.1.3" date="2026-11-08">
+      <description>
+        <p>Board colours and piece sets, wooden move sounds, step through and replay puzzles.</p>
+      </description>
+    </release>
     <release version="0.1.2" date="2026-11-08">
       <description>
         <p>Release packages now include a Flatpak bundle.</p>

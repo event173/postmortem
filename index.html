@@ -260,6 +260,49 @@
           <span>Koordinaten am Brett</span>
           <input id="pref-coords" type="checkbox" checked />
         </label>
+        <div class="row theme-row">
+          <div class="theme-selects">
+            <label class="row">
+              <span>Brett</span>
+              <select id="pref-board">
+                <option value="brown">Braun</option>
+                <option value="blue">Blau</option>
+                <option value="green">Grün</option>
+                <option value="grey">Grau</option>
+                <option value="purple">Lila</option>
+                <option value="sand">Sand</option>
+                <option value="slate">Schiefer</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>Figuren</span>
+              <select id="pref-pieces">
+                <option value="cburnett">Cburnett</option>
+                <option value="merida">Merida</option>
+                <option value="chessnut">Chessnut</option>
+                <option value="fantasy">Fantasy</option>
+                <option value="celtic">Celtic</option>
+                <option value="spatial">Spatial</option>
+                <option value="mpchess">MPChess</option>
+                <option value="shapes">Shapes</option>
+                <option value="rhosgfx">RhosGFX</option>
+              </select>
+            </label>
+          </div>
+          <div id="theme-preview" class="theme-preview mini-board cg-wrap"></div>
+        </div>
+      </section>
+
+      <section>
+        <h3>Sound</h3>
+        <label class="row">
+          <span>Holz-Klänge<small>Beim Ziehen, Schlagen und Aufstellen der Figuren</small></span>
+          <input id="pref-sound" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Lautstärke</span>
+          <input id="pref-volume" type="range" min="0" max="1" step="0.05" />
+        </label>
       </section>
 
       <section>

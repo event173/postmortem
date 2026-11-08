@@ -31,6 +31,7 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 - Frei weiterziehen: eigene Varianten, jeder Zug wird bewertet; Live-Engine mit den 3 besten Zügen
 - **Aus Fehlern lernen:** deine Fehler einer Partie als Übungsaufgaben
 - Pfeile und Kreise mit der rechten Maustaste, wie auf Lichess
+- Brettfarben und 9 Figurensätze wählbar, Holz-Klänge beim Ziehen und Aufstellen (Zahnrad-Menü)
 
 **Statistik**
 - Deine Schwächen nach Ursache (Figur hängen lassen, Gabel zugelassen, Matt übersehen …)
@@ -43,7 +44,8 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 - Die komplette Lichess-Puzzle-Datenbank (≈ 6 Mio. Puzzles), lokal und offline
 - Auswahl passend zu dir: ca. 60 % deine Schwächen, 25 % gemischt, 15 % Stellungen aus
   deinen eigenen Partien – was du sicher löst, kommt seltener
-- Eigene Puzzle-Wertung, Tipps, „Zeig mir, was passiert“, nach dem Lösen frei weiterspielen
+- Eigene Puzzle-Wertung, Tipps, „Zeig mir, was passiert“, nach dem Lösen frei weiterspielen,
+  Züge vor- und zurückgehen, Puzzle wiederholen
 
 **Eröffnungen**
 - Alle 149 Eröffnungen als Kacheln mit Brett-Vorschau; „Als Weiß / Schwarz lernen“
@@ -203,6 +205,8 @@ Stockfish und legt einen Release-Entwurf an.
 - [Lichess-Puzzle-Datenbank](https://database.lichess.org/#puzzles) (CC0)
 - [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0) – Eröffnungsnamen und -linien
 - [Stockfish](https://stockfishchess.org) (GPL-3.0) – die Engine
+- Figurensätze aus [lichess-org/lila](https://github.com/lichess-org/lila) – nur frei
+  lizenzierte (Details: `src/assets/pieces/LICENSES.md`); die Klänge erzeugt die App selbst
 
 ## Lizenz
 

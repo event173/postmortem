@@ -1452,7 +1452,7 @@ button.icon {
 .orientation-white .files :nth-child(odd),
 .orientation-black .ranks :nth-child(even),
 .orientation-black .files :nth-child(even) {
-  color: #f0d9b5;
+  color: var(--sq-light);
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.45);
 }
 
@@ -1460,7 +1460,7 @@ button.icon {
 .orientation-white .files :nth-child(even),
 .orientation-black .ranks :nth-child(odd),
 .orientation-black .files :nth-child(odd) {
-  color: #7a5c42;
+  color: color-mix(in srgb, var(--sq-dark) 65%, black);
   text-shadow: 0 0 2px rgba(255, 255, 255, 0.35);
 }
 
@@ -1977,9 +1977,9 @@ button.danger:hover {
   position: relative;
   border-radius: 3px;
   overflow: hidden;
-  background-color: #b58863;
+  background-color: var(--sq-dark);
   /* conic starts top-right: dark, light, dark, light -> a8 (top-left) is light */
-  background-image: repeating-conic-gradient(#b58863 0 25%, #f0d9b5 0 50%);
+  background-image: repeating-conic-gradient(var(--sq-dark) 0 25%, var(--sq-light) 0 50%);
   background-size: 25% 25%;
 }
 
@@ -2387,4 +2387,85 @@ button.link:hover {
 .pz-tag.op-practice-tag {
   color: #c8d8ef;
   background: rgba(91, 141, 214, 0.18);
+}
+
+/* step through a finished puzzle */
+.pz-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.pz-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+}
+
+/* --- board themes (settings) ---------------------------------------------- */
+
+:root {
+  --sq-light: #f0d9b5;
+  --sq-dark: #b58863;
+}
+
+body[data-board="blue"] {
+  --sq-light: #dee3e6;
+  --sq-dark: #8ca2ad;
+}
+
+body[data-board="green"] {
+  --sq-light: #eeeed2;
+  --sq-dark: #769656;
+}
+
+body[data-board="grey"] {
+  --sq-light: #d9d9d9;
+  --sq-dark: #9a9a9a;
+}
+
+body[data-board="purple"] {
+  --sq-light: #e6dcef;
+  --sq-dark: #9a7bb4;
+}
+
+body[data-board="sand"] {
+  --sq-light: #f3e4c9;
+  --sq-dark: #c79c6e;
+}
+
+body[data-board="slate"] {
+  --sq-light: #c3ccd6;
+  --sq-dark: #66788a;
+}
+
+/* Replace chessground's brown board image with the theme colours
+   (a8 top-left is light in both orientations). */
+body[data-board] cg-board {
+  background-color: var(--sq-dark);
+  background-image: repeating-conic-gradient(var(--sq-dark) 0 25%, var(--sq-light) 0 50%);
+  background-size: 25% 25%;
+}
+
+.theme-preview.mini-board.cg-wrap {
+  width: 120px;
+  height: 120px;
+  margin: 4px 0 2px auto;
+}
+
+.settings .theme-row {
+  align-items: flex-start;
+}
+
+.settings .theme-selects {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings input[type="range"] {
+  width: 160px;
+  accent-color: var(--accent);
 }

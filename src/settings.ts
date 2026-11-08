@@ -3,7 +3,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { $, esc, store } from "./util";
+import { $, esc, miniPieces, store } from "./util";
+import { moveSound, soundOn, volume } from "./sound";
 
 interface SettingsInfo {
   stockfishPath: string | null;
@@ -61,6 +62,14 @@ const versionDate = (v: string | null) => {
   return d && !isNaN(d.getTime()) ? d.toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" }) : "unbekannt";
 };
 
+/** Board colours and piece set: applied via <body data-board / data-pieces>. */
+export function applyTheme() {
+  document.body.dataset.board = store.get("board") ?? "brown";
+  document.body.dataset.pieces = store.get("pieces") ?? "cburnett";
+}
+
+const PREVIEW_FEN = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 0 1";
+
 export function displayPrefs(): DisplayPrefs {
   const anim = Number(store.get("anim") ?? "230");
   return { animMs: Number.isFinite(anim) ? anim : 230, coordinates: store.get("coords") !== "0" };
@@ -101,6 +110,37 @@ export function initSettings(d: SettingsDeps) {
   };
   anim.addEventListener("change", applyDisplay);
   coords.addEventListener("change", applyDisplay);
+
+  // Board colours and pieces: CSS only, takes effect immediately everywhere.
+  const boardSel = $("pref-board") as HTMLSelectElement;
+  const piecesSel = $("pref-pieces") as HTMLSelectElement;
+  boardSel.value = store.get("board") ?? "brown";
+  piecesSel.value = store.get("pieces") ?? "cburnett";
+  $("theme-preview").innerHTML = miniPieces(PREVIEW_FEN);
+  const applyThemeChoice = () => {
+    store.set("board", boardSel.value);
+    store.set("pieces", piecesSel.value);
+    applyTheme();
+  };
+  boardSel.addEventListener("change", applyThemeChoice);
+  piecesSel.addEventListener("change", applyThemeChoice);
+  applyTheme();
+
+  // Sounds: a short sample on every change.
+  const soundBox = $("pref-sound") as HTMLInputElement;
+  const vol = $("pref-volume") as HTMLInputElement;
+  soundBox.checked = soundOn();
+  vol.value = String(volume());
+  vol.disabled = !soundBox.checked;
+  soundBox.addEventListener("change", () => {
+    store.set("sound", soundBox.checked ? "wood" : "off");
+    vol.disabled = !soundBox.checked;
+    moveSound("Nf3");
+  });
+  vol.addEventListener("change", () => {
+    store.set("volume", vol.value);
+    moveSound("Nxf3");
+  });
 
   $("engine-apply").addEventListener("click", applyEngine);
   $("puzzle-action").addEventListener("click", installPuzzles);
