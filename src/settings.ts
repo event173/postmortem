@@ -105,6 +105,7 @@ export function initSettings(d: SettingsDeps) {
   $("engine-apply").addEventListener("click", applyEngine);
   $("puzzle-action").addEventListener("click", installPuzzles);
   $("puzzle-cancel").addEventListener("click", () => invoke("puzzle_cancel"));
+  $("puzzle-delete").addEventListener("click", deletePuzzles);
 
   listen<PuzzleProgress>("puzzle-progress", (e) => renderProgress(e.payload));
 
@@ -166,9 +167,42 @@ async function applyEngine() {
   }
 }
 
+let confirmDelete = false;
+
+/** First click asks, second click deletes. */
+async function deletePuzzles() {
+  const btn = $("puzzle-delete") as HTMLButtonElement;
+  if (!confirmDelete) {
+    confirmDelete = true;
+    btn.textContent = `Wirklich löschen? (${puzzle ? mb(puzzle.sizeBytes) : ""} frei)`;
+    window.setTimeout(() => {
+      confirmDelete = false;
+      renderPuzzle();
+    }, 4000);
+    return;
+  }
+  confirmDelete = false;
+  btn.disabled = true;
+  try {
+    puzzle = await invoke<PuzzleStatus>("puzzle_delete");
+    $("settings-dot").hidden = true;
+    update = null;
+    renderPuzzle();
+    update = await invoke<UpdateCheck>("puzzle_check_update");
+  } catch (e) {
+    $("puzzle-status").innerHTML += `<br><span class="error">${esc(String(e))}</span>`;
+  } finally {
+    btn.disabled = false;
+    renderPuzzle();
+  }
+}
+
 function renderPuzzle() {
   const status = $("puzzle-status");
   const action = $("puzzle-action") as HTMLButtonElement;
+  const del = $("puzzle-delete") as HTMLButtonElement;
+  del.hidden = installing || !puzzle?.installed;
+  if (!confirmDelete) del.textContent = "Löschen";
   if (installing) {
     action.hidden = true;
     return;

@@ -11,6 +11,7 @@ import "./styles.css";
 import { $, badgeHtml, esc, fig, store } from "./util";
 import { initStats, loadStats } from "./stats";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
+import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, startFocus } from "./openings";
 import { displayPrefs, initSettings } from "./settings";
 
 import {
@@ -285,7 +286,11 @@ $("btn-sync").addEventListener("click", () => syncGames());
 // ---------------------------------------------------------------------------
 // tabs: Review | Statistik | Puzzles
 
-type Tab = "review" | "stats" | "puzzles";
+type Tab = "review" | "stats" | "puzzles" | "openings";
+const TABS: Tab[] = ["review", "stats", "puzzles", "openings"];
+
+/** Another mode (puzzles, openings) owns the board right now. */
+const boardTaken = () => isPuzzleMode() || isOpeningMode();
 let currentTab: Tab = "review";
 
 function showTab(tab: Tab) {
@@ -294,27 +299,30 @@ function showTab(tab: Tab) {
   currentTab = tab;
   const layout = document.querySelector(".layout")!;
   layout.classList.toggle("stats-mode", tab === "stats");
-  layout.classList.toggle("puzzle-mode", tab === "puzzles");
+  layout.classList.toggle("puzzle-mode", tab === "puzzles" || tab === "openings");
   $("stats").hidden = tab !== "stats";
   $("puzzles").hidden = tab !== "puzzles";
-  for (const t of ["review", "stats", "puzzles"] as Tab[]) $(`tab-${t}`).classList.toggle("active", t === tab);
+  $("openings").hidden = tab !== "openings";
+  for (const t of TABS) $(`tab-${t}`).classList.toggle("active", t === tab);
 
-  if (leaving === "puzzles") {
-    leavePuzzles();
+  if (leaving === "puzzles" || leaving === "openings") {
+    if (leaving === "puzzles") leavePuzzles();
+    else leaveOpenings();
     // Give the board back to the review.
     board.setShapes([]);
     if (state.review) renderPosition();
     else board.set({ fen: START_FEN, lastMove: undefined, movable: { color: undefined, dests: new Map() } });
   }
   if (tab === "stats") loadStats();
-  if (tab === "puzzles") {
+  if (tab === "puzzles" || tab === "openings") {
     stopPlayback();
     stopLive();
-    enterPuzzles();
+    if (tab === "puzzles") enterPuzzles();
+    else enterOpenings();
   }
 }
 
-for (const t of ["review", "stats", "puzzles"] as Tab[]) $(`tab-${t}`).addEventListener("click", () => showTab(t));
+for (const t of TABS) $(`tab-${t}`).addEventListener("click", () => showTab(t));
 
 /** Open a stored game (e.g. from the statistics) at a given ply. */
 async function openGameAt(gameId: string, ply: number) {
@@ -335,6 +343,10 @@ initStats({
   depth: () => Number(($("depth") as HTMLSelectElement).value),
   openGame: openGameAt,
   onGamesAnalysed: () => showStoredGames(),
+  practiceOpening: (color, family) => {
+    showTab("openings");
+    startFocus(color, family);
+  },
 });
 
 function renderGames() {
@@ -505,7 +517,7 @@ function goto(ply: number) {
 
 function show(ply: number) {
   const r = state.review;
-  if (!r || training || isPuzzleMode()) return;
+  if (!r || training || boardTaken()) return;
   state.inVar = false;
   state.ply = Math.max(0, Math.min(ply, r.moves.length));
   renderPosition();
@@ -520,7 +532,7 @@ function showVar(index: number) {
 /** Like showVar, but keeps a running playback going. */
 function showVarStep(index: number) {
   const v = state.variation;
-  if (!v || training || isPuzzleMode()) return;
+  if (!v || training || boardTaken()) return;
   state.inVar = true;
   state.varIndex = Math.max(0, Math.min(index, v.nodes.length));
   renderPosition();
@@ -703,6 +715,7 @@ function renderPosition() {
 
 async function onUserMove(orig: Key, dest: Key, promotion?: string) {
   if (isPuzzleMode()) return puzzleMove(orig, dest, promotion);
+  if (isOpeningMode()) return openingMove(orig, dest, promotion);
   if (training) return onTrainingMove(orig, dest, promotion);
   const r = state.review;
   if (!r) return;
@@ -782,7 +795,7 @@ function stopLive() {
 }
 
 listen<LiveInfo>("live-info", (e) => {
-  if (e.payload.id !== liveId || training || isPuzzleMode()) return;
+  if (e.payload.id !== liveId || training || boardTaken()) return;
   live = e.payload;
   renderLive();
   if (state.inVar) {
@@ -1511,6 +1524,10 @@ document.addEventListener("keydown", (e) => {
     if (puzzleKey(e)) e.preventDefault();
     return;
   }
+  if (isOpeningMode()) {
+    if (openingKey(e)) e.preventDefault();
+    return;
+  }
   if (training) {
     if (e.key === "Escape") exitTraining();
     if (e.key === "Enter" && (training.phase === "solved")) trainingGoto(training.index + 1);
@@ -1543,6 +1560,14 @@ initPuzzles({
   accounts,
   animMs: () => animMs,
   openSettings: () => $("btn-settings").click(),
+  openGame: (gameId, ply) => openGameAt(gameId, ply),
+});
+
+initOpenings({
+  board,
+  accounts,
+  animMs: () => animMs,
+  openGame: (gameId, ply) => openGameAt(gameId, ply),
 });
 
 initSettings({

@@ -45,6 +45,69 @@ fn table() -> &'static HashMap<String, (String, String)> {
     })
 }
 
+/// One named line of the dataset, e.g. "Caro-Kann Defense: Advance Variation".
+#[derive(Debug, Clone)]
+pub struct Line {
+    /// Stable id: ECO code + name (unique in the dataset).
+    pub id: String,
+    pub eco: String,
+    pub name: String,
+    /// The part before the colon, e.g. "Caro-Kann Defense".
+    pub family: String,
+    /// UCI moves from the starting position.
+    pub moves: Vec<String>,
+}
+
+/// Family name of an opening name ("Sicilian Defense: Najdorf" -> "Sicilian Defense").
+pub fn family_of(name: &str) -> &str {
+    name.split(':').next().unwrap_or(name).trim()
+}
+
+impl Line {
+    /// Variation group: "Caro-Kann Defense: Advance Variation, Short Variation"
+    /// -> "Advance Variation"; lines without a sub-name are the main line.
+    pub fn variation(&self) -> &str {
+        match self.name.split_once(':') {
+            Some((_, rest)) => rest.split(',').next().unwrap_or(rest).trim(),
+            None => MAIN_LINE,
+        }
+    }
+
+    /// Name without the family, e.g. "Advance Variation, Short Variation".
+    pub fn short_name(&self) -> &str {
+        self.name.split_once(':').map_or(MAIN_LINE, |(_, rest)| rest.trim())
+    }
+}
+
+pub const MAIN_LINE: &str = "Hauptvariante";
+
+/// All lines of the dataset (parsed once).
+pub fn lines() -> &'static [Line] {
+    static LINES: OnceLock<Vec<Line>> = OnceLock::new();
+    LINES.get_or_init(|| {
+        let mut out: Vec<Line> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for row in DATA.lines() {
+            let mut cols = row.split('\t');
+            let (Some(eco), Some(name), Some(pgn)) = (cols.next(), cols.next(), cols.next()) else { continue };
+            let mut pos = Chess::default();
+            let mut moves = Vec::new();
+            for san in pgn.split_whitespace().filter(|t| !t.ends_with('.')) {
+                let Some(m) = san.parse::<SanPlus>().ok().and_then(|s| s.san.to_move(&pos).ok()) else { break };
+                moves.push(shakmaty::uci::UciMove::from_move(m, shakmaty::CastlingMode::Standard).to_string());
+                pos.play_unchecked(m);
+            }
+            let mut id = format!("{eco} {name}");
+            if !seen.insert(id.clone()) {
+                id = format!("{id} #{}", out.len());
+                seen.insert(id.clone());
+            }
+            out.push(Line { id, eco: eco.to_string(), family: family_of(name).to_string(), name: name.to_string(), moves });
+        }
+        out
+    })
+}
+
 /// The deepest named opening position reached in the game.
 pub fn identify(moves: &[String]) -> Option<Opening> {
     let table = table();
@@ -71,6 +134,23 @@ mod tests {
     #[test]
     fn dataset_loads() {
         assert!(table().len() > 3000);
+    }
+
+    #[test]
+    fn lines_have_ids_families_and_uci_moves() {
+        let all = lines();
+        assert!(all.len() > 3000);
+        let ids: std::collections::HashSet<_> = all.iter().map(|l| &l.id).collect();
+        assert_eq!(ids.len(), all.len(), "ids must be unique");
+        let caro = all.iter().find(|l| l.name == "Caro-Kann Defense: Advance Variation").unwrap();
+        assert_eq!(caro.family, "Caro-Kann Defense");
+        assert_eq!(&caro.moves[..5], ["e2e4", "c7c6", "d2d4", "d7d5", "e4e5"]);
+        assert_eq!(family_of("Sicilian Defense: Najdorf Variation"), "Sicilian Defense");
+        let short = all.iter().find(|l| l.name == "Caro-Kann Defense: Advance Variation, Short Variation").unwrap();
+        assert_eq!(short.variation(), "Advance Variation");
+        assert_eq!(short.short_name(), "Advance Variation, Short Variation");
+        let main = all.iter().find(|l| l.name == "Caro-Kann Defense").unwrap();
+        assert_eq!(main.variation(), MAIN_LINE);
     }
 
     #[test]

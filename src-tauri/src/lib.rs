@@ -8,6 +8,7 @@ mod lichess;
 mod live;
 mod openings;
 mod puzzles;
+mod repertoire;
 mod stats;
 mod trainer;
 
@@ -371,6 +372,16 @@ async fn puzzle_install(
     result
 }
 
+/// Delete the local puzzle database (not while it is being downloaded).
+#[tauri::command]
+fn puzzle_delete(dir: State<DataDir>, install: State<PuzzleInstall>) -> Result<puzzles::PuzzleStatus, String> {
+    if install.cancel.lock().unwrap().is_some() {
+        return Err("Erst den laufenden Download abbrechen.".into());
+    }
+    puzzles::delete(&dir.0)?;
+    Ok(puzzles::status(&dir.0))
+}
+
 #[tauri::command]
 fn puzzle_cancel(install: State<PuzzleInstall>) {
     if let Some(flag) = install.cancel.lock().unwrap().as_ref() {
@@ -391,6 +402,84 @@ async fn with_db<T: Send + 'static>(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Analysed games of the accounts, limited to the most recent `last`.
+fn window(db: &db::Db, accounts: &[Account], last: Option<usize>) -> Result<Vec<(GameInfo, GameReview)>, String> {
+    let mut games = db.reviewed_games_of(accounts)?;
+    if let Some(n) = last {
+        games.truncate(n);
+    }
+    Ok(games)
+}
+
+/// Your openings by colour: results, accuracy, mistakes in the opening.
+#[tauri::command]
+async fn opening_report(app: AppHandle, accounts: Vec<Account>, last: Option<usize>) -> Result<Vec<repertoire::OpeningStat>, String> {
+    with_db(app, move |db, _| Ok(repertoire::report(&window(db, &accounts, last)?, &accounts))).await
+}
+
+/// All opening families with base line and thumbnail position (computed once).
+#[tauri::command]
+fn opening_families() -> Vec<repertoire::Family> {
+    static FAMILIES: std::sync::OnceLock<Vec<repertoire::Family>> = std::sync::OnceLock::new();
+    FAMILIES.get_or_init(repertoire::families).clone()
+}
+
+#[tauri::command]
+fn repertoire_get(db: State<DbState>) -> repertoire::Repertoire {
+    repertoire::load(&db.0.lock().unwrap())
+}
+
+#[tauri::command]
+fn repertoire_set(db: State<DbState>, repertoire: repertoire::Repertoire) -> Result<repertoire::Status, String> {
+    let db = db.0.lock().unwrap();
+    repertoire::save(&db, &repertoire)?;
+    repertoire::status(&db)
+}
+
+#[tauri::command]
+fn opening_status(db: State<DbState>) -> Result<repertoire::Status, String> {
+    repertoire::status(&db.0.lock().unwrap())
+}
+
+#[tauri::command]
+async fn opening_next(
+    app: AppHandle,
+    accounts: Vec<Account>,
+    last: Option<usize>,
+    mode: Option<repertoire::Mode>,
+    focus: Option<repertoire::Focus>,
+) -> Result<Option<repertoire::Drill>, String> {
+    let mode = mode.unwrap_or_default();
+    with_db(app, move |db, _| repertoire::next(db, &accounts, &window(db, &accounts, last)?, mode, focus.as_ref())).await
+}
+
+/// Variations of an opening for one colour, with learning progress.
+#[tauri::command]
+fn opening_family_detail(db: State<DbState>, color: String, family: String) -> Result<Vec<repertoire::VariationGroup>, String> {
+    repertoire::family_detail(&db.0.lock().unwrap(), &color, &family)
+}
+
+/// Learning progress per opening ("white|Caro-Kann Defense" -> lines, learned, due).
+#[tauri::command]
+fn opening_progress(db: State<DbState>) -> Result<std::collections::HashMap<String, repertoire::FamilyProgress>, String> {
+    repertoire::family_progress(&db.0.lock().unwrap())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DrillResult {
+    box_level: u8,
+    due: i64,
+    status: repertoire::Status,
+}
+
+#[tauri::command]
+fn opening_record(db: State<DbState>, id: String, color: String, success: bool) -> Result<DrillResult, String> {
+    let db = db.0.lock().unwrap();
+    let p = repertoire::record(&db, &id, &color, success)?;
+    Ok(DrillResult { box_level: p.box_, due: p.due, status: repertoire::status(&db)? })
 }
 
 /// Next training puzzle based on the accounts' last `last` analysed games.
@@ -440,6 +529,16 @@ async fn refutation(fen: String, uci: String, depth: Option<u32>) -> Result<expl
         .map_err(|e| e.to_string())?
 }
 
+/// The engine's best line from a position (for "Engine zieht").
+#[tauri::command]
+async fn engine_line(fen: String, depth: Option<u32>, plies: Option<usize>) -> Result<explore::Refutation, String> {
+    let depth = depth.unwrap_or(16).clamp(8, 24);
+    let plies = plies.unwrap_or(1).clamp(1, 12);
+    tauri::async_runtime::spawn_blocking(move || explore::engine_line(&fen, depth, plies))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn live_analyse(app: AppHandle, id: u64, fen: String) -> Result<(), String> {
     // Stopping the previous search can block briefly, so keep it off the main thread.
@@ -455,6 +554,119 @@ async fn live_stop(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// True if the database at `path` holds any of your data (games or puzzle attempts).
+fn has_user_data(path: &std::path::Path) -> bool {
+    let Ok(conn) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return false;
+    };
+    ["games", "puzzle_log"].iter().any(|table| {
+        conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM {table})"), [], |r| r.get::<_, bool>(0))
+            .unwrap_or(false)
+    })
+}
+
+/// The app ID changed from `dev.postmortem.app` to `io.github.event173.postmortem`
+/// (needed for Flathub). Move data from the old folder – games, reviews, puzzle
+/// database, settings of the web view – unless the new folder already holds
+/// real data. A new folder with only an empty database (created by a start
+/// before this migration existed) is replaced.
+fn migrate_old_data_dir(new_dir: &std::path::Path) {
+    let Some(old_dir) = new_dir.parent().map(|p| p.join("dev.postmortem.app")) else { return };
+    if !old_dir.join("postmortem.db").is_file() || has_user_data(&new_dir.join("postmortem.db")) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&old_dir) else { return };
+    // Leftovers of the empty database must not mix with the old one's WAL files.
+    for name in ["postmortem.db", "postmortem.db-wal", "postmortem.db-shm"] {
+        let _ = std::fs::remove_file(new_dir.join(name));
+    }
+    for entry in entries.flatten() {
+        let target = new_dir.join(entry.file_name());
+        // Anything already in the new folder came from an empty start: old data wins.
+        if target.is_dir() {
+            let _ = std::fs::remove_dir_all(&target);
+        } else if target.exists() {
+            let _ = std::fs::remove_file(&target);
+        }
+        let _ = std::fs::rename(entry.path(), &target);
+    }
+    let _ = std::fs::remove_dir(&old_dir); // only succeeds if everything moved
+}
+
+#[cfg(test)]
+mod migration_tests {
+    #[test]
+    fn moves_old_data_once() {
+        let root = std::env::temp_dir().join(format!("postmortem-migrate-{}", std::process::id()));
+        let old = root.join("dev.postmortem.app");
+        let new = root.join("io.github.event173.postmortem");
+        std::fs::create_dir_all(old.join("localstorage")).unwrap();
+        std::fs::write(old.join("postmortem.db"), b"games").unwrap();
+        std::fs::write(old.join("localstorage").join("x"), b"prefs").unwrap();
+        std::fs::create_dir_all(new.join("localstorage")).unwrap(); // created empty by the web view
+        super::migrate_old_data_dir(&new);
+        assert_eq!(std::fs::read(new.join("postmortem.db")).unwrap(), b"games");
+        assert_eq!(std::fs::read(new.join("localstorage").join("x")).unwrap(), b"prefs");
+        assert!(!old.exists());
+        // Second run: nothing to do, nothing breaks.
+        super::migrate_old_data_dir(&new);
+        assert!(new.join("postmortem.db").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn replaces_an_empty_new_database_but_never_real_data() {
+        let root = std::env::temp_dir().join(format!("postmortem-migrate2-{}", std::process::id()));
+        let old = root.join("dev.postmortem.app");
+        let new = root.join("io.github.event173.postmortem");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(new.join("localstorage")).unwrap();
+        std::fs::write(new.join("localstorage").join("x"), b"new empty prefs").unwrap();
+
+        // Old folder: a real database with a game.
+        let mut old_db = crate::db::Db::open(&old.join("postmortem.db")).unwrap();
+        old_db.save_games(&[sample_game()]).unwrap();
+        drop(old_db);
+        std::fs::create_dir_all(old.join("localstorage")).unwrap();
+        std::fs::write(old.join("localstorage").join("x"), b"old prefs").unwrap();
+        std::fs::write(old.join("puzzles.db"), b"puzzles").unwrap();
+        // New folder: an empty database from a start before the migration existed.
+        drop(crate::db::Db::open(&new.join("postmortem.db")).unwrap());
+
+        super::migrate_old_data_dir(&new);
+        assert!(super::has_user_data(&new.join("postmortem.db")));
+        assert_eq!(std::fs::read(new.join("localstorage").join("x")).unwrap(), b"old prefs");
+        assert_eq!(std::fs::read(new.join("puzzles.db")).unwrap(), b"puzzles");
+        assert!(!old.exists());
+
+        // Now the new folder has real data: a stray old folder must not overwrite it.
+        std::fs::create_dir_all(&old).unwrap();
+        drop(crate::db::Db::open(&old.join("postmortem.db")).unwrap());
+        super::migrate_old_data_dir(&new);
+        assert!(super::has_user_data(&new.join("postmortem.db")));
+        assert!(old.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn sample_game() -> crate::lichess::GameInfo {
+        crate::lichess::GameInfo {
+            id: "g1".into(),
+            source: Default::default(),
+            url: None,
+            white: crate::lichess::Player { name: "a".into(), rating: None },
+            black: crate::lichess::Player { name: "b".into(), rating: None },
+            winner: None,
+            status: "draw".into(),
+            speed: "blitz".into(),
+            rated: false,
+            time_control: None,
+            created_at: 1,
+            opening: None,
+            moves: vec!["e4".into()],
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -465,6 +677,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
+            migrate_old_data_dir(&dir);
             let db = db::Db::open(&dir.join("postmortem.db"))?;
             engine::configure(engine::EngineConfig {
                 path: db.setting("stockfish_path")?.map(std::path::PathBuf::from),
@@ -499,10 +712,21 @@ pub fn run() {
             puzzle_check_update,
             puzzle_install,
             puzzle_cancel,
+            puzzle_delete,
             puzzle_next,
             puzzle_record,
             puzzle_profile,
-            refutation
+            refutation,
+            engine_line,
+            opening_report,
+            opening_families,
+            repertoire_get,
+            repertoire_set,
+            opening_status,
+            opening_next,
+            opening_record,
+            opening_progress,
+            opening_family_detail
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,110 +1,208 @@
-# postmortem
+<p align="center">
+  <img src="assets/app-icon/icon.png" alt="postmortem" width="128" height="128">
+</p>
 
-Game review for your Lichess and chess.com games – move classifications, accuracy and a
-rule-based coach that explains *why* a move was bad. Runs locally: games are
-pulled from the public Lichess API and chess.com's Published-Data API,
-analysis happens with Stockfish on your machine.
+<h1 align="center">postmortem</h1>
 
-Built with [Tauri](https://tauri.app) (Rust backend, TypeScript frontend).
+<p align="center">
+  Analysiere deine Schachpartien von <b>Lichess</b> und <b>chess.com</b> – lokal, offline, mit Stockfish.<br>
+  <sub>Review your Lichess and chess.com games locally with Stockfish – a free, offline game review (UI in German).</sub>
+</p>
 
-## Features
+---
 
-- Load your recent games by Lichess or chess.com username (switch between
-  the platforms or show both), or a single Lichess game by link
-- Works offline: games and reviews are stored in a local SQLite database;
-  on start only new games are synced from Lichess (older ones on demand)
-- Stockfish analysis of every position (MultiPV 2), stored with the game
-- Move classes: Brilliant, Great, Best, Excellent, Good, Book, Forced,
-  Inaccuracy, Mistake, Miss, Blunder
-- Accuracy per player (Lichess-style win% model)
-- Coach comments: allowed/missed mates, forks, hanging pieces, material loss,
-  missed material wins, positional fallback
-- Eval bar, eval graph, best-move arrow, keyboard navigation
-- Explore: drag pieces to play your own variation; every move you try is
-  classified and explained like a game move
-- "Aus Fehlern lernen": replay your own mistakes of a game as exercises
-  (accepts any move the engine rates Excellent or better; hint / solution / skip)
-- Statistics: your weaknesses by cause (hanging pieces, allowed forks,
-  missed mates …) with examples, error rate per game phase, accuracy trend;
-  "analyse all" runs in the background
-- Statistics can be limited to the last 10 / 20 / 50 games; each weakness
-  shows a trend arrow against your all-time average
-- Puzzle trainer: ~60 % puzzles for your weaknesses (weighted by frequency
-  and by how badly you solve the theme), ~25 % mixed, ~15 % positions from
-  your own mistakes; personal puzzle rating (Elo), no repeats, solved own
-  positions rest for 3 days
-- Settings (gear icon): analysis depth, Stockfish path and CPU cores,
-  animations, board coordinates
-- Lichess puzzle database: download/update from the settings, imported into
-  a local SQLite file (offline); the app checks for a newer version on start
-- Live engine with the top 3 lines for whatever is on the board (click a line
-  to play its first move)
+postmortem ist eine Desktop-App für Linux und Windows, die deine Partien so auswertet,
+wie du es von der „Partie-Review“ bei chess.com kennst: Jeder Zug bekommt eine
+Bewertung von *Brillant* bis *Patzer*, und ein Coach erklärt in normalen Worten,
+**warum** ein Zug schlecht war – „Das erlaubt eine Gabel“, „Dein Läufer auf c4 hängt“,
+„Du hattest Matt in 2“. Darauf aufbauend findest du deine typischen Schwächen und
+trainierst sie gezielt mit Puzzles und Eröffnungsübungen.
 
-## Requirements (Linux)
+Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
+
+## Funktionen
+
+**Partie-Review**
+- Partien per Lichess- oder chess.com-Name laden (oder einen Lichess-Partielink einfügen)
+- Bewertung jedes Zugs: Brillant, Stark, Bester Zug, Ausgezeichnet, Gut, Theorie,
+  Ungenauigkeit, Fehler, Verpasste Chance, Patzer – plus Genauigkeit pro Spieler
+- Coach-Kommentare auf Deutsch, Bewertungsbalken, Bewertungsverlauf, bester Zug als Pfeil
+- **Zeig mir, was passiert:** spielt die Widerlegung eines Fehlers auf dem Brett vor
+- Frei weiterziehen: eigene Varianten, jeder Zug wird bewertet; Live-Engine mit den 3 besten Zügen
+- **Aus Fehlern lernen:** deine Fehler einer Partie als Übungsaufgaben
+- Pfeile und Kreise mit der rechten Maustaste, wie auf Lichess
+
+**Statistik**
+- Deine Schwächen nach Ursache (Figur hängen lassen, Gabel zugelassen, Matt übersehen …)
+  mit Beispielen und Trainingstipps, Fehler nach Spielphase, Genauigkeitsverlauf
+- Zeitraum wählbar (letzte 10 / 20 / 50 / alle Partien) mit Trend gegenüber deinem Schnitt
+- Deine Eröffnungen: Ergebnis und wie oft du in der Eröffnung patzt
+- „Partien analysieren“ läuft im Hintergrund
+
+**Puzzles**
+- Die komplette Lichess-Puzzle-Datenbank (≈ 6 Mio. Puzzles), lokal und offline
+- Auswahl passend zu dir: ca. 60 % deine Schwächen, 25 % gemischt, 15 % Stellungen aus
+  deinen eigenen Partien – was du sicher löst, kommt seltener
+- Eigene Puzzle-Wertung, Tipps, „Zeig mir, was passiert“, nach dem Lösen frei weiterspielen
+
+**Eröffnungen**
+- Alle 149 Eröffnungen als Kacheln mit Brett-Vorschau; „Als Weiß / Schwarz lernen“
+- Lernen wie mit Karteikarten: Variante mit Pfeilen zeigen → ohne Pfeile festigen →
+  Wiederholung nach 10 Min., 1, 3, 7 und 21 Tagen
+- Varianten einzeln wählbar, Fortschritt pro Variante als Balken
+- Kurze Theorie-Linien werden mit Stockfish auf mindestens 8 eigene Züge verlängert
+- Übungen aus deinen eigenen Eröffnungsfehlern
+
+## Installation
+
+### Windows
+
+1. Unter [Releases](https://github.com/event173/postmortem/releases) die Datei
+   `postmortem_…_x64-setup.exe` (oder `.msi`) herunterladen und ausführen.
+2. Beim ersten Start meldet Windows evtl. *„Der Computer wurde durch Windows geschützt“* –
+   die App ist nicht kostenpflichtig signiert. Auf **Weitere Informationen → Trotzdem ausführen** klicken.
+
+Stockfish ist enthalten. **Deinstallieren:** *Einstellungen → Apps → postmortem → Deinstallieren*.
+
+### Linux
+
+- **AppImage** (aus den Releases): herunterladen, ausführbar machen (`chmod +x postmortem_*.AppImage`), starten.
+- **.deb** (Debian, Ubuntu, Mint …): `sudo apt install ./postmortem_*_amd64.deb`
+- **Flatpak**: siehe [Selbst bauen](#selbst-bauen).
+
+In allen Paketen ist Stockfish enthalten. Wird es nicht gefunden, kannst du im
+Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install stockfish`).
+
+## Erste Schritte
+
+1. **Namen eingeben:** Oben links „Lichess“ oder „chess.com“ wählen, Benutzernamen eingeben,
+   *Laden*. Deine letzten Partien erscheinen links; neue werden bei jedem Start nachgeladen.
+2. **Partie anklicken:** Die Analyse dauert je nach Länge und Rechner etwa eine halbe bis zwei
+   Minuten und wird gespeichert – beim nächsten Mal ist sie sofort da.
+3. **Statistik:** Unter *Statistik → „… Partien analysieren“* werden deine übrigen Partien im
+   Hintergrund ausgewertet. Je mehr analysiert sind, desto aussagekräftiger.
+4. **Puzzles:** Einmalig im **Zahnrad-Menü** die Puzzle-Datenbank herunterladen (≈ 300 MB).
+   Die App meldet sich, wenn Lichess eine neue Version hat.
+5. **Eröffnungen:** Unter *Eröffnungen → Eröffnungen wählen* eine Eröffnung aussuchen und
+   *Als Weiß / Schwarz lernen* klicken.
+
+### Tastenkürzel
+
+| Taste | Aktion |
+| --- | --- |
+| ← / → | Zug zurück / vor |
+| Pos1 / Ende | Anfang / Ende der Partie |
+| N | zum nächsten eigenen Fehler (spielt die Züge bis dahin ab) |
+| T | Aus Fehlern lernen |
+| F | Brett drehen |
+| Esc | Variante verlassen / Übung beenden |
+| Enter | nächstes Puzzle / nächste Aufgabe |
+| Rechtsklick ziehen | Pfeil zeichnen (Shift/Strg = rot, Alt = blau) |
+
+## Gut zu wissen
+
+**Wie bewertet wird.** Jede Engine-Bewertung wird in Gewinnchancen (0–100 %) umgerechnet –
+mit derselben Kurve wie bei Lichess. Ein Zug ist so gut, wie wenig er von deinen
+Gewinnchancen kostet:
+
+| Verlust | Bewertung |
+| --- | --- |
+| Zug der Engine | Bester Zug |
+| < 2 % | Ausgezeichnet |
+| < 5 % | Gut |
+| < 10 % | Ungenauigkeit |
+| < 20 % | Fehler |
+| ≥ 20 % | Patzer |
+
+Dazu: *Theorie* (laut Eröffnungsbuch), *Stark* (der einzige gute Zug), *Brillant*
+(ein funktionierendes Opfer), *Verpasste Chance* (der Gegner hat gerade gepatzt oder
+es gab ein Matt, und der Zug nutzt es nicht).
+
+**Der Coach** ist kein Sprachmodell: Er erkennt anhand der Engine-Varianten konkrete
+Muster (hängende Figur, Gabel, Matt, Materialverlust …) und formuliert daraus einen Satz.
+Findet er keine konkrete Taktik, sagt er „Stellung verschlechtert“.
+
+**Offline und Datenschutz.** Ins Internet geht die App nur, um deine Partien bei Lichess /
+chess.com abzurufen (öffentliche APIs, ohne Anmeldung) und um die Puzzle-Datenbank
+herunterzuladen bzw. auf Updates zu prüfen. Analyse, Statistik und Training passieren
+lokal; es werden keine Daten an Dritte gesendet.
+
+**Rechenzeit.** Die Analyse nutzt alle CPU-Kerne bis auf einen, Hintergrund-Analysen die
+Hälfte, und Stockfish läuft mit niedriger Priorität – der Rechner bleibt bedienbar.
+Analyse-Tiefe und Kernzahl lassen sich im Zahnrad-Menü einstellen.
+
+**Wo die Daten liegen** (Partien, Analysen, Puzzle-Datenbank, Lernstand):
+
+| System | Ordner |
+| --- | --- |
+| Linux | `~/.local/share/io.github.event173.postmortem/` |
+| Linux (Flatpak) | `~/.var/app/io.github.event173.postmortem/data/io.github.event173.postmortem/` |
+| Windows | `%APPDATA%\io.github.event173.postmortem\` |
+
+Die Puzzle-Datenbank (≈ 1 GB) lässt sich im Zahnrad-Menü wieder löschen. Wer postmortem
+komplett entfernen will, löscht nach der Deinstallation zusätzlich diesen Ordner.
+
+## Selbst bauen
+
+Voraussetzungen: [Rust](https://rustup.rs), Node.js ≥ 20 und unter Linux die
+WebKitGTK-Pakete:
 
 ```sh
-sudo apt install stockfish libwebkit2gtk-4.1-dev build-essential libssl-dev \
-  libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+sudo apt install libwebkit2gtk-4.1-dev build-essential libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev libxdo-dev stockfish
 ```
 
-Plus Rust (`rustup`) and Node.js. Stockfish is looked up in `PATH`,
-`/usr/games`, `/usr/bin`, `/usr/local/bin`, or via `POSTMORTEM_STOCKFISH=/path/to/stockfish`.
-
-## Development
-
 ```sh
+git clone https://github.com/event173/postmortem.git
+cd postmortem
 npm install
-npm run tauri dev      # run the app
-npm run tauri build    # build a release bundle (.deb / .AppImage / .rpm)
+npm run tauri dev                 # starten (Entwicklung)
+npm run tauri build               # Installationspakete bauen
 
-cd src-tauri
-cargo test                                # unit tests
-cargo test -- --ignored --nocapture       # live test: Lichess API + Stockfish
+cd src-tauri && cargo test        # Tests
+cargo test -- --ignored           # Live-Tests gegen Lichess/chess.com (Netzwerk)
 ```
 
-## Keyboard
+**Flatpak** (GNOME-51-Laufzeit; Stockfish 19 wird aus dem Quellcode gebaut):
 
-| Key | Action |
+```sh
+flatpak install --user flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
+npm run tauri build -- --bundles deb
+flatpak run org.flatpak.Builder --user --install --force-clean \
+  --state-dir ~/.cache/postmortem-flatpak/state \
+  ~/.cache/postmortem-flatpak/build packaging/flatpak/io.github.event173.postmortem.yml
+flatpak run io.github.event173.postmortem
+```
+
+**Releases:** Ein Versions-Tag (`git tag v0.2.0 && git push origin v0.2.0`) startet
+`.github/workflows/release.yml`; GitHub baut Windows-Installer, AppImage und .deb mit
+Stockfish und legt einen Release-Entwurf an.
+
+### Aufbau
+
+| Pfad | Inhalt |
 | --- | --- |
-| ← / → | previous / next move |
-| Home / End | start / end |
-| N | next own mistake |
-| T | learn from your mistakes (Esc to quit, Enter for next) |
-| Esc | leave variation, back to the game |
-| F | flip board |
+| `src/` | Oberfläche (TypeScript, [chessground](https://github.com/lichess-org/chessground)) |
+| `src-tauri/src/analysis.rs` | Klassifizierung der Züge, Genauigkeit |
+| `src-tauri/src/coach.rs` | Coach: Muster erkennen, Erklärungen formulieren |
+| `src-tauri/src/engine.rs`, `live.rs` | Stockfish-Anbindung (UCI) |
+| `src-tauri/src/lichess.rs`, `chesscom.rs` | Partien abrufen |
+| `src-tauri/src/stats.rs`, `trainer.rs`, `repertoire.rs` | Statistik, Puzzles, Eröffnungstraining |
+| `src-tauri/src/db.rs` | lokale SQLite-Datenbank |
+| `packaging/flatpak/` | Flatpak-Manifest, Desktop-Datei, AppStream-Metadaten |
 
-## How classification works
+## Datenquellen
 
-Each engine score is turned into winning chances (0–100 %) using the same
-logistic curve Lichess uses. A move's quality is the drop in the mover's
-winning chances:
+- [Lichess API](https://lichess.org/api) – deine Partien
+- [chess.com Published-Data API](https://www.chess.com/news/view/published-data-api) – deine Partien
+- [Lichess-Puzzle-Datenbank](https://database.lichess.org/#puzzles) (CC0)
+- [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0) – Eröffnungsnamen und -linien
+- [Stockfish](https://stockfishchess.org) (GPL-3.0) – die Engine
 
-| Loss | Class |
-| --- | --- |
-| engine's best move | Best |
-| < 2 % | Excellent |
-| < 5 % | Good |
-| < 10 % | Inaccuracy |
-| < 20 % | Mistake |
-| ≥ 20 % | Blunder |
+## Lizenz
 
-Special cases: **Book** (within the opening Lichess names for the game),
-**Forced** (only legal move), **Great** (best move and the second-best is
-≥ 20 % worse), **Brilliant** (best move that sacrifices ≥ 2 points of material
-and keeps a good position), **Miss** (opponent just erred or mate was
-available, and the move gives the chance away).
+postmortem steht unter der [GPL-3.0-or-later](LICENSE). Das Brett
+([chessground](https://github.com/lichess-org/chessground)) und die mitgelieferte
+Engine ([Stockfish](https://stockfishchess.org)) stehen ebenfalls unter der GPL-3.0.
 
-## Data sources
-
-- Lichess API – games of a user / single games (no account needed)
-- chess.com Published-Data API – monthly game archives (no account needed)
-- [Lichess puzzle database](https://database.lichess.org/#puzzles) (CC0) –
-  downloaded on demand into `puzzles.db` in the app data directory
-- [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
-  (CC0) – embedded in `src-tauri/data/openings.tsv` to name openings of
-  chess.com games offline
-
-## License
-
-The board uses [chessground](https://github.com/lichess-org/chessground),
-which is GPL-3.0-or-later.
+postmortem ist ein unabhängiges Projekt und steht in keiner Verbindung zu Lichess oder chess.com.

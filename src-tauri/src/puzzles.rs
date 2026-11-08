@@ -70,6 +70,19 @@ pub fn status(dir: &Path) -> PuzzleStatus {
     PuzzleStatus { installed: count > 0, count, version: meta(&conn, "last_modified"), size_bytes }
 }
 
+/// Remove the puzzle database and any leftovers of interrupted downloads.
+/// Your puzzle history and rating live in the main database and stay.
+pub fn delete(dir: &Path) -> Result<(), String> {
+    for name in [DB_FILE, "puzzles.db.new", "lichess_db_puzzle.csv.zst", "lichess_db_puzzle.csv.zst.part"] {
+        match std::fs::remove_file(dir.join(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{name} konnte nicht gelöscht werden: {e}")),
+        }
+    }
+    Ok(())
+}
+
 pub async fn check_update(dir: &Path) -> UpdateCheck {
     let local = status(dir);
     let resp = match client() {
@@ -340,6 +353,21 @@ mod tests {
         let conn = Connection::open(&target).unwrap();
         let rating: i64 = conn.query_row("SELECT rating FROM puzzles WHERE id = '0000D'", [], |r| r.get(0)).unwrap();
         assert_eq!(rating, 1580);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn delete_removes_database_and_leftovers() {
+        let dir = std::env::temp_dir().join(format!("postmortem-puzzle-del-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(DB_FILE), b"x").unwrap();
+        std::fs::write(dir.join("lichess_db_puzzle.csv.zst.part"), b"x").unwrap();
+        std::fs::write(dir.join("postmortem.db"), b"keep").unwrap();
+        delete(&dir).unwrap();
+        assert!(!dir.join(DB_FILE).exists());
+        assert!(!dir.join("lichess_db_puzzle.csv.zst.part").exists());
+        assert!(dir.join("postmortem.db").exists(), "main database must stay");
+        delete(&dir).unwrap(); // nothing left: still fine
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

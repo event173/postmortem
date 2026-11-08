@@ -1,0 +1,81 @@
+# Flatpak manifest for postmortem.
+#
+# Build locally (after `npm run tauri build -- --bundles deb` in the repo root).
+# Build dirs go to ~/.cache, NOT into the repo (they break the Vite dev server):
+#   flatpak run org.flatpak.Builder --user --install --force-clean \
+#     --state-dir ~/.cache/postmortem-flatpak/state \
+#     ~/.cache/postmortem-flatpak/build packaging/flatpak/io.github.event173.postmortem.yml
+#   flatpak run io.github.event173.postmortem
+#
+# The app binary comes from the Tauri release build; Stockfish is built from
+# source here (one "universal" binary that picks the best CPU features at runtime).
+id: io.github.event173.postmortem
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: postmortem
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Lichess / chess.com APIs and the puzzle database download
+  - --share=network
+
+modules:
+  - name: stockfish
+    buildsystem: simple
+    # The SDK's default flags add -g; with Stockfish's universal LTO build that
+    # leaves debug info pointing at removed symbols and linking fails.
+    # Stockfish sets its own optimisation flags anyway.
+    build-options:
+      no-debuginfo: true
+      cflags: ""
+      cflags-override: true
+      cxxflags: ""
+      cxxflags-override: true
+    build-commands:
+      - make -C src -j "$FLATPAK_BUILDER_N_JOBS" build ARCH=x86-64-universal COMP=gcc
+      - install -Dm755 src/stockfish /app/bin/stockfish
+      - install -Dm644 Copying.txt /app/share/licenses/io.github.event173.postmortem/stockfish-COPYING.txt
+    sources:
+      - type: archive
+        url: https://github.com/official-stockfish/Stockfish/archive/refs/tags/sf_19.tar.gz
+        sha256: 519b653d0d1ffb96531d982ccbe5c6a19425e8388e0e3c2f70f34b424ab32d76
+      # The neural network Stockfish 19 expects (name = start of its sha256).
+      - type: file
+        url: https://tests.stockfishchess.org/api/nn/nn-1a298aa575a0.nnue
+        sha256: 1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2
+        dest: src
+
+  - name: postmortem
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 postmortem /app/bin/postmortem
+      - install -Dm644 io.github.event173.postmortem.desktop -t /app/share/applications
+      - install -Dm644 io.github.event173.postmortem.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 32x32.png /app/share/icons/hicolor/32x32/apps/io.github.event173.postmortem.png
+      - install -Dm644 64x64.png /app/share/icons/hicolor/64x64/apps/io.github.event173.postmortem.png
+      - install -Dm644 128x128.png /app/share/icons/hicolor/128x128/apps/io.github.event173.postmortem.png
+      - install -Dm644 128x128@2x.png /app/share/icons/hicolor/256x256/apps/io.github.event173.postmortem.png
+      - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/io.github.event173.postmortem.png
+      - install -Dm644 LICENSE /app/share/licenses/io.github.event173.postmortem/LICENSE
+    sources:
+      - type: file
+        path: ../../src-tauri/target/release/postmortem
+      - type: file
+        path: io.github.event173.postmortem.desktop
+      - type: file
+        path: io.github.event173.postmortem.metainfo.xml
+      - type: file
+        path: ../../src-tauri/icons/32x32.png
+      - type: file
+        path: ../../src-tauri/icons/64x64.png
+      - type: file
+        path: ../../src-tauri/icons/128x128.png
+      - type: file
+        path: ../../src-tauri/icons/128x128@2x.png
+      - type: file
+        path: ../../src-tauri/icons/icon.png
+      - type: file
+        path: ../../LICENSE

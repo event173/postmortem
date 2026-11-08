@@ -62,6 +62,21 @@ export interface PuzzleDeps {
   animMs: () => number;
   /** Open the settings dialog (to download the puzzle database). */
   openSettings: () => void;
+  /** Open one of your games in the review at a ply. */
+  openGame: (gameId: string, ply: number) => void;
+}
+
+/** A move played freely after the puzzle is over. */
+interface ExploreMove {
+  fenBefore: string;
+  fen: string;
+  uci: string;
+  san: string;
+  check: boolean;
+  /** Played by "Engine zieht". */
+  engine?: boolean;
+  review?: MoveReview;
+  pending?: boolean;
 }
 
 type Phase = "loading" | "opponent" | "solve" | "checking" | "wrong" | "showing" | "solved" | "failed" | "empty";
@@ -136,6 +151,14 @@ let token = 0;
 /** Your last wrong try, to replay on the board what happens after it. */
 let lastTry: { fenBefore: string; played: PlayedMove } | null = null;
 let refute: (Refutation & { uci: string; shown: number }) | null = null;
+/** Free moves after the puzzle (both sides). */
+let explore: ExploreMove[] = [];
+let engineBusy = false;
+let exploreNote = "";
+
+/** Puzzle over (solved, or solution fully shown): the board is free to explore. */
+const finished = () => (phase === "solved" || phase === "failed") && !!puzzle && step >= puzzle.moves.length;
+const viewFen = () => (explore.length ? explore[explore.length - 1].fen : fen);
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
 const other = (c: Color): Color => (c === "white" ? "black" : "white");
@@ -226,6 +249,8 @@ async function loadNext() {
   lastMove = undefined;
   lastTry = null;
   refute = null;
+  explore = [];
+  exploreNote = "";
   deps.board.setShapes([]);
 
   if (p.kind === "lichess") {
@@ -258,6 +283,7 @@ async function playOpponent(t: number) {
 /** Called by main when you move on the board in puzzle mode. */
 export async function puzzleMove(orig: Key, dest: Key, promotion?: string) {
   const p = puzzle;
+  if (p && finished()) return exploreMove(orig, dest, promotion);
   if (!p || (phase !== "solve" && phase !== "wrong")) return render();
   const t = token;
   const expected = p.moves[step];
@@ -355,6 +381,72 @@ async function record(solved: boolean) {
   renderText();
 }
 
+// --- free exploration after the puzzle --------------------------------------
+
+async function exploreMove(orig: Key, dest: Key, promotion?: string) {
+  const t = token;
+  const before = viewFen();
+  let played: PlayedMove;
+  try {
+    played = await invoke<PlayedMove>("play_move", { fen: before, from: orig, to: dest, promotion });
+  } catch {
+    return render();
+  }
+  if (t !== token) return;
+  const m: ExploreMove = { fenBefore: before, fen: played.fen, uci: played.uci, san: played.san, check: played.check, pending: true };
+  explore.push(m);
+  exploreNote = "";
+  render();
+  try {
+    m.review = await invoke<MoveReview>("evaluate_move", { fen: before, uci: played.uci });
+  } catch {
+    /* no verdict, the move still stands */
+  }
+  m.pending = false;
+  if (t === token && explore.includes(m)) render();
+}
+
+/** Let Stockfish play the best move for the side to move. */
+async function engineMove() {
+  const t = token;
+  const before = viewFen();
+  engineBusy = true;
+  renderText();
+  try {
+    const line = await invoke<Refutation>("engine_line", { fen: before, plies: 1 });
+    if (t !== token || viewFen() !== before) return;
+    const mv = line.moves[0];
+    if (mv) explore.push({ fenBefore: before, ...mv, engine: true });
+    else exploreNote = "Keine Züge mehr – die Partie ist hier zu Ende.";
+  } catch (e) {
+    exploreNote = String(e);
+  } finally {
+    engineBusy = false;
+    if (t === token) render();
+  }
+}
+
+function exploreText(): string {
+  if (!explore.length) {
+    return `<p class="explore-hint">Zieh jetzt frei weiter – für beide Seiten – oder lass die Engine ziehen, um zu sehen, was passieren würde.</p>`;
+  }
+  const moves = explore
+    .map((m) => {
+      const mark = m.review ? badgeHtml(m.review.classification) : m.pending ? `<span class="pending"></span>` : "";
+      return `<span class="ex-mv${m.engine ? " engine" : ""}">${mark}${esc(fig(m.san))}</span>`;
+    })
+    .join(" ");
+  const last = explore[explore.length - 1];
+  let verdict = "";
+  if (last.engine) verdict = `<b>${esc(fig(last.san))}</b> – bester Zug laut Engine.`;
+  else if (last.pending) verdict = `<span class="muted">Bewerte ${esc(fig(last.san))} …</span>`;
+  else if (last.review) {
+    const r = last.review;
+    verdict = `<b>${esc(fig(r.san))}</b> ist ${CLASSES[r.classification].phrase}. ${esc(fig(r.comment))}`;
+  }
+  return `<div class="explore-line">${moves}</div><div class="explore-verdict">${verdict}</div>`;
+}
+
 /** Replay your wrong move and the engine's best answer on the board. */
 async function showWhy() {
   const tryNow = lastTry;
@@ -445,18 +537,33 @@ function render(error?: string) {
     if (hint && (phase === "solve" || phase === "wrong") && p.moves[step]) {
       shapes.push({ orig: sq(p.moves[step], true), brush: "green" });
     }
-    if (phase === "solved" && lastMove) {
+    const last = explore[explore.length - 1];
+    if (phase === "solved" && lastMove && !last) {
       shapes.push({ orig: sq(lastMove, false), customSvg: { html: badgeSvg("#7cad3f", "✓") } });
     }
+    if (last?.review) {
+      const c = CLASSES[last.review.classification];
+      shapes.push({ orig: sq(last.uci, false), customSvg: { html: badgeSvg(c.color, esc(c.symbol)) } });
+    }
+    const shownFen = viewFen();
+    const shownMove = last ? last.uci : lastMove;
     board.set({
-      fen,
+      fen: shownFen,
       orientation: me,
-      turnColor: sideOf(fen),
-      lastMove: lastMove ? [sq(lastMove, true), sq(lastMove, false)] : undefined,
-      check: false,
+      turnColor: sideOf(shownFen),
+      lastMove: shownMove ? [sq(shownMove, true), sq(shownMove, false)] : undefined,
+      check: last ? last.check : false,
       movable: { color: undefined, dests: new Map() },
     });
     board.setAutoShapes(shapes);
+    if (finished()) {
+      // Both sides may move: always the side to move.
+      const t = token;
+      invoke<PositionInfo>("position_info", { fen: shownFen }).then((info) => {
+        if (t !== token || !active || !finished() || viewFen() !== shownFen) return;
+        board.set({ movable: { color: sideOf(shownFen), dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
+      });
+    }
     if (phase === "solve" || phase === "wrong") {
       const t = token;
       invoke<PositionInfo>("position_info", { fen }).then((info) => {
@@ -604,9 +711,15 @@ function renderText(error?: string) {
     const parts: string[] = [];
     if (themes.length) parts.push(`<span class="muted">Themen:</span> ${themes.join(", ")}`);
     if (p.own) parts.push(`<span class="muted">In der Partie:</span> ${esc(fig(p.own.comment))}`);
-    if (p.gameUrl) parts.push(`<span class="muted">Ursprung:</span> <span class="pz-url">${esc(p.gameUrl)}</span>`);
-    extra.innerHTML = parts.join("<br>");
-    actions.innerHTML = `<button data-act="next" class="primary">Nächstes Puzzle →</button>`;
+    if (p.gameUrl && p.kind === "lichess") parts.push(`<span class="muted">Ursprung:</span> <span class="pz-url">${esc(p.gameUrl)}</span>`);
+    extra.innerHTML = (finished() ? exploreText() : "") + parts.join("<br>") + (exploreNote ? `<br><span class="muted">${esc(exploreNote)}</span>` : "");
+    const gameBtn = p.own ? `<button data-act="game">Partie öffnen</button>` : "";
+    actions.innerHTML = finished()
+      ? `<button data-act="engine" ${engineBusy ? "disabled" : ""}>${engineBusy ? "Engine rechnet …" : "Engine zieht"}</button>
+         ${explore.length ? `<button data-act="undo">Zug zurück</button><button data-act="reset">Zur Ausgangsstellung</button>` : ""}
+         ${gameBtn}
+         <button data-act="next" class="primary end">Nächstes Puzzle →</button>`
+      : `${gameBtn}<button data-act="next" class="primary end">Nächstes Puzzle →</button>`;
   } else if (phase === "showing") {
     const done = !!refute && refute.shown >= refute.moves.length;
     actions.innerHTML = `
@@ -615,7 +728,8 @@ function renderText(error?: string) {
   } else {
     const busy = phase === "opponent" || phase === "checking";
     const why = phase === "wrong" && lastTry ? `<button data-act="why" class="primary">Zeig mir, was passiert</button>` : "";
-    actions.innerHTML = `${why}
+    const game = p.own ? `<button data-act="game" title="Die Partie in der Review öffnen (das Puzzle wird abgebrochen)">Partie öffnen</button>` : "";
+    actions.innerHTML = `${why}${game}
       <button data-act="hint" ${hint || busy ? "disabled" : ""}>Tipp</button>
       <button data-act="solution" ${busy ? "disabled" : ""}>Lösung zeigen</button>
       <button data-act="skip" class="end">Überspringen</button>`;
@@ -649,6 +763,22 @@ function bindActions() {
             break;
           case "settings":
             deps.openSettings();
+            break;
+          case "engine":
+            engineMove();
+            break;
+          case "undo":
+            explore.pop();
+            exploreNote = "";
+            render();
+            break;
+          case "reset":
+            explore = [];
+            exploreNote = "";
+            render();
+            break;
+          case "game":
+            if (puzzle?.own) deps.openGame(puzzle.own.gameId, puzzle.own.ply);
             break;
         }
       }),

@@ -90,7 +90,12 @@ button.accent:hover {
   letter-spacing: -0.02em;
 }
 
-.brand span {
+.brand-name {
+  color: #ffffff;
+}
+
+/* only "mortem" is green */
+.brand-name > span {
   color: var(--accent);
 }
 
@@ -379,7 +384,13 @@ p.empty {
 }
 
 .controls {
+  /* Same width as the board row, minus the eval bar on the left (20px + 8px gap),
+     so the buttons are centred under the board itself. */
+  width: min(100%, calc(100vh - 230px) + 28px);
+  padding-left: 28px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
 }
 
@@ -1673,4 +1684,707 @@ button.icon {
 .vmv.engine {
   font-style: italic;
   color: #a9bedd;
+}
+
+.btn-group {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+button.danger {
+  color: #f0b7ae;
+  border-color: rgba(224, 97, 79, 0.5);
+}
+
+button.danger:hover {
+  background: rgba(224, 97, 79, 0.15);
+}
+
+/* free exploration after a puzzle */
+.explore-hint {
+  margin: 0 0 8px;
+  color: #c8d8ef;
+}
+
+.explore-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 6px;
+}
+
+.ex-mv {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.ex-mv .badge {
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+}
+
+.ex-mv.engine {
+  font-style: italic;
+  color: #a9bedd;
+}
+
+.explore-verdict {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+/* Navigation icons: own SVGs (unicode arrows sit at different heights per font) */
+.controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+}
+
+.ctl-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  display: block;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+}
+
+/* --- openings tab ---------------------------------------------------------- */
+
+.openings {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.op-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.pz-tag.op-review {
+  color: #f3dca4;
+  background: rgba(227, 179, 65, 0.15);
+}
+
+.op-repertoire h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.op-side {
+  margin-bottom: 12px;
+}
+
+.op-side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.op-side-head .muted {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.chip-x {
+  border: none;
+  background: none;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chip.suggest {
+  padding: 3px 10px;
+  cursor: pointer;
+  border-style: dashed;
+}
+
+.op-add {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.op-add input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.op-add input.invalid {
+  border-color: var(--danger);
+}
+
+.op-add select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+}
+
+/* statistics: your openings */
+.openings-panel {
+  margin-top: 16px;
+}
+
+.openings-report {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.op-col h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.op-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 6px;
+}
+
+.op-table td {
+  padding: 5px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.op-table td.num {
+  white-space: nowrap;
+}
+
+.op-table td.bad {
+  color: #f0b7ae;
+  font-weight: 700;
+}
+
+.op-fam {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-practice {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* --- opening browser --------------------------------------------------------- */
+
+.segmented.wide button {
+  flex: 1;
+}
+
+#op-mode {
+  align-self: flex-start;
+}
+
+.op-browse {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.op-browse input[type="search"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+
+#op-sort {
+  align-self: flex-start;
+}
+
+.op-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+  margin: 0 -6px;
+}
+
+.op-item {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.op-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* A tiny static board: brown squares + chessground's piece images. */
+.mini-board.cg-wrap {
+  width: 76px;
+  height: 76px;
+  position: relative;
+  border-radius: 3px;
+  overflow: hidden;
+  background-color: #b58863;
+  /* conic starts top-right: dark, light, dark, light -> a8 (top-left) is light */
+  background-image: repeating-conic-gradient(#b58863 0 25%, #f0d9b5 0 50%);
+  background-size: 25% 25%;
+}
+
+.mini-board.cg-wrap piece {
+  will-change: auto;
+  z-index: auto;
+}
+
+.op-info {
+  min-width: 0;
+}
+
+.op-title {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.op-moves {
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.op-meta {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.op-mine {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #d9f0bd;
+}
+
+.op-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.op-toggle {
+  padding: 3px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.op-toggle.on {
+  background: rgba(124, 173, 63, 0.18);
+  border-color: var(--accent);
+  color: #d9f0bd;
+}
+
+/* --- opening list: full width, big cards --------------------------------------- */
+
+.layout.op-browse-mode .board-area {
+  display: none;
+}
+
+.op-browse-view {
+  grid-column: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.op-browse-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.op-browse-head h2 {
+  margin: 0 8px 0 4px;
+  font-size: 20px;
+}
+
+.op-browse-head input[type="search"] {
+  flex: 1 1 260px;
+  max-width: 420px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.op-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+  align-content: start;
+}
+
+.op-card {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.op-card:hover {
+  border-color: #4a4945;
+}
+
+.mini-board.cg-wrap.big {
+  width: 140px;
+  height: 140px;
+  border-radius: 4px;
+}
+
+.op-card-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.op-card .op-title {
+  font-size: 15px;
+}
+
+.op-card .op-moves {
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.op-card-actions {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.op-side-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.op-learn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.op-remove {
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.op-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.op-progress .bar-track {
+  width: 60px;
+}
+
+
+/* --- openings: training sidebar ------------------------------------------- */
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #8fb4e8;
+  font-size: 12px;
+}
+
+button.link:hover {
+  text-decoration: underline;
+}
+
+/* two-tone learning bar: green = learned, light = in progress */
+.learn-bar {
+  display: inline-flex;
+  flex: none;
+  width: 90px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #34332f;
+}
+
+.lb-learned {
+  background: var(--accent);
+}
+
+.lb-started {
+  background: rgba(124, 173, 63, 0.4);
+}
+
+.op-focus {
+  padding: 10px 12px;
+}
+
+.op-focus-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.op-focus-top .pdot {
+  margin-top: 3px;
+}
+
+.op-focus-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.op-focus-sub {
+  font-size: 12px;
+  color: #c8d8ef;
+  margin-top: 2px;
+}
+
+.op-focus-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.op-focus-progress .learn-bar {
+  width: 120px;
+}
+
+.op-variations {
+  padding: 10px 8px;
+}
+
+.op-variations h3 {
+  margin: 0 4px;
+  font-size: 14px;
+}
+
+.op-variations .panel-sub {
+  margin: 2px 4px 8px;
+}
+
+.var-group {
+  border-radius: 6px;
+}
+
+.var-group.selected {
+  background: rgba(124, 173, 63, 0.08);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.var-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+}
+
+.var-toggle {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  color: var(--muted);
+  width: 20px;
+}
+
+.var-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 3px 2px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.var-name:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.var-row .learn-bar {
+  width: 60px;
+}
+
+.var-count {
+  width: 54px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.var-lines {
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px 6px 30px;
+}
+
+.var-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.var-line:hover {
+  background: var(--panel-2);
+}
+
+.var-line.current {
+  background: rgba(91, 141, 214, 0.15);
+}
+
+.var-line.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.line-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.line-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4a4845;
+}
+
+.line-dot.started {
+  background: rgba(124, 173, 63, 0.5);
+}
+
+.line-dot.learned {
+  background: var(--accent);
+}
+
+.op-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.op-summary-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.op-rep-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 6px;
+}
+
+.op-rep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.op-progress-text {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.engine-mark {
+  color: #a9bedd;
+  cursor: help;
+  border-bottom: 1px dotted #a9bedd;
+}
+
+.pz-tag.op-practice-tag {
+  color: #c8d8ef;
+  background: rgba(91, 141, 214, 0.18);
 }

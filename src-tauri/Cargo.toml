@@ -3,6 +3,8 @@ name = "postmortem"
 version = "0.1.0"
 description = "Review your Lichess games with Stockfish and a rule-based coach"
 authors = ["event173"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/event173/postmortem"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

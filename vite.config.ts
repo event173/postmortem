@@ -23,8 +23,20 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and build/packaging output
+      //    (Flatpak build dirs contain symlink loops that crash the watcher)
+      ignored: [
+        "**/src-tauri/**",
+        "**/build-dir/**",
+        "**/.flatpak-builder/**",
+        "**/packaging/**",
+        "**/assets/**",
+        "**/dist/**",
+      ],
     },
+  },
+  // Only scan our own entry point for dependencies, never build output.
+  optimizeDeps: {
+    entries: ["index.html"],
   },
 }));

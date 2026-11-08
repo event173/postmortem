@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Flatpak build output
+build-dir/
+.flatpak-builder/
+repo/
+*.flatpak
+
+# Stockfish binaries fetched for release builds
+src-tauri/binaries/

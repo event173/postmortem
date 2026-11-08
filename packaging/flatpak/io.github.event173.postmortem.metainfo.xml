@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.event173.postmortem</id>
+  <name>postmortem</name>
+  <summary>Review your Lichess and chess.com games</summary>
+  <summary xml:lang="de">Analysiere deine Lichess- und chess.com-Partien</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.event173">
+    <name>event173</name>
+  </developer>
+  <description>
+    <p>
+      postmortem reviews your chess games locally with Stockfish: every move gets
+      a classification from brilliant to blunder, and a coach explains in plain
+      words why a move was bad – a hanging piece, an allowed fork, a missed mate.
+    </p>
+    <ul>
+      <li>Loads your games from Lichess and chess.com, works offline afterwards</li>
+      <li>Move classifications, accuracy, eval graph and a live engine</li>
+      <li>Explore variations and replay your own mistakes as exercises</li>
+      <li>Statistics of your weaknesses across all your games</li>
+      <li>Puzzle training from the Lichess puzzle database, picked for your weaknesses</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.event173.postmortem.desktop</launchable>
+  <url type="homepage">https://github.com/event173/postmortem</url>
+  <url type="bugtracker">https://github.com/event173/postmortem/issues</url>
+  <url type="vcs-browser">https://github.com/event173/postmortem</url>
+  <categories>
+    <category>Game</category>
+    <category>BoardGame</category>
+  </categories>
+  <keywords>
+    <keyword>chess</keyword>
+    <keyword>Lichess</keyword>
+    <keyword>Stockfish</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <releases>
+    <release version="0.1.0" date="2026-11-08">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

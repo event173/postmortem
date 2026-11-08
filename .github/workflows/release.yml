@@ -1,0 +1,79 @@
+# Builds installers for Windows and Linux when a version tag is pushed
+# (e.g. `git tag v0.2.0 && git push origin v0.2.0`) and attaches them to a
+# draft GitHub release. Stockfish 19 (official build, GPL-3.0) is bundled.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            stockfish: stockfish-windows-x86-64-universal.zip
+          # Older Ubuntu = older glibc = runs on more distributions.
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            stockfish: stockfish-linux-x86-64-universal.tar.gz
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - name: Fetch Stockfish
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries sf
+          curl -fsSL --retry 5 -o "sf/${{ matrix.stockfish }}" \
+            "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/${{ matrix.stockfish }}"
+          cd sf
+          case "${{ matrix.stockfish }}" in
+            *.zip) unzip -q "${{ matrix.stockfish }}" || 7z x "${{ matrix.stockfish }}" ;;
+            *) tar xzf "${{ matrix.stockfish }}" ;;
+          esac
+          exe=$(find . -type f -name 'stockfish-*-universal*' ! -name '*.zip' ! -name '*.tar.gz' | head -1)
+          test -n "$exe"
+          ext=""; case "$exe" in *.exe) ext=".exe" ;; esac
+          cp "$exe" "../src-tauri/binaries/stockfish-${{ matrix.target }}$ext"
+          ls -la ../src-tauri/binaries
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: postmortem ${{ github.ref_name }}
+          releaseBody: |
+            Windows: Installer (.exe oder .msi) herunterladen und ausführen. Beim ersten Start
+            zeigt Windows evtl. „Unbekannter Herausgeber“ – „Weitere Informationen“ → „Trotzdem ausführen“.
+            Linux: .AppImage (ausführbar machen und starten) oder .deb.
+            Stockfish 19 ist enthalten.
+          releaseDraft: true
+          args: --config src-tauri/tauri.release.conf.json

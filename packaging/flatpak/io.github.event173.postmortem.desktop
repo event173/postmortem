@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=postmortem
+GenericName=Chess Game Review
+GenericName[de]=Schach-Partieanalyse
+Comment=Review your Lichess and chess.com games with Stockfish
+Comment[de]=Analysiere deine Lichess- und chess.com-Partien mit Stockfish
+Exec=postmortem
+Icon=io.github.event173.postmortem
+Terminal=false
+Categories=Game;BoardGame;
+Keywords=chess;schach;lichess;chess.com;stockfish;analysis;puzzle;
+StartupWMClass=io.github.event173.postmortem

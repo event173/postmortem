@@ -31,6 +31,20 @@ export interface StatsDeps {
   openGame: (gameId: string, ply: number) => void;
   /** Called after the batch analysed a game (to refresh "analysed" markers). */
   onGamesAnalysed: () => void;
+  /** "Üben" on an opening: add it to the repertoire and open the trainer. */
+  practiceOpening: (color: "white" | "black", family: string) => void;
+}
+
+interface OpeningStat {
+  color: "white" | "black";
+  family: string;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  accuracyAvg: number;
+  openingErrors: number;
+  gamesWithError: number;
 }
 
 export const THEMES: Record<Theme, { label: string; tip: string }> = {
@@ -120,10 +134,14 @@ export async function loadStats() {
   }
   const token = ++loadToken;
   try {
-    const s = await invoke<WeaknessStats>("weakness_stats", { accounts, last: windowLast() });
+    const [s, openings] = await Promise.all([
+      invoke<WeaknessStats>("weakness_stats", { accounts, last: windowLast() }),
+      invoke<OpeningStat[]>("opening_report", { accounts, last: windowLast() }),
+    ]);
     if (token !== loadToken) return;
     stats = s;
     render();
+    renderOpenings(openings);
   } catch (e) {
     body.innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
   }
@@ -175,6 +193,11 @@ function render() {
           <div class="trend-wrap"><svg id="trend" class="trend"></svg></div>
         </div>
       </div>
+    </div>
+    <div class="panel openings-panel">
+      <h3>Deine Eröffnungen</h3>
+      <p class="panel-sub">Ergebnis, Genauigkeit und Fehler in den ersten 12 Zügen – mit „Üben“ kommt die Eröffnung in dein Repertoire.</p>
+      <div id="openings-report" class="openings-report"></div>
     </div>`;
 
   bindThemeRows();
@@ -210,6 +233,35 @@ function renderThemes(themes: ThemeStat[], games: number): string {
       </div>`;
     })
     .join("");
+}
+
+function renderOpenings(list: OpeningStat[]) {
+  const el = document.getElementById("openings-report");
+  if (!el) return;
+  const side = (color: "white" | "black", label: string) => {
+    const rows = list.filter((o) => o.color === color).slice(0, 8);
+    if (!rows.length) return `<div class="op-col"><h4>${label}</h4><p class="muted">Keine analysierten Partien.</p></div>`;
+    return `<div class="op-col"><h4>${label}</h4><table class="op-table">
+      <tr><th>Eröffnung</th><th>Partien</th><th>Ergebnis</th><th title="Partien mit Fehler oder Patzer in den ersten 12 Zügen">Eröffnungsfehler</th><th></th></tr>
+      ${rows
+        .map((o) => {
+          const score = Math.round(((o.wins + o.draws / 2) / o.games) * 100);
+          const errPct = Math.round((o.gamesWithError / o.games) * 100);
+          return `<tr>
+            <td class="op-fam" title="${esc(o.family)}">${esc(o.family)}</td>
+            <td class="num">${o.games}</td>
+            <td class="num" title="${o.wins} Siege, ${o.draws} Remis, ${o.losses} Niederlagen">${score} %<span class="muted"> · ${o.wins}/${o.draws}/${o.losses}</span></td>
+            <td class="num ${errPct >= 50 ? "bad" : ""}" title="${o.openingErrors} Fehler in ${o.gamesWithError} von ${o.games} Partien">${errPct} %</td>
+            <td><button class="op-practice" data-color="${o.color}" data-family="${esc(o.family)}">Üben</button></td>
+          </tr>`;
+        })
+        .join("")}
+    </table></div>`;
+  };
+  el.innerHTML = side("white", "Als Weiß") + side("black", "Als Schwarz");
+  el.querySelectorAll<HTMLElement>(".op-practice").forEach((b) =>
+    b.addEventListener("click", () => deps.practiceOpening(b.dataset.color as "white" | "black", b.dataset.family!)),
+  );
 }
 
 /** ↓ improving / ↑ getting worse, compared with the average over all games. */

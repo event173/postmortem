@@ -26,7 +26,7 @@ pub enum Phase {
     Endgame,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Example {
     pub game_id: String,

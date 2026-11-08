@@ -107,6 +107,13 @@ pub fn detect_stockfish() -> Option<PathBuf> {
         }
     }
     let exe = if cfg!(windows) { "stockfish.exe" } else { "stockfish" };
+    // Bundled with the app (Windows installer, Flatpak): next to our executable.
+    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        let bundled = dir.join(exe);
+        if bundled.is_file() {
+            return Some(bundled);
+        }
+    }
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
             let candidate = dir.join(exe);

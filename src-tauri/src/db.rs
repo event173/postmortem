@@ -44,7 +44,30 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX puzzle_log_puzzle ON puzzle_log(puzzle_id, at);
      CREATE INDEX puzzle_log_theme ON puzzle_log(theme, at);",
+    // 5: opening trainer (spaced repetition per line and colour)
+    "CREATE TABLE opening_progress (
+        line_id   TEXT NOT NULL,
+        color     TEXT NOT NULL,
+        box       INTEGER NOT NULL,
+        due       INTEGER NOT NULL,
+        attempts  INTEGER NOT NULL,
+        successes INTEGER NOT NULL,
+        PRIMARY KEY (line_id, color)
+     );",
+    // 6: engine continuation of opening lines (computed once)
+    "CREATE TABLE line_extension (line_id TEXT PRIMARY KEY, moves TEXT NOT NULL);",
 ];
+
+/// Spaced-repetition state of one opening line for one colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineProgress {
+    /// Leitner box 1..=5 (higher = known better).
+    pub box_: u8,
+    /// Unix ms when it is due again.
+    pub due: i64,
+    pub attempts: u32,
+    pub successes: u32,
+}
 
 /// One puzzle attempt.
 #[derive(Debug, Clone)]
@@ -318,6 +341,56 @@ impl Db {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map_err(sql_err)
+    }
+
+    /// Progress of all lines for a colour ("white"/"black").
+    pub fn opening_progress(&self, color: &str) -> Result<std::collections::HashMap<String, LineProgress>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT line_id, box, due, attempts, successes FROM opening_progress WHERE color = ?1")
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map([color], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    LineProgress { box_: r.get(1)?, due: r.get(2)?, attempts: r.get(3)?, successes: r.get(4)? },
+                ))
+            })
+            .map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    pub fn set_opening_progress(&self, line_id: &str, color: &str, p: &LineProgress) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO opening_progress (line_id, color, box, due, attempts, successes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(line_id, color) DO UPDATE SET
+                    box = excluded.box, due = excluded.due,
+                    attempts = excluded.attempts, successes = excluded.successes",
+                params![line_id, color, p.box_, p.due, p.attempts, p.successes],
+            )
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    pub fn line_extension(&self, line_id: &str) -> Result<Option<Vec<String>>, String> {
+        let moves: Option<String> = self
+            .conn
+            .query_row("SELECT moves FROM line_extension WHERE line_id = ?1", [line_id], |r| r.get(0))
+            .optional()
+            .map_err(sql_err)?;
+        Ok(moves.map(|m| m.split_whitespace().map(String::from).collect()))
+    }
+
+    pub fn set_line_extension(&self, line_id: &str, moves: &[String]) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO line_extension (line_id, moves) VALUES (?1, ?2)",
+                params![line_id, moves.join(" ")],
+            )
+            .map_err(sql_err)?;
+        Ok(())
     }
 
     /// Number of stored games and reviews (for the settings dialog).

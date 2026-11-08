@@ -171,6 +171,22 @@ pub fn refutation(fen: &str, uci: &str, depth: u32) -> Result<Refutation, String
     })
 }
 
+/// The engine's best line from a position (e.g. "let the engine move").
+pub fn engine_line(fen: &str, depth: u32, plies: usize) -> Result<Refutation, String> {
+    let pos = analysis::parse_fen(fen)?;
+    if let Some(lines) = analysis::terminal_eval(&pos) {
+        let score = if pos.turn() == Color::White { lines[0].score } else { lines[0].score.negate() };
+        return Ok(Refutation { moves: vec![], score: Some(score), text: String::new() });
+    }
+    let path = engine::find_stockfish()
+        .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+    let mut sf = engine::Engine::start(&path, engine::threads(true), 64, 1)?;
+    let best = sf.analyse(fen, depth)?.into_iter().next().ok_or("Die Engine hat keinen Zug gefunden.")?;
+    let pv: Vec<String> = best.pv.into_iter().take(plies).collect();
+    let score = if pos.turn() == Color::White { best.score } else { best.score.negate() };
+    Ok(Refutation { moves: line_moves(fen, &pv)?, score: Some(score), text: coach::san_line(&pos, &pv, pv.len()) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +236,15 @@ mod tests {
         assert_eq!(r.moves[0].san, "Qxf7#");
         assert_eq!(r.text, "4. Qxf7#");
         assert_eq!(r.score.unwrap().win_percent(), 100.0);
+    }
+
+    #[test]
+    fn engine_line_on_finished_game_is_empty() {
+        // Fool's mate: White is checkmated, nothing to play.
+        let fen = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3";
+        let r = engine_line(fen, 10, 4).unwrap();
+        assert!(r.moves.is_empty());
+        assert_eq!(r.score.unwrap().win_percent(), 0.0);
     }
 
     #[test]
