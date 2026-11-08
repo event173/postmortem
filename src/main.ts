@@ -25,6 +25,7 @@ import {
   type PlayedMove,
   type PositionInfo,
   type Progress,
+  type Refutation,
   type Account,
   type Platform,
   type Score,
@@ -466,7 +467,8 @@ listen<Progress>("analysis-progress", (e) => {
 
 // --- animated playback (used when jumping to the next mistake) -------------
 
-let playback: { timer: number; target: number } | null = null;
+/** Running animated playback: along the game (`main`) or through the variation (`var`). */
+let playback: { timer: number; target: number; kind: "main" | "var" } | null = null;
 
 function stopPlayback() {
   if (playback) clearTimeout(playback.timer);
@@ -489,10 +491,10 @@ function playTo(target: number) {
     if (state.ply >= target) {
       playback = null;
     } else {
-      playback = { timer: window.setTimeout(step, stepMs), target };
+      playback = { timer: window.setTimeout(step, stepMs), target, kind: "main" };
     }
   };
-  playback = { timer: window.setTimeout(step, 0), target };
+  playback = { timer: window.setTimeout(step, 0), target, kind: "main" };
 }
 
 /** User navigation on the main line: cancels playback and leaves any variation. */
@@ -511,12 +513,90 @@ function show(ply: number) {
 
 /** Show the position after `index` moves of the variation (0 = branch point). */
 function showVar(index: number) {
+  stopPlayback();
+  showVarStep(index);
+}
+
+/** Like showVar, but keeps a running playback going. */
+function showVarStep(index: number) {
   const v = state.variation;
   if (!v || training || isPuzzleMode()) return;
-  stopPlayback();
   state.inVar = true;
   state.varIndex = Math.max(0, Math.min(index, v.nodes.length));
   renderPosition();
+}
+
+/** Step through the variation up to `target`, animated. */
+function playVarTo(target: number) {
+  stopPlayback();
+  const step = () => {
+    if (!state.variation || state.varIndex >= target) {
+      playback = null;
+      return;
+    }
+    showVarStep(state.varIndex + 1);
+    playback = { timer: window.setTimeout(step, animMs + 450), target, kind: "var" };
+  };
+  playback = { timer: window.setTimeout(step, 400), target, kind: "var" };
+}
+
+/** Position before the n-th variation move (1-based). */
+function varFenBefore(index: number): string {
+  const v = state.variation!;
+  return index <= 1 ? state.review!.fens[v.basePly] : v.nodes[index - 2].fen;
+}
+
+/**
+ * "Zeig mir, was passiert": append the engine's best continuation after the
+ * bad move on the board as a variation and play it.
+ */
+async function showConsequence() {
+  const r = state.review;
+  if (!r) return;
+  stopPlayback();
+  const node = currentVarNode();
+  let fenBefore: string;
+  let uci: string;
+  if (node?.review) {
+    fenBefore = varFenBefore(state.varIndex);
+    uci = node.uci;
+  } else if (!state.inVar && r.moves[state.ply - 1]) {
+    fenBefore = r.fens[state.ply - 1];
+    uci = r.moves[state.ply - 1].uci;
+  } else {
+    return;
+  }
+  const btn = document.getElementById("btn-why") as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Rechne …";
+  }
+  const where = { inVar: state.inVar, ply: state.ply, varIndex: state.varIndex, variation: state.variation };
+  let refutation: Refutation;
+  try {
+    refutation = await invoke<Refutation>("refutation", { fen: fenBefore, uci });
+  } catch (e) {
+    if (btn) btn.textContent = String(e);
+    return;
+  }
+  // The user moved on while the engine was thinking.
+  if (where.inVar !== state.inVar || where.ply !== state.ply || where.varIndex !== state.varIndex || where.variation !== state.variation) return;
+  const continuation = refutation.moves.slice(1);
+  if (!continuation.length) {
+    if (btn) btn.textContent = "Danach ist die Partie vorbei.";
+    return;
+  }
+  if (!state.inVar) {
+    state.variation = { basePly: state.ply, nodes: [] };
+    state.inVar = true;
+    state.varIndex = 0;
+  }
+  const v = state.variation!;
+  v.nodes.length = state.varIndex;
+  for (const m of continuation) v.nodes.push({ fen: m.fen, san: m.san, uci: m.uci, check: m.check, engine: true });
+  renderMoveList();
+  showVarStep(state.varIndex);
+  playVarTo(v.nodes.length);
 }
 
 function backToGame() {
@@ -807,6 +887,13 @@ function renderCoach() {
   const r = state.review!;
   const node = currentVarNode();
   const tag = state.inVar ? `<span class="var-tag">Variante</span>` : "";
+  if (node?.engine) {
+    head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span><span class="var-tag engine">Engine-Fortsetzung</span>`;
+    head.style.setProperty("--c", "#5b8dd6");
+    text.innerHTML = `So würde es nach dem Fehler weitergehen – die besten Züge laut Stockfish.`;
+    best.innerHTML = `<span class="muted">Mit Esc oder „↩ Zur Partie“ geht es zurück. Du kannst von hier aus auch selbst weiterziehen.</span>`;
+    return;
+  }
   if (node && !node.review) {
     head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span>${tag}`;
     head.style.setProperty("--c", "var(--border)");
@@ -834,6 +921,10 @@ function renderCoach() {
   best.innerHTML = showBest
     ? `<span class="best-label">Bester Zug</span> <b>${esc(fig(move.bestSan!))}</b>${move.bestLine ? `<div class="best-line">${esc(fig(move.bestLine))}</div>` : ""}`
     : "";
+  if (BAD.includes(move.classification)) {
+    best.innerHTML += `<button id="btn-why" class="why-btn">Zeig mir, was passiert</button>`;
+    $("btn-why").addEventListener("click", showConsequence);
+  }
 }
 
 function renderSummary() {
@@ -868,8 +959,8 @@ function renderVariation(): string {
     const ply = v.basePly + i + 1;
     const white = ply % 2 === 1;
     const num = white ? `${(ply + 1) / 2}. ` : i === 0 ? `${ply / 2}... ` : "";
-    const mark = n.review ? badgeIfNotable(n.review.classification) : n.error ? "" : `<span class="pending"></span>`;
-    return `<button class="vmv" data-var="${i + 1}">${num}${mark}<span>${esc(fig(n.san))}</span></button>`;
+    const mark = n.review ? badgeIfNotable(n.review.classification) : n.error || n.engine ? "" : `<span class="pending"></span>`;
+    return `<button class="vmv${n.engine ? " engine" : ""}" data-var="${i + 1}">${num}${mark}<span>${esc(fig(n.san))}</span></button>`;
   });
   return `<div class="variation">${parts.join("")}<button class="var-close" title="Variante löschen">✕</button></div>`;
 }
@@ -963,13 +1054,15 @@ type TrainResult = "solved" | "hint" | "shown" | "skipped";
 interface Training {
   items: MoveReview[];
   index: number;
-  phase: "solve" | "checking" | "wrong" | "solved" | "done";
+  phase: "solve" | "checking" | "wrong" | "showing" | "solved" | "done";
   results: (TrainResult | null)[];
   hint: boolean;
   /** The user's last try (wrong or right) and the engine's verdict on it. */
   attempt: { played: PlayedMove; review?: MoveReview } | null;
   /** While true the board still shows the wrong try before snapping back. */
   showAttempt: boolean;
+  /** Engine continuation after the wrong try, while it's played on the board. */
+  refute?: Refutation & { uci: string; shown: number };
 }
 
 let training: Training | null = null;
@@ -1145,6 +1238,11 @@ function renderTraining() {
     return;
   }
 
+  if (t.phase === "showing") {
+    renderTrainingShowing(t);
+    return;
+  }
+
   const item = t.items[t.index];
   const fen = r.fens[item.ply - 1];
   const prevMove = r.moves[item.ply - 2];
@@ -1207,6 +1305,7 @@ function renderTraining() {
       text.innerHTML = rv
         ? `${badgeHtml(rv.classification)} <b>${esc(fig(rv.san))}</b> ist ${CLASSES[rv.classification].phrase}. ${esc(fig(rv.comment))}<br><span class="muted">Versuch es nochmal.</span>`
         : `<b>${esc(fig(t.attempt!.played.san))}</b> ist nicht besser. <span class="muted">Versuch es nochmal.</span>`;
+      if (t.hint && item.bestUci) text.innerHTML += `<br><span class="hint-text">Tipp: Zieh mit der markierten Figur.</span>`;
       break;
     }
     case "solved": {
@@ -1228,10 +1327,89 @@ function renderTraining() {
   actions.innerHTML =
     t.phase === "solved"
       ? `<button data-act="exit">Beenden</button><button data-act="next" class="primary">${last ? "Ergebnis" : "Weiter"} →</button>`
-      : `<button data-act="hint" ${t.hint || t.phase === "checking" ? "disabled" : ""}>Tipp</button>
+      : `${t.phase === "wrong" && t.attempt ? `<button data-act="why" class="primary">Zeig mir, was passiert</button>` : ""}
+         <button data-act="hint" ${t.hint || t.phase === "checking" ? "disabled" : ""}>Tipp</button>
          <button data-act="solution" ${t.phase === "checking" ? "disabled" : ""}>Lösung zeigen</button>
          <button data-act="skip">Überspringen</button>
          <button data-act="exit" class="end">Beenden</button>`;
+  bindTrainingActions();
+}
+
+/** Play the wrong try and the engine's answer on the board. */
+async function showTrainingWhy() {
+  const t = training;
+  const r = state.review;
+  if (!t || !r || !t.attempt) return;
+  clearTimeout(trainTimer);
+  const item = t.items[t.index];
+  const fenBefore = r.fens[item.ply - 1];
+  const uci = t.attempt.played.uci;
+  t.phase = "showing";
+  if (!t.refute || t.refute.uci !== uci) {
+    t.refute = undefined;
+    renderTraining();
+    try {
+      const ref = await invoke<Refutation>("refutation", { fen: fenBefore, uci });
+      t.refute = { ...ref, uci, shown: 0 };
+    } catch (e) {
+      if (training !== t) return;
+      t.phase = "wrong";
+      renderTraining();
+      $("coach-text").innerHTML += `<br><span class="error">${esc(String(e))}</span>`;
+      return;
+    }
+    if (training !== t || t.phase !== "showing") return;
+  }
+  const ref = t.refute!;
+  ref.shown = 0;
+  const prev = r.moves[item.ply - 2];
+  board.set({
+    fen: fenBefore,
+    lastMove: prev ? [prev.uci.slice(0, 2) as Key, prev.uci.slice(2, 4) as Key] : undefined,
+    check: false,
+    movable: { color: undefined, dests: new Map() },
+  });
+  board.setAutoShapes([]);
+  renderTraining();
+  const stepOnce = () => {
+    if (training !== t || t.phase !== "showing") return;
+    const m = ref.moves[ref.shown];
+    if (!m) return renderTraining();
+    board.set({ fen: m.fen, lastMove: [m.uci.slice(0, 2) as Key, m.uci.slice(2, 4) as Key], check: m.check });
+    board.setAutoShapes(ref.shown === 0 ? [{ orig: m.uci.slice(2, 4) as Key, customSvg: { html: badgeSvg("blunder") } }] : []);
+    ref.shown++;
+    renderTraining();
+    trainTimer = window.setTimeout(stepOnce, animMs + 550);
+  };
+  trainTimer = window.setTimeout(stepOnce, 350);
+}
+
+function renderTrainingShowing(t: Training) {
+  const head = $("coach-head");
+  const text = $("coach-text");
+  const actions = $("training-actions");
+  head.innerHTML = `<span class="coach-title">Aufgabe ${t.index + 1} von ${t.items.length}</span>${trainingDots()}`;
+  head.style.setProperty("--c", "var(--danger)");
+  const ref = t.refute;
+  if (!ref) {
+    text.innerHTML = `<span class="muted">Berechne, wie der Gegner antwortet …</span>`;
+    actions.innerHTML = `<button data-act="back">Zurück zur Aufgabe</button>`;
+  } else {
+    let i = 0;
+    const line = ref.text
+      .split(" ")
+      .map((tok) => {
+        if (/^\d+\.+$/.test(tok)) return `<span class="muted">${tok}</span>`;
+        const cls = i === 0 ? "ref-mine" : i < ref.shown ? "ref-shown" : "ref-next";
+        i++;
+        return `<span class="${cls}">${esc(fig(tok))}</span>`;
+      })
+      .join(" ");
+    text.innerHTML = `<b>So geht es nach deinem Zug weiter:</b><br><span class="ref-line">${line}</span>`;
+    const done = ref.shown >= ref.moves.length;
+    actions.innerHTML = `<button data-act="why" ${done ? "" : "disabled"}>Nochmal abspielen</button>
+      <button data-act="back" class="primary">Zurück zur Aufgabe</button>`;
+  }
   bindTrainingActions();
 }
 
@@ -1245,6 +1423,15 @@ function bindTrainingActions() {
         switch (b.dataset.act) {
           case "hint":
             t.hint = true;
+            renderTraining();
+            break;
+          case "why":
+            showTrainingWhy();
+            break;
+          case "back":
+            clearTimeout(trainTimer);
+            t.phase = "wrong";
+            t.showAttempt = false;
             renderTraining();
             break;
           case "solution":
@@ -1278,10 +1465,11 @@ function nextMistake() {
   const r = state.review;
   if (!r) return;
   // Pressing again while it is still playing skips straight to the mistake.
-  if (playback) {
+  if (playback?.kind === "main") {
     goto(playback.target);
     return;
   }
+  stopPlayback();
   if (state.inVar) state.ply = mainPly();
   const me = (state.game && userColor(state.game)) ?? state.orientation;
   const next = r.moves.find((m) => m.ply > state.ply && m.color === me && ["mistake", "miss", "blunder"].includes(m.classification));

@@ -161,6 +161,22 @@ export interface VarNode {
   check: boolean;
   review?: MoveReview;
   error?: string;
+  /** Played by the engine (continuation shown after a mistake), not by you. */
+  engine?: boolean;
+}
+
+/** A move of an engine line, with the position after it. */
+export interface LineMove {
+  uci: string;
+  san: string;
+  fen: string;
+  check: boolean;
+}
+
+/** Your move plus the engine's best continuation. */
+export interface Refutation {
+  moves: LineMove[];
+  text: string;
 }
 
 /** A game from the local store. */

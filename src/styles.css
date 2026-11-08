@@ -1411,35 +1411,46 @@ button.icon {
   opacity: 1;
   font-family: system-ui, sans-serif;
   font-weight: 700;
-  font-size: clamp(11px, 1.55vmin, 15px);
+  font-size: clamp(13px, 1.95vmin, 18px);
 }
 
 .cg-wrap coords.ranks {
   left: 5px;
-  top: -24px;
-  width: 16px;
+  top: -28px;
+  width: 20px;
 }
 
 .cg-wrap coords.files {
-  bottom: -1px;
-  left: 28px;
-  height: 22px;
+  /* Each letter in the bottom-right corner of its square, clear of the piece. */
+  bottom: 1px;
+  left: 0;
+  height: 26px;
+  text-align: right;
   text-transform: none;
 }
 
-/* Text in the colour of the *other* square type, so it reads on both. */
+.cg-wrap coords.files coord {
+  flex: 1 1 0;
+  padding-right: 4px;
+}
+
+/* Text in the colour of the *other* square type, so it reads on both.
+   Ranks sit on the left file (a-file for White, h-file for Black), files on
+   the bottom rank. a1 is dark, h1 is light, a8 is light, h8 is dark. */
 .orientation-white .ranks :nth-child(odd),
-.orientation-white .files :nth-child(even),
+.orientation-white .files :nth-child(odd),
 .orientation-black .ranks :nth-child(even),
-.orientation-black .files :nth-child(odd) {
-  color: #8b6a4e;
+.orientation-black .files :nth-child(even) {
+  color: #f0d9b5;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.45);
 }
 
 .orientation-white .ranks :nth-child(even),
-.orientation-white .files :nth-child(odd),
+.orientation-white .files :nth-child(even),
 .orientation-black .ranks :nth-child(odd),
-.orientation-black .files :nth-child(even) {
-  color: #f0d9b5;
+.orientation-black .files :nth-child(odd) {
+  color: #7a5c42;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.35);
 }
 
 /* --- segmented control (stats window) ------------------------------------- */
@@ -1647,4 +1658,19 @@ button.icon {
   flex-basis: 100%;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* "Zeig mir, was passiert" in the review coach */
+.why-btn {
+  display: block;
+  margin-top: 10px;
+}
+
+.var-tag.engine {
+  color: #c8d8ef;
+}
+
+.vmv.engine {
+  font-style: italic;
+  color: #a9bedd;
 }
