@@ -1,15 +1,16 @@
 # postmortem
 
-Game review for your Lichess games – move classifications, accuracy and a
+Game review for your Lichess and chess.com games – move classifications, accuracy and a
 rule-based coach that explains *why* a move was bad. Runs locally: games are
-pulled from the public Lichess API, analysis happens with Stockfish on your
-machine.
+pulled from the public Lichess API and chess.com's Published-Data API,
+analysis happens with Stockfish on your machine.
 
 Built with [Tauri](https://tauri.app) (Rust backend, TypeScript frontend).
 
 ## Features
 
-- Load your recent games by Lichess username, or a single game by link
+- Load your recent games by Lichess or chess.com username (switch between
+  the platforms or show both), or a single Lichess game by link
 - Works offline: games and reviews are stored in a local SQLite database;
   on start only new games are synced from Lichess (older ones on demand)
 - Stockfish analysis of every position (MultiPV 2), stored with the game
@@ -82,6 +83,14 @@ Special cases: **Book** (within the opening Lichess names for the game),
 ≥ 20 % worse), **Brilliant** (best move that sacrifices ≥ 2 points of material
 and keeps a good position), **Miss** (opponent just erred or mate was
 available, and the move gives the chance away).
+
+## Data sources
+
+- Lichess API – games of a user / single games (no account needed)
+- chess.com Published-Data API – monthly game archives (no account needed)
+- [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
+  (CC0) – embedded in `src-tauri/data/openings.tsv` to name openings of
+  chess.com games offline
 
 ## License
 

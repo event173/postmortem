@@ -7,6 +7,7 @@ use shakmaty::{Position, Role};
 
 use crate::analysis::{self, Class, GameReview};
 use crate::coach::{piece_value, Theme};
+use crate::db::Account;
 use crate::lichess::GameInfo;
 
 /// Moves 1–10 count as opening.
@@ -101,8 +102,7 @@ fn phase_of(review: &GameReview, ply: usize) -> Phase {
 }
 
 /// `games` newest first, as returned by the database.
-pub fn compute(username: &str, games_total: usize, games: &[(GameInfo, GameReview)]) -> WeaknessStats {
-    let me = username.to_lowercase();
+pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, GameReview)]) -> WeaknessStats {
     let mut classes: HashMap<Class, usize> = HashMap::new();
     let mut themes: HashMap<Theme, ThemeStat> = HashMap::new();
     let mut phases: HashMap<Phase, PhaseStat> = HashMap::new();
@@ -112,6 +112,9 @@ pub fn compute(username: &str, games_total: usize, games: &[(GameInfo, GameRevie
     let mut counted = 0;
 
     for (game, review) in games {
+        let Some(me) = accounts.iter().find(|a| a.source == game.source).map(|a| a.username.to_lowercase()) else {
+            continue;
+        };
         let color = if game.white.name.to_lowercase() == me {
             "white"
         } else if game.black.name.to_lowercase() == me {
@@ -211,6 +214,8 @@ mod tests {
     fn game(id: &str, white: &str, black: &str, winner: Option<&str>, at: i64) -> GameInfo {
         GameInfo {
             id: id.into(),
+            source: Default::default(),
+            url: None,
             white: Player { name: white.into(), rating: None },
             black: Player { name: black.into(), rating: None },
             winner: winner.map(Into::into),
@@ -263,7 +268,7 @@ mod tests {
                 ),
             ),
         ];
-        let s = compute("ME", 5, &games);
+        let s = compute(&[Account::new(crate::lichess::Source::Lichess, "ME")], 5, &games);
         assert_eq!(s.games_total, 5);
         assert_eq!(s.games_analysed, 2);
         assert_eq!(s.moves, 4);

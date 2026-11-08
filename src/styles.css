@@ -1203,3 +1203,58 @@ button.icon {
   line-height: 1.45;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
+
+/* --- platform switch ------------------------------------------------------ */
+
+.source-switch {
+  display: flex;
+  gap: 2px;
+  margin: 8px 12px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.source-switch button {
+  flex: 1;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  padding: 5px 6px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.source-switch button.active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.platform {
+  position: absolute;
+  left: 30px;
+  top: 28px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  color: #fff;
+  border: 1px solid var(--panel);
+}
+
+.platform.lichess {
+  background: #555;
+}
+
+.platform.chesscom {
+  background: #6b8f3a;
+}
+
+.load-form input:disabled {
+  opacity: 0.6;
+}

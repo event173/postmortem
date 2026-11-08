@@ -4,11 +4,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { BatchProgress, Phase, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
+import type { Account, BatchProgress, Phase, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
 import { $, badgeHtml, esc, fig } from "./util";
 
 export interface StatsDeps {
-  username: () => string;
+  /** The accounts the statistics are about (depends on the platform switch). */
+  accounts: () => Account[];
   depth: () => number;
   /** Open a game in the review view at the given ply. */
   openGame: (gameId: string, ply: number) => void;
@@ -96,18 +97,18 @@ export function showStatsView(show: boolean) {
 }
 
 export async function loadStats() {
-  const username = deps.username();
+  const accounts = deps.accounts();
   const body = $("stats-body");
-  if (!username) {
+  if (!accounts.length) {
     stats = null;
     $("stats-basis").textContent = "";
-    body.innerHTML = `<p class="empty">Lade zuerst deine Partien über deinen Lichess-Namen.</p>`;
+    body.innerHTML = `<p class="empty">Lade zuerst deine Partien über deinen Namen.</p>`;
     renderBatch();
     return;
   }
   const token = ++loadToken;
   try {
-    const s = await invoke<WeaknessStats>("weakness_stats", { username });
+    const s = await invoke<WeaknessStats>("weakness_stats", { accounts });
     if (token !== loadToken) return;
     stats = s;
     render();
@@ -336,13 +337,13 @@ function renderBatch() {
 }
 
 async function startBatch() {
-  const username = deps.username();
-  if (!username || !stats) return;
+  const accounts = deps.accounts();
+  if (!accounts.length || !stats) return;
   const missing = stats.gamesTotal - stats.gamesAnalysed;
   batch = { done: 0, total: Math.min(missing, BATCH_SIZE), current: null, finished: false };
   renderBatch();
   try {
-    await invoke<number>("analyse_all", { username, depth: deps.depth(), limit: BATCH_SIZE });
+    await invoke<number>("analyse_all", { accounts, depth: deps.depth(), limit: BATCH_SIZE });
   } catch (e) {
     $("batch").innerHTML = `<span class="error">${esc(String(e))}</span>`;
   } finally {

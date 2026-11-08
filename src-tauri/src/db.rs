@@ -2,11 +2,11 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
 use crate::analysis::{GameReview, REVIEW_VERSION};
-use crate::lichess::GameInfo;
+use crate::lichess::{GameInfo, Source};
 
 /// Bump together with a new entry in `MIGRATIONS`.
 const MIGRATIONS: &[&str] = &[
@@ -27,6 +27,9 @@ const MIGRATIONS: &[&str] = &[
         data       TEXT NOT NULL,
         PRIMARY KEY (game_id, depth, version)
      );",
+    // 2: games from several platforms
+    "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT 'lichess';
+     CREATE INDEX games_source ON games(source, created_at);",
 ];
 
 pub struct Db {
@@ -40,6 +43,40 @@ pub struct StoredGame {
     pub game: GameInfo,
     /// A review with the current classification logic exists (any depth).
     pub analysed: bool,
+}
+
+/// A player account on one platform.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub source: Source,
+    pub username: String,
+}
+
+impl Account {
+    pub fn new(source: Source, username: &str) -> Account {
+        Account { source, username: username.trim().to_string() }
+    }
+}
+
+/// SQL condition matching games of any of the accounts (table alias `g`),
+/// with numbered placeholders starting at `first`. No accounts matches nothing.
+fn account_filter(accounts: &[Account], first: usize) -> (String, Vec<String>) {
+    if accounts.is_empty() {
+        return ("0".into(), vec![]);
+    }
+    let mut args = Vec::new();
+    let parts: Vec<String> = accounts
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let (s, u) = (first + 2 * i, first + 2 * i + 1);
+            args.push(a.source.as_str().to_string());
+            args.push(a.username.clone());
+            format!("(g.source = ?{s} AND (g.white = ?{u} OR g.black = ?{u}))")
+        })
+        .collect();
+    (parts.join(" OR "), args)
 }
 
 fn sql_err(e: rusqlite::Error) -> String {
@@ -74,7 +111,7 @@ impl Db {
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO games (id, created_at, white, black, data) VALUES (?1, ?2, ?3, ?4, ?5)
+                    "INSERT INTO games (id, source, created_at, white, black, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                      ON CONFLICT(id) DO UPDATE SET data = excluded.data",
                 )
                 .map_err(sql_err)?;
@@ -82,7 +119,7 @@ impl Db {
             for g in games {
                 let known = exists.exists([&g.id]).map_err(sql_err)?;
                 let json = serde_json::to_string(g).map_err(|e| e.to_string())?;
-                stmt.execute(params![g.id, g.created_at, g.white.name, g.black.name, json])
+                stmt.execute(params![g.id, g.source.as_str(), g.created_at, g.white.name, g.black.name, json])
                     .map_err(sql_err)?;
                 if !known {
                     inserted += 1;
@@ -93,20 +130,18 @@ impl Db {
         Ok(inserted)
     }
 
-    /// Games of a player, newest first.
-    pub fn games_of(&self, username: &str, limit: u32) -> Result<Vec<StoredGame>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT g.data, EXISTS(SELECT 1 FROM reviews r WHERE r.game_id = g.id AND r.version = ?3)
-                 FROM games g WHERE g.white = ?1 OR g.black = ?1
-                 ORDER BY g.created_at DESC LIMIT ?2",
-            )
-            .map_err(sql_err)?;
+    /// Games of the given accounts, newest first.
+    pub fn games_of(&self, accounts: &[Account], limit: u32) -> Result<Vec<StoredGame>, String> {
+        let (filter, mut args) = account_filter(accounts, 2);
+        args.insert(0, REVIEW_VERSION.to_string());
+        let sql = format!(
+            "SELECT g.data, EXISTS(SELECT 1 FROM reviews r WHERE r.game_id = g.id AND r.version = ?1)
+             FROM games g WHERE {filter}
+             ORDER BY g.created_at DESC LIMIT {limit}"
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_err)?;
         let rows = stmt
-            .query_map(params![username, limit, REVIEW_VERSION], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
-            })
+            .query_map(params_from_iter(args.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
             .map_err(sql_err)?;
         let mut out = Vec::new();
         for row in rows {
@@ -118,22 +153,20 @@ impl Db {
         Ok(out)
     }
 
-    /// All stored games of a player that have a current review (deepest one), newest first.
-    pub fn reviewed_games_of(&self, username: &str) -> Result<Vec<(GameInfo, GameReview)>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT g.data, r.data FROM games g
-                 JOIN reviews r ON r.game_id = g.id AND r.version = ?2
-                 WHERE (g.white = ?1 OR g.black = ?1)
-                   AND r.depth = (SELECT MAX(depth) FROM reviews WHERE game_id = g.id AND version = ?2)
-                 ORDER BY g.created_at DESC",
-            )
-            .map_err(sql_err)?;
+    /// All games of the accounts that have a current review (deepest one), newest first.
+    pub fn reviewed_games_of(&self, accounts: &[Account]) -> Result<Vec<(GameInfo, GameReview)>, String> {
+        let (filter, mut args) = account_filter(accounts, 2);
+        args.insert(0, REVIEW_VERSION.to_string());
+        let sql = format!(
+            "SELECT g.data, r.data FROM games g
+             JOIN reviews r ON r.game_id = g.id AND r.version = ?1
+             WHERE ({filter})
+               AND r.depth = (SELECT MAX(depth) FROM reviews WHERE game_id = g.id AND version = ?1)
+             ORDER BY g.created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(sql_err)?;
         let rows = stmt
-            .query_map(params![username, REVIEW_VERSION], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })
+            .query_map(params_from_iter(args.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
             .map_err(sql_err)?;
         let mut out = Vec::new();
         for row in rows {
@@ -145,10 +178,10 @@ impl Db {
         Ok(out)
     }
 
-    /// Stored games of a player without a current review, newest first.
-    pub fn unreviewed_games_of(&self, username: &str, limit: u32) -> Result<Vec<GameInfo>, String> {
+    /// Games of the accounts without a current review, newest first.
+    pub fn unreviewed_games_of(&self, accounts: &[Account], limit: u32) -> Result<Vec<GameInfo>, String> {
         Ok(self
-            .games_of(username, u32::MAX)?
+            .games_of(accounts, u32::MAX)?
             .into_iter()
             .filter(|g| !g.analysed)
             .take(limit as usize)
@@ -156,21 +189,23 @@ impl Db {
             .collect())
     }
 
-    pub fn count_games_of(&self, username: &str) -> Result<usize, String> {
+    pub fn count_games_of(&self, accounts: &[Account]) -> Result<usize, String> {
+        let (filter, args) = account_filter(accounts, 1);
         self.conn
-            .query_row("SELECT COUNT(*) FROM games WHERE white = ?1 OR black = ?1", [username], |r| {
+            .query_row(&format!("SELECT COUNT(*) FROM games g WHERE {filter}"), params_from_iter(args.iter()), |r| {
                 r.get::<_, i64>(0)
             })
             .map(|n| n as usize)
             .map_err(sql_err)
     }
 
-    /// (newest, oldest) `created_at` of a player's stored games.
-    pub fn time_range(&self, username: &str) -> Result<Option<(i64, i64)>, String> {
+    /// (newest, oldest) `created_at` of an account's stored games.
+    pub fn time_range(&self, account: &Account) -> Result<Option<(i64, i64)>, String> {
+        let (filter, args) = account_filter(std::slice::from_ref(account), 1);
         self.conn
             .query_row(
-                "SELECT MAX(created_at), MIN(created_at) FROM games WHERE white = ?1 OR black = ?1",
-                [username],
+                &format!("SELECT MAX(created_at), MIN(created_at) FROM games g WHERE {filter}"),
+                params_from_iter(args.iter()),
                 |r| Ok(r.get::<_, Option<i64>>(0)?.zip(r.get::<_, Option<i64>>(1)?)),
             )
             .map_err(sql_err)
@@ -212,6 +247,8 @@ mod tests {
     fn game(id: &str, white: &str, black: &str, at: i64) -> GameInfo {
         GameInfo {
             id: id.into(),
+            source: Default::default(),
+            url: None,
             white: Player { name: white.into(), rating: Some(1500) },
             black: Player { name: black.into(), rating: None },
             winner: Some("white".into()),
@@ -248,11 +285,27 @@ mod tests {
         // Saving again does not count as new.
         assert_eq!(db.save_games(&[game("a", "Alice", "Bob", 1)]).unwrap(), 0);
 
-        let games = db.games_of("ALICE", 10).unwrap();
+        let alice = Account::new(Source::Lichess, "ALICE");
+        let games = db.games_of(std::slice::from_ref(&alice), 10).unwrap();
         let ids: Vec<_> = games.iter().map(|g| g.game.id.as_str()).collect();
         assert_eq!(ids, ["b", "a"]);
-        assert_eq!(db.time_range("alice").unwrap(), Some((3, 1)));
-        assert_eq!(db.time_range("nobody").unwrap(), None);
+        assert_eq!(db.time_range(&alice).unwrap(), Some((3, 1)));
+        assert_eq!(db.time_range(&Account::new(Source::Lichess, "nobody")).unwrap(), None);
+        // Same name on another platform is a different account.
+        assert_eq!(db.time_range(&Account::new(Source::Chesscom, "alice")).unwrap(), None);
+        assert_eq!(db.count_games_of(&[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn combines_accounts_across_platforms() {
+        let mut db = Db::in_memory();
+        let mut cc = game("cc1", "me_cc", "x", 5);
+        cc.source = Source::Chesscom;
+        db.save_games(&[game("l1", "me_li", "y", 4), cc, game("l2", "other", "z", 6)]).unwrap();
+        let both = [Account::new(Source::Lichess, "me_li"), Account::new(Source::Chesscom, "me_cc")];
+        let ids: Vec<_> = db.games_of(&both, 10).unwrap().into_iter().map(|g| g.game.id).collect();
+        assert_eq!(ids, ["cc1", "l1"]);
+        assert_eq!(db.count_games_of(&both).unwrap(), 2);
     }
 
     #[test]
@@ -265,6 +318,6 @@ mod tests {
         db.save_review(&review("a", 16)).unwrap();
         assert_eq!(db.review("a", 16).unwrap().unwrap().depth, 16);
         assert!(db.review("a", 24).unwrap().is_none());
-        assert!(db.games_of("alice", 10).unwrap()[0].analysed);
+        assert!(db.games_of(&[Account::new(Source::Lichess, "alice")], 10).unwrap()[0].analysed);
     }
 }

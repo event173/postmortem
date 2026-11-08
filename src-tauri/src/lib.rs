@@ -1,10 +1,12 @@
 mod analysis;
+mod chesscom;
 mod coach;
 mod db;
 mod engine;
 mod explore;
 mod lichess;
 mod live;
+mod openings;
 mod stats;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +16,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use analysis::GameReview;
-use lichess::{FetchError, GameInfo, GameQuery};
+use db::Account;
+use lichess::{FetchError, GameInfo, GameQuery, Source};
 
 /// Cancellation flag of the analysis currently running (if any).
 #[derive(Default)]
@@ -66,10 +69,10 @@ fn engine_status() -> EngineStatus {
     EngineStatus { found: path.is_some(), path: path.map(|p| p.display().to_string()) }
 }
 
-/// Games stored locally for a player (works offline), newest first.
+/// Games stored locally for the given accounts (works offline), newest first.
 #[tauri::command]
-fn list_games(db: State<DbState>, username: String, limit: Option<u32>) -> Result<Vec<db::StoredGame>, String> {
-    db.0.lock().unwrap().games_of(username.trim(), limit.unwrap_or(500))
+fn list_games(db: State<DbState>, accounts: Vec<Account>, limit: Option<u32>) -> Result<Vec<db::StoredGame>, String> {
+    db.0.lock().unwrap().games_of(&accounts, limit.unwrap_or(500))
 }
 
 #[derive(Serialize)]
@@ -83,16 +86,20 @@ struct SyncResult {
 /// Pull games from Lichess into the local store. By default only games newer
 /// than the newest stored one; with `older`, the next batch before the oldest.
 #[tauri::command]
-async fn sync_games(db: State<'_, DbState>, username: String, older: Option<bool>) -> Result<SyncResult, String> {
-    let username = username.trim().to_string();
-    let range = db.0.lock().unwrap().time_range(&username)?;
+async fn sync_games(db: State<'_, DbState>, account: Account, older: Option<bool>) -> Result<SyncResult, String> {
+    let account = Account::new(account.source, &account.username);
+    let range = db.0.lock().unwrap().time_range(&account)?;
     let query = match (range, older.unwrap_or(false)) {
         (Some((_, oldest)), true) => GameQuery { max: Some(50), until: Some(oldest - 1), ..Default::default() },
         (Some((newest, _)), false) => GameQuery { max: Some(500), since: Some(newest + 1), ..Default::default() },
         // First sync: a reasonable recent batch.
         (None, _) => GameQuery { max: Some(100), ..Default::default() },
     };
-    match lichess::fetch_user_games(&username, query).await {
+    let fetched = match account.source {
+        Source::Lichess => lichess::fetch_user_games(&account.username, query).await,
+        Source::Chesscom => chesscom::fetch_user_games(&account.username, query).await,
+    };
+    match fetched {
         Ok(games) => {
             let added = db.0.lock().unwrap().save_games(&games)?;
             Ok(SyncResult { added, offline: false })
@@ -105,6 +112,11 @@ async fn sync_games(db: State<'_, DbState>, username: String, older: Option<bool
 /// A single game by link; stored locally so it stays available offline.
 #[tauri::command]
 async fn fetch_game(db: State<'_, DbState>, url: String) -> Result<GameInfo, String> {
+    if url.contains("chess.com") {
+        return Err("Einzelne chess.com-Links gehen leider nicht – die API bietet das nicht an. \
+                    Lade deine Partien über deinen chess.com-Namen."
+            .into());
+    }
     let game = lichess::fetch_game(&url).await.map_err(|e| e.to_string())?;
     db.0.lock().unwrap().save_games(std::slice::from_ref(&game))?;
     Ok(game)
@@ -196,11 +208,10 @@ fn run_analysis(
 }
 
 #[tauri::command]
-fn weakness_stats(db: State<DbState>, username: String) -> Result<stats::WeaknessStats, String> {
+fn weakness_stats(db: State<DbState>, accounts: Vec<Account>) -> Result<stats::WeaknessStats, String> {
     let db = db.0.lock().unwrap();
-    let username = username.trim();
-    let games = db.reviewed_games_of(username)?;
-    Ok(stats::compute(username, db.count_games_of(username)?, &games))
+    let games = db.reviewed_games_of(&accounts)?;
+    Ok(stats::compute(&accounts, db.count_games_of(&accounts)?, &games))
 }
 
 /// Analyse up to `limit` stored games of a player that have no review yet,
@@ -210,12 +221,12 @@ async fn analyse_all(
     app: AppHandle,
     db: State<'_, DbState>,
     batch: State<'_, BatchState>,
-    username: String,
+    accounts: Vec<Account>,
     depth: Option<u32>,
     limit: Option<u32>,
 ) -> Result<usize, String> {
     let depth = depth.unwrap_or(14).clamp(8, 30);
-    let games = db.0.lock().unwrap().unreviewed_games_of(username.trim(), limit.unwrap_or(50))?;
+    let games = db.0.lock().unwrap().unreviewed_games_of(&accounts, limit.unwrap_or(50))?;
     let cancel = Arc::new(AtomicBool::new(false));
     if let Some(old) = batch.cancel.lock().unwrap().replace(cancel.clone()) {
         old.store(true, Ordering::Relaxed);

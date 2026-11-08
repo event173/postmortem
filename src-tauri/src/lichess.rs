@@ -5,6 +5,24 @@ use serde::{Deserialize, Serialize};
 const API: &str = "https://lichess.org";
 const USER_AGENT: &str = concat!("postmortem/", env!("CARGO_PKG_VERSION"), " (local game review tool)");
 
+/// Where a game comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Source {
+    #[default]
+    Lichess,
+    Chesscom,
+}
+
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Lichess => "lichess",
+            Source::Chesscom => "chesscom",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Opening {
@@ -25,6 +43,11 @@ pub struct Player {
 #[serde(rename_all = "camelCase")]
 pub struct GameInfo {
     pub id: String,
+    #[serde(default)]
+    pub source: Source,
+    /// Link to the game on its platform.
+    #[serde(default)]
+    pub url: Option<String>,
     pub white: Player,
     pub black: Player,
     /// "white", "black" or None for a draw / unfinished game.
@@ -101,7 +124,9 @@ impl RawGame {
             return None;
         }
         Some(GameInfo {
+            url: Some(format!("{API}/{}", self.id)),
             id: self.id,
+            source: Source::Lichess,
             white: self.players.white.into_player(),
             black: self.players.black.into_player(),
             winner: self.winner,
@@ -126,7 +151,7 @@ pub enum FetchError {
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FetchError::Offline => write!(f, "Keine Verbindung zu Lichess."),
+            FetchError::Offline => write!(f, "Keine Internetverbindung."),
             FetchError::Other(e) => write!(f, "{e}"),
         }
     }
@@ -144,15 +169,15 @@ impl From<&str> for FetchError {
     }
 }
 
-fn network_error(e: reqwest::Error) -> FetchError {
+pub(crate) fn network_error(e: reqwest::Error) -> FetchError {
     if e.is_connect() || e.is_timeout() || e.is_request() {
         FetchError::Offline
     } else {
-        FetchError::Other(format!("Fehler beim Abruf von Lichess: {e}"))
+        FetchError::Other(format!("Fehler beim Abruf: {e}"))
     }
 }
 
-fn client() -> Result<reqwest::Client, String> {
+pub(crate) fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(std::time::Duration::from_secs(8))
@@ -160,12 +185,12 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-fn check_status(resp: &reqwest::Response, what: &str) -> Result<(), String> {
+pub(crate) fn check_status(resp: &reqwest::Response, what: &str) -> Result<(), String> {
     match resp.status().as_u16() {
         200..=299 => Ok(()),
         404 => Err(format!("{what} nicht gefunden.")),
-        429 => Err("Lichess drosselt gerade die Anfragen. Bitte eine Minute warten.".into()),
-        code => Err(format!("Lichess antwortete mit Fehler {code}.")),
+        429 => Err("Der Server drosselt gerade die Anfragen. Bitte eine Minute warten.".into()),
+        code => Err(format!("Der Server antwortete mit Fehler {code}.")),
     }
 }
 

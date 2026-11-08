@@ -23,6 +23,8 @@ import {
   type PlayedMove,
   type PositionInfo,
   type Progress,
+  type Account,
+  type Platform,
   type Score,
   type StoredGame,
   type SyncResult,
@@ -33,7 +35,10 @@ type Color = "white" | "black";
 
 
 const state = {
-  username: "" as string,
+  /** Which platform's games are shown ("all" = both). */
+  view: "lichess" as Platform | "all",
+  /** Your username per platform. */
+  names: { lichess: "", chesscom: "" } as Record<Platform, string>,
   games: [] as GameInfo[],
   cached: new Set<string>(),
   game: null as GameInfo | null,
@@ -72,8 +77,14 @@ const board: Api = Chessground($("board"), {
 
 
 
+/** The accounts whose games are shown, given the platform switch. */
+function accounts(): Account[] {
+  const platforms: Platform[] = state.view === "all" ? ["lichess", "chesscom"] : [state.view];
+  return platforms.filter((p) => state.names[p]).map((p) => ({ source: p, username: state.names[p] }));
+}
+
 function userColor(game: GameInfo): Color | null {
-  const u = state.username.toLowerCase();
+  const u = state.names[game.source ?? "lichess"].toLowerCase();
   if (!u) return null;
   if (game.white.name.toLowerCase() === u) return "white";
   if (game.black.name.toLowerCase() === u) return "black";
@@ -137,11 +148,13 @@ async function checkEngine() {
 // ---------------------------------------------------------------------------
 // loading games
 
+const PLATFORM_LABEL: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com" };
+
 async function load(input: string) {
   input = input.trim();
-  if (!input) return;
+  if (!input || state.view === "all") return;
   const list = $("games-list");
-  if (input.includes("/") || input.includes("lichess.org")) {
+  if (input.includes("/") || input.includes(".org") || input.includes(".com")) {
     list.innerHTML = `<p class="empty">Lade Partie …</p>`;
     try {
       const game = await invoke<GameInfo>("fetch_game", { url: input });
@@ -153,19 +166,58 @@ async function load(input: string) {
     }
     return;
   }
-  state.username = input;
-  store.set("username", input);
+  state.names[state.view] = input;
+  store.set(`name-${state.view}`, input);
   await showStoredGames();
   if (!$("stats").hidden) loadStats();
   syncGames();
 }
 
+/** Switch between Lichess, chess.com and both. */
+function setView(view: Platform | "all") {
+  state.view = view;
+  store.set("view", view);
+  document.querySelectorAll<HTMLElement>(".source-switch button").forEach((b) => b.classList.toggle("active", b.dataset.src === view));
+  const input = $("load-input") as HTMLInputElement;
+  const submit = document.querySelector<HTMLButtonElement>("#load-form button")!;
+  if (view === "all") {
+    input.value = "";
+    input.disabled = submit.disabled = true;
+    input.placeholder = "Namen unter „Lichess“ und „chess.com“ festlegen";
+  } else {
+    input.disabled = submit.disabled = false;
+    input.value = state.names[view];
+    input.placeholder = view === "lichess" ? "Lichess-Name oder Partielink" : "chess.com-Name";
+  }
+  setSyncStatus("ok", "");
+  showStoredGames();
+  if (!$("stats").hidden) loadStats();
+  syncGames();
+}
+
+document.querySelectorAll<HTMLElement>(".source-switch button").forEach((b) =>
+  b.addEventListener("click", () => setView(b.dataset.src as Platform | "all")),
+);
+
+/** Changes whenever the shown accounts change, so stale async results are dropped. */
+const accountsKey = () => JSON.stringify(accounts());
+
 /** Show the games already stored locally (instant, works offline). */
 async function showStoredGames() {
-  const username = state.username;
+  const key = accountsKey();
+  const accs = accounts();
+  if (!accs.length) {
+    state.games = [];
+    renderGames();
+    $("games-list").innerHTML =
+      state.view === "all"
+        ? `<p class="empty">Lege unter „Lichess“ und/oder „chess.com“ deinen Namen fest.</p>`
+        : `<p class="empty">Gib deinen ${PLATFORM_LABEL[state.view]}-Namen ein, um deine Partien zu laden.</p>`;
+    return;
+  }
   try {
-    const stored = await invoke<StoredGame[]>("list_games", { username });
-    if (username !== state.username) return;
+    const stored = await invoke<StoredGame[]>("list_games", { accounts: accs });
+    if (key !== accountsKey()) return;
     state.games = stored;
     state.cached = new Set(stored.filter((g) => g.analysed).map((g) => g.id));
     renderGames();
@@ -183,34 +235,43 @@ function setSyncStatus(kind: "busy" | "ok" | "offline" | "error", text: string) 
   el.title = kind === "error" ? text : "";
 }
 
-/** Pull new games (or, with `older`, the next older batch) from Lichess. */
+/** Pull new games (or, with `older`, the next older batch) for every shown account. */
 async function syncGames(older = false) {
-  const username = state.username;
-  if (!username || syncing) return;
+  const key = accountsKey();
+  const accs = accounts();
+  if (!accs.length || syncing) return;
   syncing = true;
   setSyncStatus("busy", older ? "Lade ältere …" : "Synchronisiere …");
-  if (!state.games.length) $("games-list").innerHTML = `<p class="empty">Lade Partien von Lichess …</p>`;
-  try {
-    const res = await invoke<SyncResult>("sync_games", { username, older });
-    if (username !== state.username) return;
-    if (res.offline) {
-      setSyncStatus("offline", "Offline");
-    } else {
-      if (res.added) await showStoredGames();
-      setSyncStatus("ok", res.added ? `${res.added} neu` : older ? "Keine älteren" : "Aktuell");
+  if (!state.games.length) $("games-list").innerHTML = `<p class="empty">Lade Partien …</p>`;
+  let added = 0;
+  let offline = false;
+  const errors: string[] = [];
+  for (const account of accs) {
+    try {
+      const res = await invoke<SyncResult>("sync_games", { account, older });
+      added += res.added;
+      offline ||= res.offline;
+    } catch (e) {
+      errors.push(`${PLATFORM_LABEL[account.source]}: ${e}`);
     }
-    if (!state.games.length) {
-      $("games-list").innerHTML = res.offline
+  }
+  syncing = false;
+  if (key !== accountsKey()) return;
+  if (added) await showStoredGames();
+  if (errors.length) {
+    setSyncStatus("error", "Fehler");
+    $("sync-status").title = errors.join("\n");
+  } else if (offline) {
+    setSyncStatus("offline", "Offline");
+  } else {
+    setSyncStatus("ok", added ? `${added} neu` : older ? "Keine älteren" : "Aktuell");
+  }
+  if (!state.games.length) {
+    $("games-list").innerHTML = errors.length
+      ? `<p class="empty error">${esc(errors.join(" · "))}</p>`
+      : offline
         ? `<p class="empty">Offline – und für diesen Namen sind noch keine Partien gespeichert.</p>`
         : `<p class="empty">Keine Standard-Partien gefunden.</p>`;
-    }
-  } catch (e) {
-    if (username !== state.username) return;
-    setSyncStatus("error", "Fehler");
-    $("sync-status").title = String(e);
-    if (!state.games.length) $("games-list").innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
-  } finally {
-    syncing = false;
   }
 }
 
@@ -219,8 +280,8 @@ $("btn-sync").addEventListener("click", () => syncGames());
 /** Open a stored game (e.g. from the statistics) at a given ply. */
 async function openGameAt(gameId: string, ply: number) {
   let game: GameInfo | undefined = state.games.find((g) => g.id === gameId);
-  if (!game && state.username) {
-    const all = await invoke<StoredGame[]>("list_games", { username: state.username, limit: 100000 });
+  if (!game && accounts().length) {
+    const all = await invoke<StoredGame[]>("list_games", { accounts: accounts(), limit: 100000 });
     game = all.find((g) => g.id === gameId);
   }
   if (game) {
@@ -230,7 +291,7 @@ async function openGameAt(gameId: string, ply: number) {
 }
 
 initStats({
-  username: () => state.username,
+  accounts,
   depth: () => Number(($("depth") as HTMLSelectElement).value),
   openGame: openGameAt,
   onGamesAnalysed: () => showStoredGames(),
@@ -266,6 +327,7 @@ function renderGames() {
     btn.dataset.id = g.id;
     btn.innerHTML = `
       <span class="result ${resultClass}">${result}</span>
+      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${PLATFORM_LABEL[g.source ?? "lichess"]}">${g.source === "chesscom" ? "C" : "L"}</span>` : ""}
       <span class="game-main">
         <span class="game-title">${title}</span>
         <span class="game-sub">${esc(g.opening?.name ?? "Unbekannte Eröffnung")}</span>
@@ -278,7 +340,7 @@ function renderGames() {
     });
     list.appendChild(btn);
   }
-  if (state.username && state.games.length) {
+  if (accounts().length && state.games.length) {
     const more = document.createElement("button");
     more.className = "load-older";
     more.textContent = "Ältere Partien von Lichess laden";
@@ -1243,9 +1305,9 @@ depthSelect.addEventListener("change", () => store.set("depth", depthSelect.valu
 state.liveEnabled = store.get("live") !== "0";
 ($("live-toggle") as HTMLInputElement).checked = state.liveEnabled;
 
-const savedUser = store.get("username");
-if (savedUser) {
-  ($("load-input") as HTMLInputElement).value = savedUser;
-  load(savedUser);
-}
+// Names per platform ("username" is the key used before chess.com support).
+state.names.lichess = store.get("name-lichess") ?? store.get("username") ?? "";
+state.names.chesscom = store.get("name-chesscom") ?? "";
+const savedView = store.get("view");
+setView(savedView === "chesscom" || savedView === "all" ? savedView : "lichess");
 checkEngine();

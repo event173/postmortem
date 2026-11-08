@@ -11,8 +11,17 @@ export interface Opening {
   ply: number;
 }
 
+export type Platform = "lichess" | "chesscom";
+
+export interface Account {
+  source: Platform;
+  username: string;
+}
+
 export interface GameInfo {
   id: string;
+  source?: Platform;
+  url?: string | null;
   white: Player;
   black: Player;
   winner: "white" | "black" | null;

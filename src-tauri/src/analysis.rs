@@ -375,6 +375,8 @@ mod tests {
     fn game(moves: &str) -> GameInfo {
         GameInfo {
             id: "test0001".into(),
+            source: Default::default(),
+            url: None,
             white: Player { name: "W".into(), rating: None },
             black: Player { name: "B".into(), rating: None },
             winner: None,
