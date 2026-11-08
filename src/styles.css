@@ -938,3 +938,268 @@ button.icon {
   background: none;
   border-style: dashed;
 }
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.tab {
+  border: none;
+  background: none;
+  padding: 5px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.tab.active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+/* --- statistics view -------------------------------------------------------- */
+
+.layout.stats-mode .board-area,
+.layout.stats-mode .review {
+  display: none;
+}
+
+.stats {
+  grid-column: 2 / 4;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.stats-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stats-head h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.stats-head p {
+  margin: 0;
+}
+
+.batch-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.batch-run .progress-bar {
+  width: 160px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.tile-value {
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-label {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.stats-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stats h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.panel-sub {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.theme-row,
+.phase-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 6px;
+  text-align: left;
+}
+
+.phase-row {
+  grid-template-columns: 100px minmax(0, 1fr) 44px;
+}
+
+.theme-row:hover {
+  background: var(--panel-2);
+}
+
+.theme-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-track {
+  height: 8px;
+  border-radius: 4px;
+  background: #34332f;
+  overflow: hidden;
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 0 4px 4px 0;
+}
+
+.theme-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.theme.open {
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 6px;
+  margin: 4px 0;
+}
+
+.theme-tip {
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: rgba(124, 173, 63, 0.08);
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+}
+
+.examples {
+  display: flex;
+  flex-direction: column;
+  padding: 0 6px 8px;
+}
+
+.example {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.example:hover {
+  background: var(--panel-2);
+}
+
+.ex-move {
+  font-weight: 600;
+  min-width: 80px;
+}
+
+.ex-more {
+  margin: 4px 6px 0;
+  font-size: 12px;
+}
+
+.trend-wrap {
+  width: 100%;
+}
+
+.trend {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+}
+
+.trend .grid {
+  stroke: #3a3936;
+  stroke-width: 1;
+}
+
+.trend .axis-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.trend-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.trend .crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.trend-dot {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.chart-tip {
+  display: none;
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}

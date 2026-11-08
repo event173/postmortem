@@ -8,7 +8,7 @@ use crate::engine::{PvLine, Score};
 use crate::lichess::GameInfo;
 
 /// Bump when classification logic changes so cached reviews are recomputed.
-pub const REVIEW_VERSION: u32 = 1;
+pub const REVIEW_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +41,9 @@ pub struct MoveReview {
     pub best_uci: Option<String>,
     pub best_line: Option<String>,
     pub comment: String,
+    /// Why the move was bad (only for inaccuracies, mistakes, misses and blunders).
+    #[serde(default)]
+    pub theme: Option<coach::Theme>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,7 +273,7 @@ pub fn review_move(input: &MoveInput) -> (MoveReview, f64) {
         opponent_blundered,
         opening: input.opening,
     };
-    let comment = coach::explain(&ctx);
+    let (comment, theme) = coach::explain(&ctx);
 
     let review = MoveReview {
         ply,
@@ -284,6 +287,7 @@ pub fn review_move(input: &MoveInput) -> (MoveReview, f64) {
         best_uci: best.and_then(|l| l.pv.first().cloned()),
         best_line: best.map(|l| coach::san_line(before, &l.pv, 8)),
         comment,
+        theme,
     };
     (review, c.loss)
 }
@@ -395,6 +399,8 @@ mod tests {
         assert_eq!(nf6.san, "Nf6");
         assert_eq!(nf6.classification, Class::Blunder);
         assert!(nf6.comment.contains("Matt in 1"), "{}", nf6.comment);
+        assert_eq!(nf6.theme, Some(coach::Theme::AllowedMate));
+        assert_eq!(r.moves[0].theme, None);
         assert_eq!(r.moves[6].comment, "Schachmatt!");
         assert_eq!(r.moves[6].classification, Class::Best);
         assert!(r.accuracy.black < r.accuracy.white, "{:?}", r.accuracy);
@@ -416,6 +422,7 @@ mod tests {
         let ba6 = &r.moves[2];
         assert_eq!(ba6.classification, Class::Blunder);
         assert!(ba6.comment.contains("ungedeckt") || ba6.comment.contains("Läufer"), "{}", ba6.comment);
+        assert_eq!(ba6.theme, Some(coach::Theme::HangingPiece));
     }
 
     #[test]

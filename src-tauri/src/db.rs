@@ -118,6 +118,53 @@ impl Db {
         Ok(out)
     }
 
+    /// All stored games of a player that have a current review (deepest one), newest first.
+    pub fn reviewed_games_of(&self, username: &str) -> Result<Vec<(GameInfo, GameReview)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT g.data, r.data FROM games g
+                 JOIN reviews r ON r.game_id = g.id AND r.version = ?2
+                 WHERE (g.white = ?1 OR g.black = ?1)
+                   AND r.depth = (SELECT MAX(depth) FROM reviews WHERE game_id = g.id AND version = ?2)
+                 ORDER BY g.created_at DESC",
+            )
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map(params![username, REVIEW_VERSION], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(sql_err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (g, r) = row.map_err(sql_err)?;
+            if let (Ok(g), Ok(r)) = (serde_json::from_str(&g), serde_json::from_str(&r)) {
+                out.push((g, r));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Stored games of a player without a current review, newest first.
+    pub fn unreviewed_games_of(&self, username: &str, limit: u32) -> Result<Vec<GameInfo>, String> {
+        Ok(self
+            .games_of(username, u32::MAX)?
+            .into_iter()
+            .filter(|g| !g.analysed)
+            .take(limit as usize)
+            .map(|g| g.game)
+            .collect())
+    }
+
+    pub fn count_games_of(&self, username: &str) -> Result<usize, String> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM games WHERE white = ?1 OR black = ?1", [username], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
+            .map_err(sql_err)
+    }
+
     /// (newest, oldest) `created_at` of a player's stored games.
     pub fn time_range(&self, username: &str) -> Result<Option<(i64, i64)>, String> {
         self.conn

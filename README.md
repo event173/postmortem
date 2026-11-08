@@ -23,6 +23,9 @@ Built with [Tauri](https://tauri.app) (Rust backend, TypeScript frontend).
   classified and explained like a game move
 - "Aus Fehlern lernen": replay your own mistakes of a game as exercises
   (accepts any move the engine rates Excellent or better; hint / solution / skip)
+- Statistics: your weaknesses by cause (hanging pieces, allowed forks,
+  missed mates …) with examples, error rate per game phase, accuracy trend;
+  "analyse all" runs in the background
 - Live engine with the top 3 lines for whatever is on the board (click a line
   to play its first move)
 

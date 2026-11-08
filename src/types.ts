@@ -56,6 +56,8 @@ export interface MoveReview {
   bestUci: string | null;
   bestLine: string | null;
   comment: string;
+  /** Why the move was bad (bad moves only). */
+  theme?: Theme | null;
 }
 
 export interface GameReview {
@@ -160,4 +162,63 @@ export interface StoredGame extends GameInfo {
 export interface SyncResult {
   added: number;
   offline: boolean;
+}
+
+export type Theme =
+  | "allowedMate"
+  | "missedMate"
+  | "allowedFork"
+  | "hangingPiece"
+  | "lostMaterial"
+  | "missedTactic"
+  | "missedChance"
+  | "positional";
+
+export type Phase = "opening" | "middlegame" | "endgame";
+
+export interface ThemeExample {
+  gameId: string;
+  ply: number;
+  san: string;
+  classification: Class;
+  createdAt: number;
+  opponent: string;
+}
+
+export interface ThemeStat {
+  theme: Theme;
+  count: number;
+  examples: ThemeExample[];
+}
+
+export interface PhaseStat {
+  moves: number;
+  inaccuracies: number;
+  mistakes: number;
+  blunders: number;
+}
+
+export interface TrendPoint {
+  gameId: string;
+  createdAt: number;
+  accuracy: number;
+  result: "win" | "loss" | "draw";
+}
+
+export interface WeaknessStats {
+  gamesTotal: number;
+  gamesAnalysed: number;
+  moves: number;
+  accuracyAvg: number | null;
+  classes: Partial<Record<Class, number>>;
+  themes: ThemeStat[];
+  phases: Partial<Record<Phase, PhaseStat>>;
+  trend: TrendPoint[];
+}
+
+export interface BatchProgress {
+  done: number;
+  total: number;
+  current: string | null;
+  finished: boolean;
 }

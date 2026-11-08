@@ -8,6 +8,8 @@ import "chessground/assets/chessground.base.css";
 import "chessground/assets/chessground.brown.css";
 import "chessground/assets/chessground.cburnett.css";
 import "./styles.css";
+import { $, badgeHtml, esc, fig, store } from "./util";
+import { initStats, loadStats, showStatsView } from "./stats";
 
 import {
   BAD,
@@ -29,7 +31,6 @@ import {
 
 type Color = "white" | "black";
 
-const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const state = {
   username: "" as string,
@@ -67,36 +68,9 @@ const board: Api = Chessground($("board"), {
 // ---------------------------------------------------------------------------
 // small helpers
 
-const store = {
-  get(key: string): string | null {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  },
-  set(key: string, value: string) {
-    try {
-      localStorage.setItem(key, value);
-    } catch {
-      /* storage unavailable: settings just aren't remembered */
-    }
-  },
-};
 
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
 
-const FIGURINES: Record<string, string> = { K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘" };
 
-/** Replace piece letters in SAN tokens with figurines (leaves prose untouched). */
-function fig(text: string): string {
-  return text.replace(
-    /\b([KQRBN])([a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)/g,
-    (_, p: string, rest: string) => FIGURINES[p] + rest.replace(/=([QRBN])/, (_m, q: string) => "=" + FIGURINES[q]),
-  );
-}
 
 function userColor(game: GameInfo): Color | null {
   const u = state.username.toLowerCase();
@@ -129,10 +103,6 @@ function badgeSvg(cls: Class): string {
   </g>`;
 }
 
-function badgeHtml(cls: Class): string {
-  const c = CLASSES[cls];
-  return `<span class="badge" style="--c:${c.color}" title="${c.label}">${esc(c.symbol)}</span>`;
-}
 
 const SPEEDS: Record<string, string> = {
   ultraBullet: "UltraBullet",
@@ -186,6 +156,7 @@ async function load(input: string) {
   state.username = input;
   store.set("username", input);
   await showStoredGames();
+  if (!$("stats").hidden) loadStats();
   syncGames();
 }
 
@@ -245,6 +216,26 @@ async function syncGames(older = false) {
 
 $("btn-sync").addEventListener("click", () => syncGames());
 
+/** Open a stored game (e.g. from the statistics) at a given ply. */
+async function openGameAt(gameId: string, ply: number) {
+  let game: GameInfo | undefined = state.games.find((g) => g.id === gameId);
+  if (!game && state.username) {
+    const all = await invoke<StoredGame[]>("list_games", { username: state.username, limit: 100000 });
+    game = all.find((g) => g.id === gameId);
+  }
+  if (game) {
+    document.querySelector(`.game[data-id="${gameId}"]`)?.scrollIntoView({ block: "nearest" });
+    selectGame(game, ply);
+  }
+}
+
+initStats({
+  username: () => state.username,
+  depth: () => Number(($("depth") as HTMLSelectElement).value),
+  openGame: openGameAt,
+  onGamesAnalysed: () => showStoredGames(),
+});
+
 function renderGames() {
   const list = $("games-list");
   $("games-count").textContent = state.games.length ? String(state.games.length) : "";
@@ -281,7 +272,10 @@ function renderGames() {
         <span class="game-sub">${speed} · ${date} · ${Math.ceil(g.moves.length / 2)} Züge</span>
       </span>
       ${state.cached.has(g.id) ? `<span class="analysed" title="Bereits analysiert">●</span>` : ""}`;
-    btn.addEventListener("click", () => selectGame(g));
+    btn.addEventListener("click", () => {
+      showStatsView(false);
+      selectGame(g);
+    });
     list.appendChild(btn);
   }
   if (state.username && state.games.length) {
@@ -298,7 +292,7 @@ function renderGames() {
 
 let analysisToken = 0;
 
-async function selectGame(game: GameInfo) {
+async function selectGame(game: GameInfo, startPly = 0) {
   const token = ++analysisToken;
   stopPlayback();
   state.game = game;
@@ -344,7 +338,7 @@ async function selectGame(game: GameInfo) {
     $("review-content").hidden = false;
     renderSummary();
     renderMoveList();
-    goto(0);
+    goto(startPly);
     renderGraph();
     updateTrainButton();
   } catch (e) {

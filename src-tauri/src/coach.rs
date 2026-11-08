@@ -3,6 +3,7 @@
 //! No language model involved: each detector inspects the position and the
 //! engine's principal variations and fills a German sentence template.
 
+use serde::{Deserialize, Serialize};
 use shakmaty::{uci::UciMove, san::SanPlus, Chess, Color, Move, Position, Role, Square};
 
 use crate::analysis::Class;
@@ -173,6 +174,29 @@ fn describe_material(from: &Chess, to: &Chess, color: Color, points: i32) -> Str
 
 // ---------------------------------------------------------------------------
 
+/// Why a bad move was bad – used for the weakness statistics and, later,
+/// to pick matching puzzles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    /// The move lets the opponent mate.
+    AllowedMate,
+    /// A forced mate was available and not played.
+    MissedMate,
+    /// The move allows a fork.
+    AllowedFork,
+    /// A piece is left undefended (or insufficiently defended) and gets taken.
+    HangingPiece,
+    /// Material is lost to a combination.
+    LostMaterial,
+    /// A material-winning tactic was available and not played.
+    MissedTactic,
+    /// The opponent just erred and the chance was not used (no concrete tactic found).
+    MissedChance,
+    /// No concrete tactic: the position simply got worse.
+    Positional,
+}
+
 pub struct MoveContext<'a> {
     pub before: &'a Chess,
     pub after: &'a Chess,
@@ -197,10 +221,19 @@ impl MoveContext<'_> {
     }
 }
 
-pub fn explain(ctx: &MoveContext) -> String {
+/// Coach comment for a move, plus the theme if it was a bad move.
+pub fn explain(ctx: &MoveContext) -> (String, Option<Theme>) {
     if ctx.after.is_checkmate() {
-        return "Schachmatt!".into();
+        return ("Schachmatt!".into(), None);
     }
+    if matches!(ctx.class, Class::Inaccuracy | Class::Mistake | Class::Miss | Class::Blunder) {
+        let (text, theme) = bad_move_reason(ctx);
+        return (text, Some(theme));
+    }
+    (good_move_comment(ctx), None)
+}
+
+fn good_move_comment(ctx: &MoveContext) -> String {
     match ctx.class {
         Class::Book => match ctx.opening {
             Some(o) => format!("Theoriezug: {o}."),
@@ -231,7 +264,7 @@ pub fn explain(ctx: &MoveContext) -> String {
             Some(b) => format!("Ein solider Zug, aber {b} war etwas genauer."),
             None => "Ein solider Zug.".into(),
         },
-        Class::Inaccuracy | Class::Mistake | Class::Miss | Class::Blunder => bad_move_reason(ctx),
+        Class::Inaccuracy | Class::Mistake | Class::Miss | Class::Blunder => unreachable!(),
     }
 }
 
@@ -252,13 +285,15 @@ fn good_move_note(ctx: &MoveContext) -> Option<String> {
     None
 }
 
-fn bad_move_reason(ctx: &MoveContext) -> String {
+fn bad_move_reason(ctx: &MoveContext) -> (String, Theme) {
+    let tag = |theme| move |text| (text, theme);
     allows_mate(ctx)
-        .or_else(|| missed_mate(ctx))
-        .or_else(|| allows_fork(ctx))
-        .or_else(|| hanging_piece(ctx))
-        .or_else(|| loses_material(ctx))
-        .or_else(|| missed_material(ctx))
+        .map(tag(Theme::AllowedMate))
+        .or_else(|| missed_mate(ctx).map(tag(Theme::MissedMate)))
+        .or_else(|| allows_fork(ctx).map(tag(Theme::AllowedFork)))
+        .or_else(|| hanging_piece(ctx).map(tag(Theme::HangingPiece)))
+        .or_else(|| loses_material(ctx).map(tag(Theme::LostMaterial)))
+        .or_else(|| missed_material(ctx).map(tag(Theme::MissedTactic)))
         .unwrap_or_else(|| positional(ctx))
 }
 
@@ -375,8 +410,10 @@ fn missed_material(ctx: &MoveContext) -> Option<String> {
     ))
 }
 
-fn positional(ctx: &MoveContext) -> String {
-    let base = if ctx.class == Class::Miss || (ctx.opponent_blundered && ctx.win_before >= 60.0) {
+fn positional(ctx: &MoveContext) -> (String, Theme) {
+    let missed_chance = ctx.class == Class::Miss || (ctx.opponent_blundered && ctx.win_before >= 60.0);
+    let theme = if missed_chance { Theme::MissedChance } else { Theme::Positional };
+    let base = if missed_chance {
         "Dein Gegner hat gerade einen Fehler gemacht, aber dieser Zug nutzt ihn nicht aus."
     } else if ctx.win_before >= 70.0 && ctx.win_after < 55.0 {
         "Damit gibst du deinen Vorteil aus der Hand."
@@ -390,8 +427,9 @@ fn positional(ctx: &MoveContext) -> String {
             _ => "Das verschlechtert deine Stellung spürbar.",
         }
     };
-    match (ctx.best_san(), ctx.best) {
+    let text = match (ctx.best_san(), ctx.best) {
         (Some(b), Some(line)) => format!("{base} Besser war {b} ({}).", san_line(ctx.before, &line.pv, 4)),
         _ => base.to_string(),
-    }
+    };
+    (text, theme)
 }

@@ -5,6 +5,7 @@ mod engine;
 mod explore;
 mod lichess;
 mod live;
+mod stats;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,6 +23,27 @@ struct AnalysisState {
 }
 
 struct DbState(Mutex<db::Db>);
+
+/// Cancellation flag of the running "analyse all" batch (if any).
+#[derive(Default)]
+struct BatchState {
+    cancel: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BatchProgress {
+    done: usize,
+    total: usize,
+    /// Game being analysed right now.
+    current: Option<String>,
+    finished: bool,
+}
+
+fn engine_threads(fraction_half: bool) -> usize {
+    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    if fraction_half { (n / 2).max(1) } else { n.saturating_sub(1).max(1) }
+}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -116,7 +138,7 @@ async fn analyse_game(
 
     let app2 = app.clone();
     let game2 = game.clone();
-    let review = tauri::async_runtime::spawn_blocking(move || run_analysis(&app2, &game2, depth, &cancel))
+    let review = tauri::async_runtime::spawn_blocking(move || run_analysis(&app2, &game2, depth, &cancel, engine_threads(false)))
         .await
         .map_err(|e| e.to_string())??;
 
@@ -126,14 +148,17 @@ async fn analyse_game(
     Ok(review)
 }
 
-fn run_analysis(app: &AppHandle, game: &GameInfo, depth: u32, cancel: &AtomicBool) -> Result<GameReview, String> {
+fn run_analysis(
+    app: &AppHandle,
+    game: &GameInfo,
+    depth: u32,
+    cancel: &AtomicBool,
+    threads: usize,
+) -> Result<GameReview, String> {
     let path = engine::find_stockfish()
         .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
     let (positions, moves) = analysis::replay(&game.moves)?;
 
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().saturating_sub(1).max(1))
-        .unwrap_or(1);
     let mut sf = engine::Engine::start(&path, threads, 256, 2)?;
 
     let total = positions.len();
@@ -150,6 +175,72 @@ fn run_analysis(app: &AppHandle, game: &GameInfo, depth: u32, cancel: &AtomicBoo
         let _ = app.emit("analysis-progress", Progress { game_id: game.id.clone(), done: i + 1, total });
     }
     Ok(analysis::build_review(game, depth, &positions, &moves, &lines))
+}
+
+#[tauri::command]
+fn weakness_stats(db: State<DbState>, username: String) -> Result<stats::WeaknessStats, String> {
+    let db = db.0.lock().unwrap();
+    let username = username.trim();
+    let games = db.reviewed_games_of(username)?;
+    Ok(stats::compute(username, db.count_games_of(username)?, &games))
+}
+
+/// Analyse up to `limit` stored games of a player that have no review yet,
+/// newest first, in the background. Returns how many were analysed.
+#[tauri::command]
+async fn analyse_all(
+    app: AppHandle,
+    db: State<'_, DbState>,
+    batch: State<'_, BatchState>,
+    username: String,
+    depth: Option<u32>,
+    limit: Option<u32>,
+) -> Result<usize, String> {
+    let depth = depth.unwrap_or(14).clamp(8, 30);
+    let games = db.0.lock().unwrap().unreviewed_games_of(username.trim(), limit.unwrap_or(50))?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Some(old) = batch.cancel.lock().unwrap().replace(cancel.clone()) {
+        old.store(true, Ordering::Relaxed);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let total = games.len();
+        let progress = |done, current: Option<&GameInfo>, finished| {
+            let current = current.map(|g| g.id.clone());
+            let _ = app.emit("batch-progress", BatchProgress { done, total, current, finished });
+        };
+        let mut done = 0;
+        for game in &games {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            progress(done, Some(game), false);
+            // Half the cores, so reviewing a game in parallel stays responsive.
+            match run_analysis(&app, game, depth, &cancel, engine_threads(true)) {
+                Ok(review) => {
+                    app.state::<DbState>().0.lock().unwrap().save_review(&review)?;
+                    done += 1;
+                }
+                Err(e) if e == "cancelled" => break,
+                // A single broken game shouldn't stop the batch; missing Stockfish should.
+                Err(e) if e.contains("Stockfish") => {
+                    progress(done, None, true);
+                    return Err(e);
+                }
+                Err(_) => {}
+            }
+        }
+        progress(done, None, true);
+        Ok(done)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cancel_batch(batch: State<BatchState>) {
+    if let Some(flag) = batch.cancel.lock().unwrap().as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
 }
 
 #[tauri::command]
@@ -189,6 +280,7 @@ async fn live_stop(app: AppHandle) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(AnalysisState::default())
+        .manage(BatchState::default())
         .manage(live::Live::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
@@ -212,7 +304,10 @@ pub fn run() {
             play_move,
             evaluate_move,
             live_analyse,
-            live_stop
+            live_stop,
+            weakness_stats,
+            analyse_all,
+            cancel_batch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

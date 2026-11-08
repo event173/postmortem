@@ -10,6 +10,10 @@
   <body>
     <header class="topbar">
       <div class="brand">post<span>mortem</span></div>
+      <nav class="tabs">
+        <button id="tab-review" class="tab active">Review</button>
+        <button id="tab-stats" class="tab">Statistik</button>
+      </nav>
       <form id="load-form" class="load-form">
         <input
           id="load-input"
@@ -62,6 +66,17 @@
           <button id="btn-back" title="Zurück zur Partie (Esc)" hidden>↩ Zur Partie</button>
           <button id="btn-train" hidden>Aus Fehlern lernen</button>
         </nav>
+      </section>
+
+      <section id="stats" class="stats" hidden>
+        <div class="stats-head">
+          <div>
+            <h2>Deine Schwächen</h2>
+            <p id="stats-basis" class="muted"></p>
+          </div>
+          <div id="batch" class="batch"></div>
+        </div>
+        <div id="stats-body"></div>
       </section>
 
       <section class="review">
