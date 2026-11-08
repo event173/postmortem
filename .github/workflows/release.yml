@@ -71,9 +71,60 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: postmortem ${{ github.ref_name }}
           releaseBody: |
-            Windows: Installer (.exe oder .msi) herunterladen und ausführen. Beim ersten Start
+            **Windows:** Installer (`.exe` oder `.msi`) herunterladen und ausführen. Beim ersten Start
             zeigt Windows evtl. „Unbekannter Herausgeber“ – „Weitere Informationen“ → „Trotzdem ausführen“.
-            Linux: .AppImage (ausführbar machen und starten) oder .deb.
-            Stockfish 19 ist enthalten.
+
+            **Linux:**
+            - **Flatpak** (empfohlen, läuft auf jeder Distribution, alles enthalten):
+              `flatpak install --user postmortem_*.flatpak` – oder per Doppelklick im Software-Center
+            - `.deb` (Debian/Ubuntu/Mint): `sudo apt install ./postmortem_*_amd64.deb`
+            - `.AppImage`: ausführbar machen (`chmod +x`) und starten
+
+            Stockfish 19 ist überall enthalten.
           releaseDraft: true
           args: --config src-tauri/tauri.release.conf.json
+
+      - name: Keep the Linux binary for the Flatpak job
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: src-tauri/target/release/postmortem
+          retention-days: 1
+
+  # Single-file Flatpak bundle (GNOME 51 runtime, Stockfish built from source),
+  # attached to the same draft release.
+  flatpak:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binary
+          path: src-tauri/target/release
+
+      - run: chmod +x src-tauri/target/release/postmortem
+
+      - name: Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak
+          # Ubuntu 24.04 blocks unprivileged user namespaces, which the builder's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
+
+      - name: Build the bundle
+        run: |
+          flatpak run org.flatpak.Builder --user --force-clean --disable-rofiles-fuse \
+            --repo=repo build packaging/flatpak/io.github.event173.postmortem.yml
+          flatpak build-bundle repo "postmortem_${GITHUB_REF_NAME#v}_x86_64.flatpak" io.github.event173.postmortem \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          ls -la *.flatpak
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" postmortem_*.flatpak --clobber

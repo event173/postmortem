@@ -66,9 +66,14 @@ Stockfish ist enthalten. **Deinstallieren:** *Einstellungen → Apps → postmor
 
 ### Linux
 
-- **AppImage** (aus den Releases): herunterladen, ausführbar machen (`chmod +x postmortem_*.AppImage`), starten.
-- **.deb** (Debian, Ubuntu, Mint …): `sudo apt install ./postmortem_*_amd64.deb`
-- **Flatpak**: siehe [Selbst bauen](#selbst-bauen).
+Aus den [Releases](https://github.com/event173/postmortem/releases):
+
+- **Flatpak** (empfohlen – läuft auf jeder Distribution, bringt alles mit):
+  `flatpak install --user postmortem_*_x86_64.flatpak` oder per Doppelklick im Software-Center.
+  Die GNOME-Laufzeitumgebung wird dabei automatisch von Flathub geladen.
+- **.deb** (Debian, Ubuntu, Mint …): `sudo apt install ./postmortem_*_amd64.deb` –
+  mit `apt`, nicht `dpkg -i`, damit die Abhängigkeiten mitinstalliert werden.
+- **AppImage**: herunterladen, ausführbar machen (`chmod +x postmortem_*.AppImage`), starten.
 
 In allen Paketen ist Stockfish enthalten. Wird es nicht gefunden, kannst du im
 Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install stockfish`).
