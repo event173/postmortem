@@ -13,6 +13,7 @@
       <nav class="tabs">
         <button id="tab-review" class="tab active">Review</button>
         <button id="tab-stats" class="tab">Statistik</button>
+        <button id="tab-puzzles" class="tab">Puzzles</button>
       </nav>
       <form id="load-form" class="load-form">
         <input
@@ -75,9 +76,43 @@
             <h2>Deine Schwächen</h2>
             <p id="stats-basis" class="muted"></p>
           </div>
-          <div id="batch" class="batch"></div>
+          <div class="stats-controls">
+            <div id="stats-window" class="segmented" title="Welche Partien die Statistik umfasst">
+              <button data-w="10">Letzte 10</button>
+              <button data-w="20">20</button>
+              <button data-w="50">50</button>
+              <button data-w="all">Alle</button>
+            </div>
+            <div id="batch" class="batch"></div>
+          </div>
         </div>
         <div id="stats-body"></div>
+      </section>
+
+      <section id="puzzles" class="puzzles" hidden>
+        <div class="panel coach pz-card">
+          <div id="pz-head" class="pz-head"></div>
+          <p id="pz-text" class="coach-text"></p>
+          <div id="pz-extra" class="coach-best"></div>
+          <div id="pz-actions" class="training-actions"></div>
+        </div>
+        <div class="panel pz-profile">
+          <div class="pz-rating-row">
+            <div><div id="pz-my-rating" class="tile-value">–</div><div class="tile-label">Deine Puzzle-Wertung</div></div>
+            <div id="pz-today" class="muted"></div>
+          </div>
+          <label class="pz-window">
+            <span>Schwächen aus</span>
+            <select id="pz-window">
+              <option value="10">den letzten 10 Partien</option>
+              <option value="20">den letzten 20 Partien</option>
+              <option value="50">den letzten 50 Partien</option>
+              <option value="all">allen Partien</option>
+            </select>
+          </label>
+          <p class="panel-sub">Mischung: ca. 60 % deine Schwächen, 25 % gemischte Themen, 15 % Stellungen aus deinen Partien.</p>
+          <div id="pz-mastery"></div>
+        </div>
       </section>
 
       <section class="review">

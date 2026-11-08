@@ -2441,6 +2441,7 @@ dependencies = [
 name = "postmortem"
 version = "0.1.0"
 dependencies = [
+ "fastrand",
  "libc",
  "reqwest",
  "rusqlite",

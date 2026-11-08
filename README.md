@@ -27,6 +27,12 @@ Built with [Tauri](https://tauri.app) (Rust backend, TypeScript frontend).
 - Statistics: your weaknesses by cause (hanging pieces, allowed forks,
   missed mates …) with examples, error rate per game phase, accuracy trend;
   "analyse all" runs in the background
+- Statistics can be limited to the last 10 / 20 / 50 games; each weakness
+  shows a trend arrow against your all-time average
+- Puzzle trainer: ~60 % puzzles for your weaknesses (weighted by frequency
+  and by how badly you solve the theme), ~25 % mixed, ~15 % positions from
+  your own mistakes; personal puzzle rating (Elo), no repeats, solved own
+  positions rest for 3 days
 - Settings (gear icon): analysis depth, Stockfish path and CPU cores,
   animations, board coordinates
 - Lichess puzzle database: download/update from the settings, imported into

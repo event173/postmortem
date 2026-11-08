@@ -9,6 +9,7 @@ mod live;
 mod openings;
 mod puzzles;
 mod stats;
+mod trainer;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -213,11 +214,12 @@ fn run_analysis(
     Ok(analysis::build_review(game, depth, &positions, &moves, &lines))
 }
 
+/// Weakness statistics; `last` limits them to the most recent analysed games.
 #[tauri::command]
-fn weakness_stats(db: State<DbState>, accounts: Vec<Account>) -> Result<stats::WeaknessStats, String> {
+fn weakness_stats(db: State<DbState>, accounts: Vec<Account>, last: Option<usize>) -> Result<stats::WeaknessStats, String> {
     let db = db.0.lock().unwrap();
     let games = db.reviewed_games_of(&accounts)?;
-    Ok(stats::compute(&accounts, db.count_games_of(&accounts)?, &games))
+    Ok(stats::compute_window(&accounts, db.count_games_of(&accounts)?, &games, last))
 }
 
 /// Analyse up to `limit` stored games of a player that have no review yet,
@@ -376,6 +378,41 @@ fn puzzle_cancel(install: State<PuzzleInstall>) {
     }
 }
 
+/// Run a closure with the database on a worker thread (keeps the UI responsive).
+async fn with_db<T: Send + 'static>(
+    app: AppHandle,
+    f: impl FnOnce(&db::Db, &std::path::Path) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<DbState>();
+        let dir = app.state::<DataDir>();
+        let db = db.0.lock().unwrap();
+        f(&db, &dir.0)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Next training puzzle based on the accounts' last `last` analysed games.
+#[tauri::command]
+async fn puzzle_next(app: AppHandle, accounts: Vec<Account>, last: Option<usize>) -> Result<Option<trainer::Puzzle>, String> {
+    with_db(app, move |db, dir| trainer::next(db, dir, &accounts, last)).await
+}
+
+#[tauri::command]
+async fn puzzle_record(
+    app: AppHandle,
+    accounts: Vec<Account>,
+    attempt: trainer::AttemptInput,
+) -> Result<trainer::RatingChange, String> {
+    with_db(app, move |db, _| trainer::record(db, &accounts, &attempt)).await
+}
+
+#[tauri::command]
+async fn puzzle_profile(app: AppHandle, accounts: Vec<Account>) -> Result<trainer::Profile, String> {
+    with_db(app, move |db, _| trainer::profile(db, &accounts)).await
+}
+
 #[tauri::command]
 fn position_info(fen: String) -> Result<explore::PositionInfo, String> {
     explore::position_info(&fen)
@@ -452,7 +489,10 @@ pub fn run() {
             puzzle_status,
             puzzle_check_update,
             puzzle_install,
-            puzzle_cancel
+            puzzle_cancel,
+            puzzle_next,
+            puzzle_record,
+            puzzle_profile
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

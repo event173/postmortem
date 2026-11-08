@@ -1441,3 +1441,173 @@ button.icon {
 .orientation-black .files :nth-child(even) {
   color: #f0d9b5;
 }
+
+/* --- segmented control (stats window) ------------------------------------- */
+
+.stats-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.segmented button {
+  border: none;
+  background: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.segmented button.active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.trend-arrow {
+  display: inline-block;
+  width: 14px;
+  margin-right: 6px;
+  font-weight: 800;
+  cursor: help;
+}
+
+.trend-arrow.better {
+  color: var(--accent);
+}
+
+.trend-arrow.worse {
+  color: var(--danger);
+}
+
+.trend-arrow.same {
+  color: var(--muted);
+}
+
+/* --- puzzles tab ------------------------------------------------------------ */
+
+.layout.puzzle-mode .review {
+  display: none;
+}
+
+.layout.puzzle-mode .evalbar,
+.layout.puzzle-mode .controls,
+.layout.puzzle-mode .player {
+  visibility: hidden;
+}
+
+.puzzles {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pz-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pz-tag {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 4px;
+  padding: 3px 7px;
+}
+
+.pz-tag.weakness {
+  color: #f0b7ae;
+  background: rgba(224, 97, 79, 0.15);
+}
+
+.pz-tag.mixed {
+  color: #c8d8ef;
+  background: rgba(91, 141, 214, 0.15);
+}
+
+.pz-tag.own {
+  color: #d9f0bd;
+  background: rgba(124, 173, 63, 0.18);
+}
+
+.pz-puzzle-rating {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pz-card .ok {
+  color: var(--accent);
+}
+
+.pz-delta {
+  font-weight: 800;
+  margin-left: 4px;
+}
+
+.pz-delta.up {
+  color: var(--accent);
+}
+
+.pz-delta.down {
+  color: var(--danger);
+}
+
+.pz-url {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pz-rating-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.pz-window {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.pz-window select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.pz-profile h3 {
+  margin: 14px 0 0;
+  font-size: 14px;
+}
+
+.mastery-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 90px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 13px;
+}

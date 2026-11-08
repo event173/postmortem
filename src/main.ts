@@ -9,7 +9,8 @@ import "chessground/assets/chessground.brown.css";
 import "chessground/assets/chessground.cburnett.css";
 import "./styles.css";
 import { $, badgeHtml, esc, fig, store } from "./util";
-import { initStats, loadStats, showStatsView } from "./stats";
+import { initStats, loadStats } from "./stats";
+import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
 import { displayPrefs, initSettings } from "./settings";
 
 import {
@@ -172,7 +173,7 @@ async function load(input: string) {
   state.names[state.view] = input;
   store.set(`name-${state.view}`, input);
   await showStoredGames();
-  if (!$("stats").hidden) loadStats();
+  if (currentTab === "stats") loadStats();
   syncGames();
 }
 
@@ -194,7 +195,7 @@ function setView(view: Platform | "all") {
   }
   setSyncStatus("ok", "");
   showStoredGames();
-  if (!$("stats").hidden) loadStats();
+  if (currentTab === "stats") loadStats();
   syncGames();
 }
 
@@ -280,8 +281,43 @@ async function syncGames(older = false) {
 
 $("btn-sync").addEventListener("click", () => syncGames());
 
+// ---------------------------------------------------------------------------
+// tabs: Review | Statistik | Puzzles
+
+type Tab = "review" | "stats" | "puzzles";
+let currentTab: Tab = "review";
+
+function showTab(tab: Tab) {
+  if (tab === currentTab) return;
+  const leaving = currentTab;
+  currentTab = tab;
+  const layout = document.querySelector(".layout")!;
+  layout.classList.toggle("stats-mode", tab === "stats");
+  layout.classList.toggle("puzzle-mode", tab === "puzzles");
+  $("stats").hidden = tab !== "stats";
+  $("puzzles").hidden = tab !== "puzzles";
+  for (const t of ["review", "stats", "puzzles"] as Tab[]) $(`tab-${t}`).classList.toggle("active", t === tab);
+
+  if (leaving === "puzzles") {
+    leavePuzzles();
+    // Give the board back to the review.
+    board.setShapes([]);
+    if (state.review) renderPosition();
+    else board.set({ fen: START_FEN, lastMove: undefined, movable: { color: undefined, dests: new Map() } });
+  }
+  if (tab === "stats") loadStats();
+  if (tab === "puzzles") {
+    stopPlayback();
+    stopLive();
+    enterPuzzles();
+  }
+}
+
+for (const t of ["review", "stats", "puzzles"] as Tab[]) $(`tab-${t}`).addEventListener("click", () => showTab(t));
+
 /** Open a stored game (e.g. from the statistics) at a given ply. */
 async function openGameAt(gameId: string, ply: number) {
+  showTab("review");
   let game: GameInfo | undefined = state.games.find((g) => g.id === gameId);
   if (!game && accounts().length) {
     const all = await invoke<StoredGame[]>("list_games", { accounts: accounts(), limit: 100000 });
@@ -338,7 +374,7 @@ function renderGames() {
       </span>
       ${state.cached.has(g.id) ? `<span class="analysed" title="Bereits analysiert">●</span>` : ""}`;
     btn.addEventListener("click", () => {
-      showStatsView(false);
+      showTab("review");
       selectGame(g);
     });
     list.appendChild(btn);
@@ -467,7 +503,7 @@ function goto(ply: number) {
 
 function show(ply: number) {
   const r = state.review;
-  if (!r || training) return;
+  if (!r || training || isPuzzleMode()) return;
   state.inVar = false;
   state.ply = Math.max(0, Math.min(ply, r.moves.length));
   renderPosition();
@@ -476,7 +512,7 @@ function show(ply: number) {
 /** Show the position after `index` moves of the variation (0 = branch point). */
 function showVar(index: number) {
   const v = state.variation;
-  if (!v || training) return;
+  if (!v || training || isPuzzleMode()) return;
   stopPlayback();
   state.inVar = true;
   state.varIndex = Math.max(0, Math.min(index, v.nodes.length));
@@ -586,6 +622,7 @@ function renderPosition() {
 // playing your own moves
 
 async function onUserMove(orig: Key, dest: Key, promotion?: string) {
+  if (isPuzzleMode()) return puzzleMove(orig, dest, promotion);
   if (training) return onTrainingMove(orig, dest, promotion);
   const r = state.review;
   if (!r) return;
@@ -665,7 +702,7 @@ function stopLive() {
 }
 
 listen<LiveInfo>("live-info", (e) => {
-  if (e.payload.id !== liveId || training) return;
+  if (e.payload.id !== liveId || training || isPuzzleMode()) return;
   live = e.payload;
   renderLive();
   if (state.inVar) {
@@ -1282,6 +1319,10 @@ $("btn-cancel").addEventListener("click", () => invoke("cancel_analysis"));
 
 document.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (isPuzzleMode()) {
+    if (puzzleKey(e)) e.preventDefault();
+    return;
+  }
   if (training) {
     if (e.key === "Escape") exitTraining();
     if (e.key === "Enter" && (training.phase === "solved")) trainingGoto(training.index + 1);
@@ -1307,6 +1348,13 @@ document.addEventListener("keydown", (e) => {
 $("load-form").addEventListener("submit", (e) => {
   e.preventDefault();
   load(($("load-input") as HTMLInputElement).value);
+});
+
+initPuzzles({
+  board,
+  accounts,
+  animMs: () => animMs,
+  openSettings: () => $("btn-settings").click(),
 });
 
 initSettings({

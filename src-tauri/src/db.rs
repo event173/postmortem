@@ -32,7 +32,33 @@ const MIGRATIONS: &[&str] = &[
      CREATE INDEX games_source ON games(source, created_at);",
     // 3: settings the backend needs (engine path, threads)
     "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    // 4: puzzle attempts (rating, mastery per theme, no repeats)
+    "CREATE TABLE puzzle_log (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        puzzle_id TEXT NOT NULL,
+        kind      TEXT NOT NULL,
+        theme     TEXT,
+        solved    INTEGER NOT NULL,
+        rating    INTEGER,
+        at        INTEGER NOT NULL
+     );
+     CREATE INDEX puzzle_log_puzzle ON puzzle_log(puzzle_id, at);
+     CREATE INDEX puzzle_log_theme ON puzzle_log(theme, at);",
 ];
+
+/// One puzzle attempt.
+#[derive(Debug, Clone)]
+pub struct Attempt {
+    pub puzzle_id: String,
+    /// "lichess" or "own"
+    pub kind: String,
+    /// Weakness theme the puzzle was chosen for (serde name), if any.
+    pub theme: Option<String>,
+    pub solved: bool,
+    pub rating: Option<i64>,
+    /// Unix milliseconds.
+    pub at: i64,
+}
 
 pub struct Db {
     conn: Connection,
@@ -234,6 +260,66 @@ impl Db {
         Ok(())
     }
 
+    pub fn log_attempt(&self, a: &Attempt) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO puzzle_log (puzzle_id, kind, theme, solved, rating, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![a.puzzle_id, a.kind, a.theme, a.solved, a.rating, a.at],
+            )
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Ids of all puzzles of a kind that were ever attempted.
+    pub fn attempted_ids(&self, kind: &str) -> Result<std::collections::HashSet<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT puzzle_id FROM puzzle_log WHERE kind = ?1")
+            .map_err(sql_err)?;
+        let rows = stmt.query_map([kind], |r| r.get::<_, String>(0)).map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    /// Own-mistake puzzles solved after `since` (ms): those rest for a while.
+    pub fn solved_since(&self, kind: &str, since: i64) -> Result<std::collections::HashSet<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT puzzle_id FROM puzzle_log WHERE kind = ?1 AND solved = 1 AND at >= ?2")
+            .map_err(sql_err)?;
+        let rows = stmt.query_map(params![kind, since], |r| r.get::<_, String>(0)).map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    /// (theme, attempts, solved) over the last `n` attempts of each theme.
+    pub fn theme_mastery(&self, n: usize) -> Result<Vec<(String, u32, u32)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT theme, COUNT(*), SUM(solved) FROM (
+                    SELECT theme, solved, ROW_NUMBER() OVER (PARTITION BY theme ORDER BY at DESC) AS rn
+                    FROM puzzle_log WHERE theme IS NOT NULL
+                 ) WHERE rn <= ?1 GROUP BY theme",
+            )
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map([n as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?, r.get::<_, u32>(2)?)))
+            .map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    /// (attempts, solved) overall and since `since` (ms).
+    pub fn attempt_counts(&self, since: i64) -> Result<(u32, u32, u32, u32), String> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(solved), 0),
+                        COALESCE(SUM(at >= ?1), 0), COALESCE(SUM(solved AND at >= ?1), 0)
+                 FROM puzzle_log",
+                [since],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(sql_err)
+    }
+
     /// Number of stored games and reviews (for the settings dialog).
     pub fn counts(&self) -> Result<(u64, u64), String> {
         self.conn
@@ -340,6 +426,29 @@ mod tests {
         let ids: Vec<_> = db.games_of(&both, 10).unwrap().into_iter().map(|g| g.game.id).collect();
         assert_eq!(ids, ["cc1", "l1"]);
         assert_eq!(db.count_games_of(&both).unwrap(), 2);
+    }
+
+    #[test]
+    fn puzzle_log_and_mastery() {
+        let db = Db::in_memory();
+        let attempt = |id: &str, theme: Option<&str>, solved, at| Attempt {
+            puzzle_id: id.into(),
+            kind: "lichess".into(),
+            theme: theme.map(Into::into),
+            solved,
+            rating: Some(1500),
+            at,
+        };
+        db.log_attempt(&attempt("a", Some("allowedFork"), true, 1)).unwrap();
+        db.log_attempt(&attempt("b", Some("allowedFork"), false, 2)).unwrap();
+        db.log_attempt(&attempt("c", Some("allowedFork"), true, 3)).unwrap();
+        db.log_attempt(&attempt("d", None, true, 4)).unwrap();
+        assert_eq!(db.attempted_ids("lichess").unwrap().len(), 4);
+        assert!(db.attempted_ids("own").unwrap().is_empty());
+        // Only the 2 most recent fork attempts: c (solved), b (failed).
+        assert_eq!(db.theme_mastery(2).unwrap(), vec![("allowedFork".to_string(), 2, 1)]);
+        assert_eq!(db.attempt_counts(3).unwrap(), (4, 3, 2, 2));
+        assert_eq!(db.solved_since("lichess", 3).unwrap().len(), 2);
     }
 
     #[test]

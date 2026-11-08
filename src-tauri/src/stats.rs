@@ -42,6 +42,9 @@ pub struct Example {
 pub struct ThemeStat {
     pub theme: Theme,
     pub count: usize,
+    /// Occurrences per game across *all* analysed games, when the stats cover
+    /// only the most recent ones – lets the UI show whether it got better.
+    pub baseline_per_game: Option<f64>,
     /// Most recent occurrences first.
     pub examples: Vec<Example>,
 }
@@ -157,7 +160,9 @@ pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, Gam
             // Themes only for real errors; inaccuracies are mostly noise.
             let serious = matches!(m.classification, Class::Mistake | Class::Miss | Class::Blunder);
             if let (true, Some(theme)) = (serious, m.theme) {
-                let stat = themes.entry(theme).or_insert_with(|| ThemeStat { theme, count: 0, examples: vec![] });
+                let stat = themes
+                    .entry(theme)
+                    .or_insert_with(|| ThemeStat { theme, count: 0, baseline_per_game: None, examples: vec![] });
                 stat.count += 1;
                 if stat.examples.len() < MAX_EXAMPLES {
                     stat.examples.push(Example {
@@ -186,6 +191,26 @@ pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, Gam
         phases,
         trend,
     }
+}
+
+/// Stats over the `last` most recent games (all if `None`), with each theme's
+/// rate over all games as baseline. `games` newest first.
+pub fn compute_window(
+    accounts: &[Account],
+    games_total: usize,
+    games: &[(GameInfo, GameReview)],
+    last: Option<usize>,
+) -> WeaknessStats {
+    let n = last.unwrap_or(games.len()).min(games.len());
+    let mut stats = compute(accounts, games_total, &games[..n]);
+    if n < games.len() {
+        let all = compute(accounts, games_total, games);
+        for t in &mut stats.themes {
+            let base = all.themes.iter().find(|b| b.theme == t.theme).map_or(0, |b| b.count);
+            t.baseline_per_game = (all.games_analysed > 0).then(|| base as f64 / all.games_analysed as f64);
+        }
+    }
+    stats
 }
 
 #[cfg(test)]
@@ -281,5 +306,13 @@ mod tests {
         assert_eq!((opening.moves, opening.mistakes, opening.blunders, opening.inaccuracies), (4, 2, 1, 1));
         // Trend is chronological.
         assert_eq!(s.trend.iter().map(|t| t.result.as_str()).collect::<Vec<_>>(), ["draw", "win"]);
+
+        // Only the newest game, compared with both.
+        let me = [Account::new(crate::lichess::Source::Lichess, "me")];
+        let w = compute_window(&me, 5, &games, Some(1));
+        assert_eq!(w.games_analysed, 1);
+        assert_eq!(w.themes[0].count, 1);
+        assert_eq!(w.themes[0].baseline_per_game, Some(1.0)); // 2 forks in 2 games
+        assert_eq!(compute_window(&me, 5, &games, None).themes[0].baseline_per_game, None);
     }
 }

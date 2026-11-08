@@ -197,6 +197,8 @@ export interface ThemeExample {
 export interface ThemeStat {
   theme: Theme;
   count: number;
+  /** Per-game rate over all analysed games (only when a window is set). */
+  baselinePerGame: number | null;
   examples: ThemeExample[];
 }
 

@@ -5,7 +5,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type { Account, BatchProgress, Phase, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
-import { $, badgeHtml, esc, fig } from "./util";
+import { $, badgeHtml, esc, fig, store } from "./util";
+
+/** Shared with the puzzle trainer: how many recent games to base things on. */
+export type GameWindow = "10" | "20" | "50" | "all";
+
+export function gameWindow(): GameWindow {
+  const w = store.get("window");
+  return w === "10" || w === "20" || w === "50" ? w : "all";
+}
+
+export function windowLast(w: GameWindow = gameWindow()): number | null {
+  return w === "all" ? null : Number(w);
+}
+
+export function setGameWindow(w: GameWindow) {
+  store.set("window", w);
+}
 
 export interface StatsDeps {
   /** The accounts the statistics are about (depends on the platform switch). */
@@ -17,7 +33,7 @@ export interface StatsDeps {
   onGamesAnalysed: () => void;
 }
 
-const THEMES: Record<Theme, { label: string; tip: string }> = {
+export const THEMES: Record<Theme, { label: string; tip: string }> = {
   hangingPiece: {
     label: "Figur hängen lassen",
     tip: "Vor jedem Zug kurz prüfen: Welche meiner Figuren sind angegriffen oder ungedeckt?",
@@ -71,8 +87,12 @@ const date = (ms: number) => new Date(ms).toLocaleDateString("de-DE", { day: "2-
 
 export function initStats(d: StatsDeps) {
   deps = d;
-  $("tab-review").addEventListener("click", () => showStatsView(false));
-  $("tab-stats").addEventListener("click", () => showStatsView(true));
+  document.querySelectorAll<HTMLElement>("#stats-window button").forEach((b) =>
+    b.addEventListener("click", () => {
+      setGameWindow(b.dataset.w as GameWindow);
+      loadStats();
+    }),
+  );
   window.addEventListener("resize", () => {
     if (stats && !$("stats").hidden) renderTrend(stats.trend);
   });
@@ -88,14 +108,6 @@ export function initStats(d: StatsDeps) {
   });
 }
 
-export function showStatsView(show: boolean) {
-  $("stats").hidden = !show;
-  document.querySelector(".layout")!.classList.toggle("stats-mode", show);
-  $("tab-stats").classList.toggle("active", show);
-  $("tab-review").classList.toggle("active", !show);
-  if (show) loadStats();
-}
-
 export async function loadStats() {
   const accounts = deps.accounts();
   const body = $("stats-body");
@@ -108,7 +120,7 @@ export async function loadStats() {
   }
   const token = ++loadToken;
   try {
-    const s = await invoke<WeaknessStats>("weakness_stats", { accounts });
+    const s = await invoke<WeaknessStats>("weakness_stats", { accounts, last: windowLast() });
     if (token !== loadToken) return;
     stats = s;
     render();
@@ -119,8 +131,9 @@ export async function loadStats() {
 
 function render() {
   const s = stats!;
+  document.querySelectorAll<HTMLElement>("#stats-window button").forEach((b) => b.classList.toggle("active", b.dataset.w === gameWindow()));
   $("stats-basis").textContent = s.gamesAnalysed
-    ? `Basierend auf ${s.gamesAnalysed} von ${s.gamesTotal} gespeicherten Partien`
+    ? `Basierend auf ${gameWindow() === "all" ? "allen" : "den letzten"} ${s.gamesAnalysed} analysierten Partien (${s.gamesTotal} gespeichert)`
     : `${s.gamesTotal} Partien gespeichert, noch keine analysiert`;
   renderBatch();
 
@@ -191,12 +204,23 @@ function renderThemes(themes: ThemeStat[], games: number): string {
         <button class="theme-row" data-theme="${t.theme}" title="${esc(meta.tip)}">
           <span class="theme-label">${meta.label}</span>
           <span class="bar-track"><span class="bar" style="width:${(t.count / max) * 100}%"></span></span>
-          <span class="theme-count"><b>${t.count}</b> <span class="muted">· ${fmt(t.count / games)}/Partie</span></span>
+          <span class="theme-count">${trendArrow(t, games)}<b>${t.count}</b> <span class="muted">· ${fmt(t.count / games)}/Partie</span></span>
         </button>
         ${open ? `<p class="theme-tip">${esc(meta.tip)}</p>${examples}` : ""}
       </div>`;
     })
     .join("");
+}
+
+/** ↓ improving / ↑ getting worse, compared with the average over all games. */
+function trendArrow(t: ThemeStat, games: number): string {
+  if (t.baselinePerGame == null) return "";
+  const recent = t.count / games;
+  const base = t.baselinePerGame;
+  const vs = `${fmt(recent)} statt ${fmt(base)} pro Partie im Gesamtschnitt`;
+  if (recent < base * 0.8) return `<span class="trend-arrow better" title="Seltener: ${vs}">↓</span>`;
+  if (recent > base * 1.25) return `<span class="trend-arrow worse" title="Häufiger: ${vs}">↑</span>`;
+  return `<span class="trend-arrow same" title="Etwa wie immer: ${vs}">→</span>`;
 }
 
 function bindThemeRows() {
@@ -211,7 +235,6 @@ function bindThemeRows() {
   });
   document.querySelectorAll<HTMLElement>(".example").forEach((b) => {
     b.onclick = () => {
-      showStatsView(false);
       deps.openGame(b.dataset.game!, Number(b.dataset.ply));
     };
   });
@@ -294,7 +317,6 @@ function renderTrend(points: TrendPoint[]) {
   };
   hit.onclick = (ev) => {
     tip.style.display = "none";
-    showStatsView(false);
     deps.openGame(points[nearest(ev)].gameId, 0);
   };
 }
