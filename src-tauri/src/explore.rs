@@ -102,6 +102,75 @@ pub fn evaluate_move(fen: &str, uci: &str, depth: u32) -> Result<MoveReview, Str
     Ok(review)
 }
 
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LineMove {
+    pub uci: String,
+    pub san: String,
+    /// Position after this move.
+    pub fen: String,
+    pub check: bool,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Refutation {
+    /// Your move first, then the engine's best continuation.
+    pub moves: Vec<LineMove>,
+    /// Evaluation after your move, from White's point of view.
+    pub score: Option<crate::engine::Score>,
+    /// Numbered SAN of the whole line, e.g. "14. Nf3 Qxf2+ 15. Kh1 Qxf3".
+    pub text: String,
+}
+
+/// How many engine moves to show after the user's move.
+const REFUTATION_PLIES: usize = 6;
+
+/// Build the line (with positions) from `fen` for a sequence of UCI moves.
+pub fn line_moves(fen: &str, ucis: &[String]) -> Result<Vec<LineMove>, String> {
+    let mut pos = analysis::parse_fen(fen)?;
+    let mut out = Vec::new();
+    for uci in ucis {
+        let Some(m) = coach::parse_uci(&pos, uci) else { break };
+        let san = coach::san(&pos, m);
+        pos.play_unchecked(m);
+        out.push(LineMove { uci: uci.clone(), san, fen: analysis::fen(&pos), check: pos.is_check() });
+    }
+    Ok(out)
+}
+
+/// What happens after a move: the engine's best continuation for both sides.
+pub fn refutation(fen: &str, uci: &str, depth: u32) -> Result<Refutation, String> {
+    let before = analysis::parse_fen(fen)?;
+    let m = coach::parse_uci(&before, uci).ok_or("Illegaler Zug")?;
+    let mut after = before.clone();
+    after.play_unchecked(m);
+
+    let (pv, score) = match analysis::terminal_eval(&after) {
+        Some(lines) => (vec![], Some(lines[0].score)),
+        None => {
+            let path = engine::find_stockfish()
+                .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+            let mut sf = engine::Engine::start(&path, engine::threads(true), 64, 1)?;
+            let lines = sf.analyse(&analysis::fen(&after), depth)?;
+            let best = lines.into_iter().next();
+            (
+                best.as_ref().map(|l| l.pv.iter().take(REFUTATION_PLIES).cloned().collect()).unwrap_or_default(),
+                best.map(|l| l.score),
+            )
+        }
+    };
+    // Engine scores are from the side to move after your move; report White's view.
+    let score = score.map(|s| if after.turn() == Color::White { s } else { s.negate() });
+    let mut ucis = vec![uci.to_string()];
+    ucis.extend(pv);
+    Ok(Refutation {
+        moves: line_moves(fen, &ucis)?,
+        score,
+        text: coach::san_line(&before, &ucis, ucis.len()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +202,24 @@ mod tests {
         assert_eq!(played.san, "a8=Q");
         let knight = play_move(fen, "a7", "a8", Some("n")).unwrap();
         assert_eq!(knight.san, "a8=N");
+    }
+
+    #[test]
+    fn builds_lines_with_positions() {
+        let line = line_moves(START, &["e2e4".into(), "e7e5".into(), "d1h5".into(), "zzzz".into()]).unwrap();
+        assert_eq!(line.iter().map(|m| m.san.as_str()).collect::<Vec<_>>(), ["e4", "e5", "Qh5"]);
+        assert!(line[2].fen.starts_with("rnbqkbnr/pppp1ppp/8/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR b"));
+    }
+
+    #[test]
+    fn refutation_of_a_mating_move_needs_no_engine() {
+        // 4. Qxf7# – the game is over, so the line is just the move itself.
+        let fen = "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4";
+        let r = refutation(fen, "h5f7", 12).unwrap();
+        assert_eq!(r.moves.len(), 1);
+        assert_eq!(r.moves[0].san, "Qxf7#");
+        assert_eq!(r.text, "4. Qxf7#");
+        assert_eq!(r.score.unwrap().win_percent(), 100.0);
     }
 
     #[test]

@@ -1611,3 +1611,40 @@ button.icon {
   padding: 5px 0;
   font-size: 13px;
 }
+
+/* refutation line in the puzzle panel */
+.ref-line {
+  display: inline-block;
+  margin-top: 4px;
+  line-height: 1.7;
+}
+
+.ref-mine {
+  color: #f0b7ae;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--danger);
+  text-underline-offset: 3px;
+}
+
+.ref-shown {
+  font-weight: 700;
+}
+
+.ref-next {
+  color: var(--muted);
+}
+
+.hint-text {
+  display: inline-block;
+  margin-top: 6px;
+  color: #d9f0bd;
+}
+
+.pz-why {
+  /* below the tag and the puzzle rating */
+  order: 3;
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}

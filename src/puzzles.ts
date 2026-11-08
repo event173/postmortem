@@ -36,6 +36,7 @@ interface Puzzle {
   themes: string[];
   category: Category;
   theme: Theme | null;
+  themePerGame: number | null;
   gameUrl: string | null;
   own: OwnInfo | null;
 }
@@ -63,7 +64,19 @@ export interface PuzzleDeps {
   openSettings: () => void;
 }
 
-type Phase = "loading" | "opponent" | "solve" | "checking" | "wrong" | "solved" | "failed" | "empty";
+type Phase = "loading" | "opponent" | "solve" | "checking" | "wrong" | "showing" | "solved" | "failed" | "empty";
+
+interface LineMove {
+  uci: string;
+  san: string;
+  fen: string;
+  check: boolean;
+}
+
+interface Refutation {
+  moves: LineMove[];
+  text: string;
+}
 
 const ACCEPTED: Class[] = ["brilliant", "great", "best", "excellent"];
 
@@ -120,6 +133,9 @@ let ownVerdict: MoveReview | null = null;
 let profile: Profile | null = null;
 let timer: number | undefined;
 let token = 0;
+/** Your last wrong try, to replay on the board what happens after it. */
+let lastTry: { fenBefore: string; played: PlayedMove } | null = null;
+let refute: (Refutation & { uci: string; shown: number }) | null = null;
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
 const other = (c: Color): Color => (c === "white" ? "black" : "white");
@@ -208,6 +224,8 @@ async function loadNext() {
   result = null;
   ownVerdict = null;
   lastMove = undefined;
+  lastTry = null;
+  refute = null;
   deps.board.setShapes([]);
 
   if (p.kind === "lichess") {
@@ -310,6 +328,7 @@ async function advance(played: PlayedMove, t: number) {
 
 async function wrong(played: PlayedMove, t: number) {
   phase = "wrong";
+  lastTry = { fenBefore: fen, played };
   showTry(played);
   if (!failed) {
     failed = true;
@@ -334,6 +353,58 @@ async function record(solved: boolean) {
   }
   loadProfile();
   renderText();
+}
+
+/** Replay your wrong move and the engine's best answer on the board. */
+async function showWhy() {
+  const tryNow = lastTry;
+  if (!tryNow) return;
+  const t = token;
+  clearTimeout(timer);
+  phase = "showing";
+  if (!refute || refute.uci !== tryNow.played.uci) {
+    refute = null;
+    renderText();
+    try {
+      const r = await invoke<Refutation>("refutation", { fen: tryNow.fenBefore, uci: tryNow.played.uci });
+      refute = { ...r, uci: tryNow.played.uci, shown: 0 };
+    } catch (e) {
+      if (t !== token) return;
+      phase = "wrong";
+      render(String(e));
+      return;
+    }
+    if (t !== token || phase !== "showing") return;
+  }
+  const line = refute.moves;
+  refute.shown = 0;
+  // Start from the puzzle position, so your move animates too.
+  deps.board.set({
+    fen: tryNow.fenBefore,
+    lastMove: lastMove ? [sq(lastMove, true), sq(lastMove, false)] : undefined,
+    check: false,
+    movable: { color: undefined, dests: new Map() },
+  });
+  deps.board.setAutoShapes([]);
+  renderText();
+  const stepOnce = () => {
+    if (t !== token || phase !== "showing" || !refute) return;
+    const m = line[refute.shown];
+    if (!m) return renderText();
+    deps.board.set({ fen: m.fen, lastMove: [sq(m.uci, true), sq(m.uci, false)], check: m.check });
+    // Your move gets a red marker so it's clear where things went wrong.
+    deps.board.setAutoShapes(refute.shown === 0 ? [{ orig: sq(m.uci, false), customSvg: { html: badgeSvg("#d23a3a", "✕") } }] : []);
+    refute.shown++;
+    renderText();
+    timer = window.setTimeout(stepOnce, deps.animMs() + 550);
+  };
+  timer = window.setTimeout(stepOnce, 350);
+}
+
+function backToPuzzle() {
+  clearTimeout(timer);
+  phase = "wrong";
+  render();
 }
 
 async function showSolution() {
@@ -367,10 +438,13 @@ function render(error?: string) {
   if (!active) return;
   const p = puzzle;
   const board = deps.board;
-  if (p && phase !== "loading" && phase !== "empty") {
+  if (p && phase !== "loading" && phase !== "empty" && phase !== "showing") {
     const me: Color = p.kind === "lichess" ? other(sideOf(p.fen)) : sideOf(p.fen);
     const shapes: DrawShape[] = [];
-    if (hint && phase === "solve" && p.moves[step]) shapes.push({ orig: sq(p.moves[step], true), brush: "green" });
+    // The hint also applies after a wrong try (that's when it's needed most).
+    if (hint && (phase === "solve" || phase === "wrong") && p.moves[step]) {
+      shapes.push({ orig: sq(p.moves[step], true), brush: "green" });
+    }
     if (phase === "solved" && lastMove) {
       shapes.push({ orig: sq(lastMove, false), customSvg: { html: badgeSvg("#7cad3f", "✓") } });
     }
@@ -399,13 +473,46 @@ function badgeSvg(color: string, symbol: string): string {
     <text x="22" y="23" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="system-ui, sans-serif" font-weight="800" font-size="26">${symbol}</text></g>`;
 }
 
+const PIECE_NAMES: Record<string, string> = {
+  p: "dem Bauern",
+  n: "dem Springer",
+  b: "dem Läufer",
+  r: "dem Turm",
+  q: "der Dame",
+  k: "dem König",
+};
+
+/** Piece letter on a square of a FEN position ("e4" -> "N"), or null. */
+function pieceAt(fenStr: string, square: string): string | null {
+  const rows = fenStr.split(" ")[0].split("/");
+  const file = square.charCodeAt(0) - 97;
+  const rank = Number(square[1]);
+  let col = 0;
+  for (const ch of rows[8 - rank] ?? "") {
+    if (/\d/.test(ch)) col += Number(ch);
+    else if (col++ === file) return ch;
+  }
+  return null;
+}
+
+function hintText(p: Puzzle): string {
+  const move = p.moves[step];
+  if (!move) return "";
+  const piece = pieceAt(fen, move.slice(0, 2));
+  const name = piece ? PIECE_NAMES[piece.toLowerCase()] : "der markierten Figur";
+  return `<span class="hint-text">Tipp: Zieh mit ${name} von ${move.slice(0, 2)}.</span>`;
+}
+
 function categoryTag(p: Puzzle): string {
   if (p.category === "own" && p.own) {
     const d = new Date(p.own.createdAt).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
     return `<span class="pz-tag own">Aus deiner Partie</span><span class="muted">vs ${esc(p.own.opponent)} · ${d}</span>`;
   }
   if (p.category === "weakness" && p.theme) {
-    return `<span class="pz-tag weakness" title="Gewählt, weil das in deinen Partien oft vorkommt">Schwäche: ${esc(THEMES[p.theme].label)}</span>`;
+    const rate = p.themePerGame != null ? p.themePerGame.toLocaleString("de-DE", { maximumFractionDigits: 1 }) : null;
+    const scope = windowLast() ? `deinen letzten ${windowLast()} Partien` : "deinen Partien";
+    return `<span class="pz-tag weakness">Schwäche: ${esc(THEMES[p.theme].label)}</span>
+      <span class="pz-why">${rate ? `Kommt in ${scope} ${rate}× pro Partie vor.` : "Kommt in deinen Partien oft vor."}</span>`;
   }
   return `<span class="pz-tag mixed" title="Ein beliebiges Thema auf deinem Niveau – damit das Training nicht einseitig wird">Gemischt</span>`;
 }
@@ -449,7 +556,7 @@ function renderText(error?: string) {
         p.kind === "own" && p.own
           ? `In der Partie hast du hier <b>${esc(fig(p.own.san))}</b> gespielt – ${CLASSES[p.own.classification].phrase}. Finde einen besseren Zug für ${side}.`
           : `<b>${side} am Zug.</b> ${step > 1 ? "Richtig – weiter!" : "Finde den besten Zug."}`;
-      if (hint) text.innerHTML += ` <span class="muted">Tipp: Zieh mit der markierten Figur.</span>`;
+      if (hint) text.innerHTML += `<br>${hintText(p)}`;
       break;
     case "checking":
       text.innerHTML = `<span class="muted">Prüfe deinen Zug …</span>`;
@@ -460,6 +567,27 @@ function renderText(error?: string) {
           ? `${badgeHtml(ownVerdict.classification)} <b>${esc(fig(ownVerdict.san))}</b> ist ${CLASSES[ownVerdict.classification].phrase}. ${esc(fig(ownVerdict.comment))}`
           : `<b>Das ist nicht die Lösung.</b>`;
       text.innerHTML += ` <span class="muted">Versuch es nochmal.</span> ${delta}`;
+      if (hint) text.innerHTML += `<br>${hintText(p)}`;
+      break;
+    case "showing":
+      if (!refute) {
+        text.innerHTML = `<span class="muted">Berechne, wie der Gegner antwortet …</span>`;
+      } else {
+        const done = refute.shown >= refute.moves.length;
+        // Highlight the moves shown so far.
+        const tokens = refute.text.split(" ");
+        let moveIdx = 0;
+        const shownText = tokens
+          .map((tok) => {
+            if (/^\d+\.+$/.test(tok) || /^\d+\.\.\.$/.test(tok)) return `<span class="muted">${tok}</span>`;
+            const cls = moveIdx === 0 ? "ref-mine" : moveIdx < refute!.shown ? "ref-shown" : "ref-next";
+            moveIdx++;
+            return `<span class="${cls}">${esc(fig(tok))}</span>`;
+          })
+          .join(" ");
+        text.innerHTML = `<b>So geht es nach deinem Zug weiter:</b><br><span class="ref-line">${shownText}</span>`;
+        if (done && refute.moves.length === 1) text.innerHTML += `<br><span class="muted">Danach ist die Partie zu Ende.</span>`;
+      }
       break;
     case "solved":
       text.innerHTML = failed
@@ -479,9 +607,15 @@ function renderText(error?: string) {
     if (p.gameUrl) parts.push(`<span class="muted">Ursprung:</span> <span class="pz-url">${esc(p.gameUrl)}</span>`);
     extra.innerHTML = parts.join("<br>");
     actions.innerHTML = `<button data-act="next" class="primary">Nächstes Puzzle →</button>`;
+  } else if (phase === "showing") {
+    const done = !!refute && refute.shown >= refute.moves.length;
+    actions.innerHTML = `
+      <button data-act="why" ${done ? "" : "disabled"}>Nochmal abspielen</button>
+      <button data-act="back" class="primary">Zurück zur Aufgabe</button>`;
   } else {
     const busy = phase === "opponent" || phase === "checking";
-    actions.innerHTML = `
+    const why = phase === "wrong" && lastTry ? `<button data-act="why" class="primary">Zeig mir, was passiert</button>` : "";
+    actions.innerHTML = `${why}
       <button data-act="hint" ${hint || busy ? "disabled" : ""}>Tipp</button>
       <button data-act="solution" ${busy ? "disabled" : ""}>Lösung zeigen</button>
       <button data-act="skip" class="end">Überspringen</button>`;
@@ -501,6 +635,12 @@ function bindActions() {
             break;
           case "solution":
             showSolution();
+            break;
+          case "why":
+            showWhy();
+            break;
+          case "back":
+            backToPuzzle();
             break;
           case "skip":
           case "next":

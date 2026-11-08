@@ -431,6 +431,15 @@ async fn evaluate_move(fen: String, uci: String, depth: Option<u32>) -> Result<a
         .map_err(|e| e.to_string())?
 }
 
+/// The engine's continuation after a move (to show on the board why it fails).
+#[tauri::command]
+async fn refutation(fen: String, uci: String, depth: Option<u32>) -> Result<explore::Refutation, String> {
+    let depth = depth.unwrap_or(16).clamp(8, 24);
+    tauri::async_runtime::spawn_blocking(move || explore::refutation(&fen, &uci, depth))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn live_analyse(app: AppHandle, id: u64, fen: String) -> Result<(), String> {
     // Stopping the previous search can block briefly, so keep it off the main thread.
@@ -492,7 +501,8 @@ pub fn run() {
             puzzle_cancel,
             puzzle_next,
             puzzle_record,
-            puzzle_profile
+            puzzle_profile,
+            refutation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

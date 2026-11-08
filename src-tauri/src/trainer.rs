@@ -24,6 +24,9 @@ const OWN_REST_MS: i64 = 3 * 24 * 3600 * 1000;
 /// Attempts per theme that count for its mastery.
 const MASTERY_WINDOW: usize = 20;
 const DEFAULT_RATING: f64 = 1500.0;
+/// "Positional" means the coach found no concrete tactic – puzzles train that
+/// poorly, so it counts much less than the concrete tactical weaknesses.
+const POSITIONAL_WEIGHT: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +82,8 @@ pub struct Puzzle {
     pub category: Category,
     /// The weakness this puzzle was chosen for.
     pub theme: Option<Theme>,
+    /// How often that weakness occurs per game in the chosen games.
+    pub theme_per_game: Option<f64>,
     pub game_url: Option<String>,
     pub own: Option<OwnInfo>,
 }
@@ -240,6 +245,7 @@ fn pick_lichess(
             themes: themes.split_whitespace().map(String::from).collect(),
             category: Category::Mixed,
             theme: None,
+            theme_per_game: None,
             game_url: Some(url),
             own: None,
         }));
@@ -277,6 +283,7 @@ fn pick_own(
                 themes: vec![],
                 category: Category::Own,
                 theme: m.theme,
+                theme_per_game: None,
                 game_url: game.url.clone(),
                 own: Some(OwnInfo {
                     game_id: game.id.clone(),
@@ -308,7 +315,8 @@ fn theme_weights(weakness: &stats::WeaknessStats, mastery: &HashMap<String, (u32
                 .filter(|(attempts, _)| *attempts >= 3)
                 .map(|&(attempts, solved)| solved as f64 / attempts as f64)
                 .unwrap_or(0.5);
-            (t.theme, t.count as f64 * (1.5 - rate))
+            let relevance = if t.theme == Theme::Positional { POSITIONAL_WEIGHT } else { 1.0 };
+            (t.theme, t.count as f64 * (1.5 - rate) * relevance)
         })
         .collect()
 }
@@ -356,6 +364,9 @@ pub fn next(db: &Db, data_dir: &Path, accounts: &[Account], last: Option<usize>)
                 if let Some(mut p) = pick_lichess(conn, player_rating, Some(lichess_theme), &seen, &mut rng)? {
                     p.category = Category::Weakness;
                     p.theme = Some(theme);
+                    let count = weakness.themes.iter().find(|t| t.theme == theme).map_or(0, |t| t.count);
+                    p.theme_per_game =
+                        (weakness.games_analysed > 0).then(|| count as f64 / weakness.games_analysed as f64);
                     return Ok(Some(p));
                 }
             }
@@ -454,6 +465,11 @@ mod tests {
         // Too few attempts -> neutral factor 1.0.
         mastery.insert("allowedFork".to_string(), (2, 2));
         assert!((theme_weights(&ws(10, 4), &mastery)[0].1 - 10.0).abs() < 1e-9);
+
+        // "Positional" counts only a quarter.
+        let mut s = ws(0, 0);
+        s.themes = vec![stats::ThemeStat { theme: Theme::Positional, count: 22, baseline_per_game: None, examples: vec![] }];
+        assert!((theme_weights(&s, &HashMap::new())[0].1 - 5.5).abs() < 1e-9);
     }
 
     #[test]
