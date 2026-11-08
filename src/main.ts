@@ -530,8 +530,9 @@ function show(ply: number) {
   const before = state.inVar ? -1 : state.ply;
   state.inVar = false;
   state.ply = Math.max(0, Math.min(ply, r.moves.length));
-  // Sound when stepping one move forward (as on Lichess).
-  if (state.ply === before + 1 && r.moves[state.ply - 1]) moveSound(r.moves[state.ply - 1].san);
+  // A sound for every change of position – forward, back or jump (as on Lichess):
+  // the move that leads to the position now shown.
+  if (state.ply !== before) moveSound(r.moves[state.ply - 1]?.san ?? "");
   renderPosition();
 }
 
@@ -548,7 +549,10 @@ function showVarStep(index: number) {
   const before = state.inVar ? state.varIndex : -1;
   state.inVar = true;
   state.varIndex = Math.max(0, Math.min(index, v.nodes.length));
-  if (state.varIndex === before + 1 && v.nodes[state.varIndex - 1]) moveSound(v.nodes[state.varIndex - 1].san);
+  if (state.varIndex !== before) {
+    // At the branch point that's the game move, otherwise the variation move.
+    moveSound(v.nodes[state.varIndex - 1]?.san ?? state.review?.moves[v.basePly - 1]?.san ?? "");
+  }
   renderPosition();
 }
 

@@ -61,6 +61,8 @@ async function playFile(url: string, fallback: () => void) {
   const ac = audio();
   const buffer = await loadBuffer(url);
   if (!ac || !buffer) return fallback();
+  // The output may be suspended (no user gesture yet, or after standby).
+  if (ac.state !== "running") await ac.resume().catch(() => {});
   try {
     playingFiles.get(url)?.stop();
   } catch {
@@ -75,8 +77,23 @@ async function playFile(url: string, fallback: () => void) {
   playingFiles.set(url, src);
 }
 
+/**
+ * Web Audio starts suspended until the user interacts with the page; resume it
+ * on every click/key press so sounds triggered later (bot or opponent moves)
+ * aren't swallowed.
+ */
+function unlockOnGesture() {
+  const unlock = () => {
+    const ac = audio();
+    if (ac && ac.state !== "running") void ac.resume().catch(() => {});
+  };
+  window.addEventListener("pointerdown", unlock, true);
+  window.addEventListener("keydown", unlock, true);
+}
+
 /** Decode all recordings up front so the first move already sounds instantly. */
 export function preloadSounds() {
+  unlockOnGesture();
   for (const name of Object.values(RECORDED)) {
     const url = name && recording(name);
     if (url) void loadBuffer(url);

@@ -207,8 +207,13 @@ function branchAtView() {
 function stepView(delta: number) {
   if (!finished()) return;
   const n = positions().length;
+  const before = curIndex();
   const i = Math.max(0, Math.min(curIndex() + delta, n - 1));
   viewIndex = i === n - 1 ? null : i;
+  if (i !== before) {
+    const pos = positions()[i];
+    moveSound(pos.check ? "+" : "");
+  }
   render();
 }
 
@@ -867,6 +872,7 @@ function bindActions() {
             engineMove();
             break;
           case "first":
+            if (curIndex() !== 0) moveSound("");
             viewIndex = 0;
             render();
             break;
