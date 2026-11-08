@@ -450,11 +450,16 @@ async function selectGame(game: GameInfo, startPly = 0) {
   $("review-progress").hidden = false;
   setProgress(0, game.moves.length + 1);
 
+  $("refine").hidden = true;
   try {
     const depth = Number(($("depth") as HTMLSelectElement).value);
-    const review = await invoke<GameReview>("analyse_game", { game, depth });
+    // Already analysed at the chosen depth? Then it's there instantly. Otherwise
+    // a quick preview first, refined in the background.
+    const stored = await invoke<GameReview | null>("stored_review", { gameId: game.id, depth });
     if (token !== analysisToken) return;
-    state.review = review;
+    const first = stored ?? (await invoke<GameReview>("analyse_game", { game, depth: Math.min(PREVIEW_DEPTH, depth) }));
+    if (token !== analysisToken) return;
+    state.review = first;
     state.cached.add(game.id);
     renderGames();
     $("review-progress").hidden = true;
@@ -464,6 +469,7 @@ async function selectGame(game: GameInfo, startPly = 0) {
     goto(startPly);
     renderGraph();
     updateTrainButton();
+    if (first.depth < depth) refine(game, depth, token);
   } catch (e) {
     if (token !== analysisToken) return;
     $("review-progress").hidden = true;
@@ -473,6 +479,33 @@ async function selectGame(game: GameInfo, startPly = 0) {
   }
 }
 
+/** Depth of the quick first review; the chosen depth follows in the background. */
+const PREVIEW_DEPTH = 10;
+
+/** Analyse at the full depth in the background and swap it in quietly. */
+async function refine(game: GameInfo, depth: number, token: number) {
+  $("refine").hidden = false;
+  $("refine-text").textContent = "Verfeinere Analyse …";
+  let review: GameReview;
+  try {
+    review = await invoke<GameReview>("analyse_game", { game, depth });
+  } catch {
+    // cancelled (another game was opened) or failed: the preview stays
+    if (token === analysisToken) $("refine").hidden = true;
+    return;
+  }
+  if (token !== analysisToken || state.game?.id !== game.id) return;
+  $("refine").hidden = true;
+  // Exercises are built from the review; don't pull it away mid-exercise.
+  if (training) return;
+  state.review = review;
+  renderSummary();
+  renderMoveList();
+  renderGraph();
+  updateTrainButton();
+  if (!boardTaken()) renderPosition();
+}
+
 function setProgress(done: number, total: number) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   ($("review-progress").querySelector(".progress-fill") as HTMLElement).style.width = `${pct}%`;
@@ -480,7 +513,12 @@ function setProgress(done: number, total: number) {
 }
 
 listen<Progress>("analysis-progress", (e) => {
-  if (e.payload.gameId === state.game?.id && !state.review) setProgress(e.payload.done, e.payload.total);
+  const p = e.payload;
+  if (p.gameId !== state.game?.id) return;
+  if (!state.review) setProgress(p.done, p.total);
+  else if (p.depth > state.review.depth) {
+    $("refine-text").textContent = `Verfeinere Analyse (Tiefe ${p.depth}) … ${Math.round((p.done / p.total) * 100)} %`;
+  }
 });
 
 // ---------------------------------------------------------------------------

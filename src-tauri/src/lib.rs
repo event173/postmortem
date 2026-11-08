@@ -61,6 +61,8 @@ struct BatchProgress {
 #[serde(rename_all = "camelCase")]
 struct Progress {
     game_id: String,
+    /// Depth being analysed (preview vs. refinement).
+    depth: u32,
     done: usize,
     total: usize,
 }
@@ -133,6 +135,12 @@ async fn fetch_game(db: State<'_, DbState>, url: String) -> Result<GameInfo, Str
     Ok(game)
 }
 
+/// A stored review of at least `depth`, without analysing anything.
+#[tauri::command]
+fn stored_review(db: State<DbState>, game_id: String, depth: u32) -> Result<Option<GameReview>, String> {
+    db.0.lock().unwrap().review(&game_id, depth)
+}
+
 #[tauri::command]
 fn cancel_analysis(state: State<AnalysisState>) {
     if let Some(flag) = state.cancel.lock().unwrap().as_ref() {
@@ -186,7 +194,7 @@ fn run_analysis(
     let mut sf = engine::Engine::start(&path, threads, 256, 1)?;
     let n = positions.len();
     let progress = |done: usize, total: usize| {
-        let _ = app.emit("analysis-progress", Progress { game_id: game.id.clone(), done, total });
+        let _ = app.emit("analysis-progress", Progress { game_id: game.id.clone(), depth, done, total });
     };
     // Until pass 1 is done we only know roughly how much pass 2 will add.
     let estimate = n + n / 2;
@@ -760,6 +768,7 @@ pub fn run() {
             sync_games,
             fetch_game,
             cancel_analysis,
+            stored_review,
             analyse_game,
             position_info,
             play_move,

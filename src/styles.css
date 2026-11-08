@@ -2627,3 +2627,16 @@ body[data-board] cg-board {
 .platform.local {
   background: #5b8dd6;
 }
+
+/* background refinement of a preview review */
+.refine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: rgba(91, 141, 214, 0.1);
+  border: 1px solid rgba(91, 141, 214, 0.3);
+  color: #c8d8ef;
+  font-size: 12px;
+}

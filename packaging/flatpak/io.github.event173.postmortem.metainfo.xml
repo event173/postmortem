@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.1.6" date="2026-11-08">
+      <description>
+        <p>Reviews open within seconds: a quick preview first, refined in the background.</p>
+      </description>
+    </release>
     <release version="0.1.5" date="2026-11-08">
       <description>
         <p>Move sounds on every navigation step and more reliable sound playback.</p>

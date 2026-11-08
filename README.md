@@ -90,8 +90,9 @@ Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install
 
 1. **Namen eingeben:** In der Partieliste „Lichess“ oder „chess.com“ wählen, Benutzernamen eingeben,
    *Laden*. Deine letzten Partien erscheinen links; neue werden bei jedem Start nachgeladen.
-2. **Partie anklicken:** Die Analyse dauert je nach Länge und Rechner etwa eine halbe bis zwei
-   Minuten und wird gespeichert – beim nächsten Mal ist sie sofort da.
+2. **Partie anklicken:** Nach wenigen Sekunden steht eine schnelle Vorschau (Tiefe 10), die du
+   sofort durchgehen kannst; im Hintergrund wird auf die eingestellte Tiefe verfeinert und still
+   ausgetauscht. Die Analyse wird gespeichert – beim nächsten Mal ist sie sofort da.
 3. **Statistik:** Unter *Statistik → „… Partien analysieren“* werden deine übrigen Partien im
    Hintergrund ausgewertet. Je mehr analysiert sind, desto aussagekräftiger.
 4. **Puzzles:** Einmalig im **Zahnrad-Menü** die Puzzle-Datenbank herunterladen (≈ 300 MB).

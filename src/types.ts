@@ -82,6 +82,7 @@ export interface GameReview {
 
 export interface Progress {
   gameId: string;
+  depth: number;
   done: number;
   total: number;
 }
