@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>postmortem</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <header class="topbar">
+      <div class="brand">post<span>mortem</span></div>
+      <form id="load-form" class="load-form">
+        <input
+          id="load-input"
+          type="text"
+          placeholder="Lichess-Name oder Partielink"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit" class="primary">Laden</button>
+      </form>
+      <label class="depth">
+        Tiefe
+        <select id="depth">
+          <option value="12">12 · schnell</option>
+          <option value="16" selected>16 · normal</option>
+          <option value="20">20 · gründlich</option>
+        </select>
+      </label>
+      <div id="engine-status" class="engine-status"></div>
+    </header>
+
+    <main class="layout">
+      <aside class="games">
+        <div class="games-head">
+          <span>Partien</span>
+          <span id="games-count" class="muted"></span>
+        </div>
+        <div id="games-list" class="games-list">
+          <p class="empty">Gib deinen Lichess-Namen ein, um deine letzten Partien zu laden.</p>
+        </div>
+      </aside>
+
+      <section class="board-area">
+        <div id="player-top" class="player"></div>
+        <div class="board-row">
+          <div id="evalbar" class="evalbar"><div class="evalbar-fill"></div><span class="evalbar-label"></span></div>
+          <div class="board-wrap"><div id="board"></div></div>
+        </div>
+        <div id="player-bottom" class="player"></div>
+        <nav class="controls">
+          <button id="btn-first" title="Anfang (Pos1)">⏮</button>
+          <button id="btn-prev" title="Zurück (←)">◀</button>
+          <button id="btn-next" title="Vor (→)">▶</button>
+          <button id="btn-last" title="Ende (Ende)">⏭</button>
+          <button id="btn-flip" title="Brett drehen (F)">⇅</button>
+          <button id="btn-mistake" class="accent" title="Nächster eigener Fehler (N)">Nächster Fehler</button>
+          <button id="btn-back" title="Zurück zur Partie (Esc)" hidden>↩ Zur Partie</button>
+          <button id="btn-train" hidden>Aus Fehlern lernen</button>
+        </nav>
+      </section>
+
+      <section class="review">
+        <div id="review-empty" class="panel empty">Wähle links eine Partie aus.</div>
+
+        <div id="review-progress" class="panel progress" hidden>
+          <div class="progress-title">Analysiere Partie …</div>
+          <div class="progress-bar"><div class="progress-fill"></div></div>
+          <div class="progress-row">
+            <span id="progress-text" class="muted"></span>
+            <button id="btn-cancel">Abbrechen</button>
+          </div>
+        </div>
+
+        <div id="review-content" hidden>
+          <div class="panel coach">
+            <div id="coach-head" class="coach-head"></div>
+            <p id="coach-text" class="coach-text"></p>
+            <div id="coach-best" class="coach-best"></div>
+            <div id="training-actions" class="training-actions" hidden></div>
+          </div>
+
+          <div class="panel live">
+            <div class="live-head">
+              <label class="switch"><input id="live-toggle" type="checkbox" checked /><span></span>Engine</label>
+              <span id="live-depth" class="muted"></span>
+            </div>
+            <div id="live-lines" class="live-lines"></div>
+          </div>
+
+          <div class="panel">
+            <svg id="graph" class="graph" preserveAspectRatio="none"></svg>
+          </div>
+
+          <div class="panel summary">
+            <table id="summary-table"></table>
+          </div>
+
+          <div class="panel moves-panel">
+            <div id="moves" class="moves"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
