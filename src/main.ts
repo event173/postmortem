@@ -10,6 +10,7 @@ import "chessground/assets/chessground.cburnett.css";
 import "./styles.css";
 import { $, badgeHtml, esc, fig, store } from "./util";
 import { initStats, loadStats, showStatsView } from "./stats";
+import { displayPrefs, initSettings } from "./settings";
 
 import {
   BAD,
@@ -53,8 +54,8 @@ const state = {
   liveEnabled: true,
 };
 
-/** Piece animation length; playback steps are a bit longer so moves never overlap. */
-const ANIM_MS = 230;
+/** Piece animation length (setting); playback steps are a bit longer so moves never overlap. */
+let animMs = displayPrefs().animMs;
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -62,8 +63,8 @@ const board: Api = Chessground($("board"), {
   fen: START_FEN,
   // Not viewOnly: chessground binds its drag listeners only once, at creation.
   // Moves are blocked via `movable.color` until a review is loaded instead.
-  coordinates: true,
-  animation: { enabled: true, duration: ANIM_MS },
+  coordinates: displayPrefs().coordinates,
+  animation: { enabled: animMs > 0, duration: animMs },
   draggable: { enabled: true, showGhost: true },
   // Right-click drag draws arrows, right-click on a square a circle (like Lichess):
   // green; Shift/Ctrl = red, Alt = blue, both = yellow. Left-click erases.
@@ -446,7 +447,7 @@ function playTo(target: number) {
   }
   // Each step waits for the previous animation to finish; long jumps play a bit
   // faster (≈ 4 s max) but never faster than the animation itself.
-  const stepMs = Math.min(500, Math.max(ANIM_MS + 60, 4000 / distance));
+  const stepMs = Math.min(500, Math.max(animMs + 60, 4000 / distance));
   const step = () => {
     show(state.ply + 1);
     if (state.ply >= target) {
@@ -1308,9 +1309,25 @@ $("load-form").addEventListener("submit", (e) => {
   load(($("load-input") as HTMLInputElement).value);
 });
 
-const depthSelect = $("depth") as HTMLSelectElement;
-depthSelect.value = store.get("depth") ?? "16";
-depthSelect.addEventListener("change", () => store.set("depth", depthSelect.value));
+initSettings({
+  applyDisplay: (prefs) => {
+    animMs = prefs.animMs;
+    board.set({ animation: { enabled: animMs > 0, duration: animMs }, coordinates: prefs.coordinates });
+    board.redrawAll();
+    applyShapes();
+  },
+  onEngineChanged: () => {
+    checkEngine();
+    if (state.review && state.liveEnabled && !training) requestLive(currentFen());
+  },
+  onLiveDefault: (on) => {
+    const toggle = $("live-toggle") as HTMLInputElement;
+    if (toggle.checked !== on) {
+      toggle.checked = on;
+      toggle.dispatchEvent(new Event("change"));
+    }
+  },
+});
 
 state.liveEnabled = store.get("live") !== "0";
 ($("live-toggle") as HTMLInputElement).checked = state.liveEnabled;

@@ -7,6 +7,7 @@ mod explore;
 mod lichess;
 mod live;
 mod openings;
+mod puzzles;
 mod stats;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +28,15 @@ struct AnalysisState {
 
 struct DbState(Mutex<db::Db>);
 
+/// The app's data directory (databases live here).
+struct DataDir(std::path::PathBuf);
+
+/// Cancellation flag of a running puzzle-database download/import.
+#[derive(Default)]
+struct PuzzleInstall {
+    cancel: Mutex<Option<Arc<AtomicBool>>>,
+}
+
 /// Cancellation flag of the running "analyse all" batch (if any).
 #[derive(Default)]
 struct BatchState {
@@ -43,10 +53,6 @@ struct BatchProgress {
     finished: bool,
 }
 
-fn engine_threads(fraction_half: bool) -> usize {
-    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    if fraction_half { (n / 2).max(1) } else { n.saturating_sub(1).max(1) }
-}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -150,7 +156,7 @@ async fn analyse_game(
 
     let app2 = app.clone();
     let game2 = game.clone();
-    let review = tauri::async_runtime::spawn_blocking(move || run_analysis(&app2, &game2, depth, &cancel, engine_threads(false)))
+    let review = tauri::async_runtime::spawn_blocking(move || run_analysis(&app2, &game2, depth, &cancel, engine::threads(false)))
         .await
         .map_err(|e| e.to_string())??;
 
@@ -244,7 +250,7 @@ async fn analyse_all(
             }
             progress(done, Some(game), false);
             // Half the cores, so reviewing a game in parallel stays responsive.
-            match run_analysis(&app, game, depth, &cancel, engine_threads(true)) {
+            match run_analysis(&app, game, depth, &cancel, engine::threads(true)) {
                 Ok(review) => {
                     app.state::<DbState>().0.lock().unwrap().save_review(&review)?;
                     done += 1;
@@ -268,6 +274,104 @@ async fn analyse_all(
 #[tauri::command]
 fn cancel_batch(batch: State<BatchState>) {
     if let Some(flag) = batch.cancel.lock().unwrap().as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsInfo {
+    /// Path chosen in the settings (None = automatic).
+    stockfish_path: Option<String>,
+    /// Path found automatically.
+    detected_path: Option<String>,
+    /// Threads chosen in the settings (None = automatic).
+    threads: Option<usize>,
+    cpu_count: usize,
+    data_dir: String,
+    games: u64,
+    reviews: u64,
+}
+
+fn settings_info(db: &db::Db, dir: &DataDir) -> Result<SettingsInfo, String> {
+    let config = engine::config();
+    let (games, reviews) = db.counts()?;
+    Ok(SettingsInfo {
+        stockfish_path: config.path.map(|p| p.display().to_string()),
+        detected_path: engine::detect_stockfish().map(|p| p.display().to_string()),
+        threads: config.threads,
+        cpu_count: engine::cpu_count(),
+        data_dir: dir.0.display().to_string(),
+        games,
+        reviews,
+    })
+}
+
+#[tauri::command]
+fn get_settings(db: State<DbState>, dir: State<DataDir>) -> Result<SettingsInfo, String> {
+    settings_info(&db.0.lock().unwrap(), &dir)
+}
+
+/// Engine settings from the dialog; a custom path is checked with a UCI handshake first.
+#[tauri::command]
+async fn set_engine_settings(
+    app: AppHandle,
+    path: Option<String>,
+    threads: Option<usize>,
+) -> Result<SettingsInfo, String> {
+    let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
+    if let Some(p) = path.clone() {
+        if !p.is_file() {
+            return Err(format!("Datei nicht gefunden: {}", p.display()));
+        }
+        tauri::async_runtime::spawn_blocking(move || engine::verify(&p))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("Das scheint keine UCI-Engine zu sein: {e}"))?;
+    }
+    let threads = threads.map(|t| t.clamp(1, engine::cpu_count()));
+    let db = app.state::<DbState>();
+    let db = db.0.lock().unwrap();
+    db.set_setting("stockfish_path", path.as_ref().map(|p| p.display().to_string()).as_deref())?;
+    db.set_setting("threads", threads.map(|t| t.to_string()).as_deref())?;
+    engine::configure(engine::EngineConfig { path, threads });
+    app.state::<live::Live>().reset();
+    settings_info(&db, &app.state::<DataDir>())
+}
+
+#[tauri::command]
+fn puzzle_status(dir: State<DataDir>) -> puzzles::PuzzleStatus {
+    puzzles::status(&dir.0)
+}
+
+#[tauri::command]
+async fn puzzle_check_update(dir: State<'_, DataDir>) -> Result<puzzles::UpdateCheck, String> {
+    Ok(puzzles::check_update(&dir.0).await)
+}
+
+/// Download and import the Lichess puzzle database (progress via `puzzle-progress` events).
+#[tauri::command]
+async fn puzzle_install(
+    app: AppHandle,
+    dir: State<'_, DataDir>,
+    install: State<'_, PuzzleInstall>,
+) -> Result<puzzles::PuzzleStatus, String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = install.cancel.lock().unwrap();
+        if running.is_some() {
+            return Err("Der Download läuft bereits.".into());
+        }
+        *running = Some(cancel.clone());
+    }
+    let result = puzzles::install(app.clone(), dir.0.clone(), cancel).await;
+    *install.cancel.lock().unwrap() = None;
+    result
+}
+
+#[tauri::command]
+fn puzzle_cancel(install: State<PuzzleInstall>) {
+    if let Some(flag) = install.cancel.lock().unwrap().as_ref() {
         flag.store(true, Ordering::Relaxed);
     }
 }
@@ -310,12 +414,18 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AnalysisState::default())
         .manage(BatchState::default())
+        .manage(PuzzleInstall::default())
         .manage(live::Live::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let db = db::Db::open(&dir.join("postmortem.db"))?;
+            engine::configure(engine::EngineConfig {
+                path: db.setting("stockfish_path")?.map(std::path::PathBuf::from),
+                threads: db.setting("threads")?.and_then(|t| t.parse().ok()),
+            });
             app.manage(DbState(Mutex::new(db)));
+            app.manage(DataDir(dir));
             // Reviews used to be cached as JSON files; they now live in the database.
             if let Ok(cache) = app.path().app_cache_dir() {
                 let _ = std::fs::remove_dir_all(cache.join("reviews"));
@@ -336,7 +446,13 @@ pub fn run() {
             live_stop,
             weakness_stats,
             analyse_all,
-            cancel_batch
+            cancel_batch,
+            get_settings,
+            set_engine_settings,
+            puzzle_status,
+            puzzle_check_update,
+            puzzle_install,
+            puzzle_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

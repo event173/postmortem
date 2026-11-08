@@ -78,7 +78,7 @@ pub fn evaluate_move(fen: &str, uci: &str, depth: u32) -> Result<MoveReview, Str
 
     let path = engine::find_stockfish()
         .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
-    let threads = std::thread::available_parallelism().map(|n| (n.get() / 2).max(1)).unwrap_or(1);
+    let threads = engine::threads(true);
     let mut sf = engine::Engine::start(&path, threads, 64, 2)?;
     let mut eval = |p: &shakmaty::Chess| match analysis::terminal_eval(p) {
         Some(l) => Ok(l),

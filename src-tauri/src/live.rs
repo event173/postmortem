@@ -106,7 +106,7 @@ fn spawn(app: &AppHandle) -> Result<Process, String> {
     let stdout = BufReader::new(child.stdout.take().ok_or("kein stdout")?);
 
     // Leave some CPU for a batch analysis that may be running in parallel.
-    let threads = std::thread::available_parallelism().map(|n| (n.get() / 2).max(1)).unwrap_or(1);
+    let threads = engine::threads(true);
     send(&mut stdin, "uci")?;
     send(&mut stdin, &format!("setoption name Threads value {threads}"))?;
     send(&mut stdin, "setoption name Hash value 128")?;
@@ -240,6 +240,11 @@ impl Live {
         send(&mut proc.stdin, &format!("setoption name MultiPV value {multipv}"))?;
         send(&mut proc.stdin, &format!("position fen {fen}"))?;
         send(&mut proc.stdin, &format!("go depth {MAX_DEPTH}"))
+    }
+
+    /// Drop the engine process; the next request starts a fresh one (e.g. after settings changed).
+    pub fn reset(&self) {
+        *self.process.lock().unwrap() = None;
     }
 
     pub fn stop(&self) -> Result<(), String> {

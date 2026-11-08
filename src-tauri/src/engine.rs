@@ -69,8 +69,37 @@ pub struct Engine {
     stdout: BufReader<ChildStdout>,
 }
 
-/// Locate a Stockfish binary: `POSTMORTEM_STOCKFISH`, then `PATH`, then common install dirs.
-pub fn find_stockfish() -> Option<PathBuf> {
+/// User overrides from the settings dialog.
+#[derive(Debug, Clone, Default)]
+pub struct EngineConfig {
+    pub path: Option<PathBuf>,
+    /// Threads for the main analysis; background work uses half.
+    pub threads: Option<usize>,
+}
+
+static CONFIG: std::sync::RwLock<EngineConfig> = std::sync::RwLock::new(EngineConfig { path: None, threads: None });
+
+pub fn configure(config: EngineConfig) {
+    *CONFIG.write().unwrap() = config;
+}
+
+pub fn config() -> EngineConfig {
+    CONFIG.read().unwrap().clone()
+}
+
+pub fn cpu_count() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
+
+/// Engine threads: all but one core for the analysis you're looking at,
+/// half of that for background work (live engine, batch, own moves).
+pub fn threads(background: bool) -> usize {
+    let main = config().threads.unwrap_or_else(|| cpu_count().saturating_sub(1)).max(1);
+    if background { (main / 2).max(1) } else { main }
+}
+
+/// Stockfish found without user override (env var, PATH, common dirs).
+pub fn detect_stockfish() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("POSTMORTEM_STOCKFISH") {
         let p = PathBuf::from(p);
         if p.is_file() {
@@ -96,6 +125,16 @@ pub fn find_stockfish() -> Option<PathBuf> {
     .iter()
     .map(PathBuf::from)
     .find(|p| p.is_file())
+}
+
+/// The Stockfish binary to use: the path from the settings, else auto-detected.
+pub fn find_stockfish() -> Option<PathBuf> {
+    config().path.filter(|p| p.is_file()).or_else(detect_stockfish)
+}
+
+/// Check that a file really is a UCI engine (handshake only).
+pub fn verify(path: &Path) -> Result<(), String> {
+    Engine::start(path, 1, 16, 1).map(drop)
 }
 
 /// Start a Stockfish process with piped stdio and low CPU priority, so long

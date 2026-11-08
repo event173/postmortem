@@ -24,15 +24,11 @@
         />
         <button type="submit" class="primary">Laden</button>
       </form>
-      <label class="depth">
-        Tiefe
-        <select id="depth">
-          <option value="12">12 · schnell</option>
-          <option value="16" selected>16 · normal</option>
-          <option value="20">20 · gründlich</option>
-        </select>
-      </label>
       <div id="engine-status" class="engine-status"></div>
+      <button id="btn-settings" class="gear" title="Einstellungen">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.5 7.5 0 0 0 .05-.94 7.5 7.5 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.3 7.3 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.12.22.39.3.6.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.08.48 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>
+        <span id="settings-dot" class="dot" hidden></span>
+      </button>
     </header>
 
     <main class="layout">
@@ -126,5 +122,85 @@
         </div>
       </section>
     </main>
+    <dialog id="settings" class="settings">
+      <form method="dialog" class="settings-head">
+        <h2>Einstellungen</h2>
+        <button class="icon" title="Schließen (Esc)">✕</button>
+      </form>
+
+      <section>
+        <h3>Analyse</h3>
+        <label class="row">
+          <span>Tiefe<small>Höher = genauer, aber langsamer. Gilt für neue Analysen.</small></span>
+          <select id="depth">
+            <option value="12">12 · schnell</option>
+            <option value="16" selected>16 · normal</option>
+            <option value="20">20 · gründlich</option>
+            <option value="24">24 · sehr gründlich</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Live-Engine beim Start an<small>Zeigt die besten Varianten zur Stellung auf dem Brett.</small></span>
+          <input id="pref-live" type="checkbox" />
+        </label>
+      </section>
+
+      <section>
+        <h3>Engine</h3>
+        <div class="row">
+          <span>Stockfish<small id="engine-detected"></small></span>
+        </div>
+        <label class="row stack">
+          <span>Eigener Pfad<small>Leer lassen für automatische Erkennung.</small></span>
+          <input id="engine-path" type="text" placeholder="/pfad/zu/stockfish" spellcheck="false" />
+        </label>
+        <label class="row">
+          <span>CPU-Kerne<small id="threads-hint"></small></span>
+          <select id="engine-threads"></select>
+        </label>
+        <div class="row actions">
+          <span id="engine-msg" class="msg"></span>
+          <button id="engine-apply" class="primary">Übernehmen</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Darstellung</h3>
+        <label class="row">
+          <span>Animationen</span>
+          <select id="pref-anim">
+            <option value="0">Aus</option>
+            <option value="150">Schnell</option>
+            <option value="230" selected>Normal</option>
+            <option value="350">Langsam</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Koordinaten am Brett</span>
+          <input id="pref-coords" type="checkbox" checked />
+        </label>
+      </section>
+
+      <section>
+        <h3>Puzzle-Datenbank</h3>
+        <p class="hint">Alle Puzzles von Lichess (gemeinfrei) für das Training, offline nutzbar. Download ca. 300&nbsp;MB, lokal ca. 1&nbsp;GB.</p>
+        <div class="row">
+          <span id="puzzle-status">…</span>
+          <button id="puzzle-action" class="primary" hidden></button>
+        </div>
+        <div id="puzzle-progress" class="puzzle-progress" hidden>
+          <div class="progress-bar"><div class="progress-fill"></div></div>
+          <div class="row">
+            <span id="puzzle-progress-text" class="muted"></span>
+            <button id="puzzle-cancel">Abbrechen</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h3>Daten</h3>
+        <p id="data-info" class="hint"></p>
+      </section>
+    </dialog>
   </body>
 </html>

@@ -27,6 +27,10 @@ Built with [Tauri](https://tauri.app) (Rust backend, TypeScript frontend).
 - Statistics: your weaknesses by cause (hanging pieces, allowed forks,
   missed mates …) with examples, error rate per game phase, accuracy trend;
   "analyse all" runs in the background
+- Settings (gear icon): analysis depth, Stockfish path and CPU cores,
+  animations, board coordinates
+- Lichess puzzle database: download/update from the settings, imported into
+  a local SQLite file (offline); the app checks for a newer version on start
 - Live engine with the top 3 lines for whatever is on the board (click a line
   to play its first move)
 
@@ -88,6 +92,8 @@ available, and the move gives the chance away).
 
 - Lichess API – games of a user / single games (no account needed)
 - chess.com Published-Data API – monthly game archives (no account needed)
+- [Lichess puzzle database](https://database.lichess.org/#puzzles) (CC0) –
+  downloaded on demand into `puzzles.db` in the app data directory
 - [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
   (CC0) – embedded in `src-tauri/data/openings.tsv` to name openings of
   chess.com games offline

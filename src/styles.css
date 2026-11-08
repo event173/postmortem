@@ -1258,3 +1258,186 @@ button.icon {
 .load-form input:disabled {
   opacity: 0.6;
 }
+
+/* --- settings ------------------------------------------------------------- */
+
+.gear {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.gear:hover {
+  color: var(--text);
+}
+
+.gear .dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e3b341;
+  border: 2px solid var(--panel-2);
+}
+
+.settings {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.settings::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.settings-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.settings section {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings section:last-child {
+  border-bottom: none;
+}
+
+.settings h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.settings .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+}
+
+.settings .row.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.settings .row > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings small {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.settings select,
+.settings input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.settings input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.settings .actions {
+  justify-content: flex-end;
+}
+
+.settings .msg {
+  margin-right: auto;
+  font-size: 12px;
+}
+
+.settings .msg.ok {
+  color: var(--accent);
+}
+
+.settings .hint {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings .update {
+  color: #e3b341;
+  font-weight: 600;
+}
+
+.puzzle-progress {
+  margin-top: 8px;
+}
+
+/* --- board coordinates: larger and with full contrast --------------------- */
+
+.cg-wrap coords {
+  opacity: 1;
+  font-family: system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(11px, 1.55vmin, 15px);
+}
+
+.cg-wrap coords.ranks {
+  left: 5px;
+  top: -24px;
+  width: 16px;
+}
+
+.cg-wrap coords.files {
+  bottom: -1px;
+  left: 28px;
+  height: 22px;
+  text-transform: none;
+}
+
+/* Text in the colour of the *other* square type, so it reads on both. */
+.orientation-white .ranks :nth-child(odd),
+.orientation-white .files :nth-child(even),
+.orientation-black .ranks :nth-child(even),
+.orientation-black .files :nth-child(odd) {
+  color: #8b6a4e;
+}
+
+.orientation-white .ranks :nth-child(even),
+.orientation-white .files :nth-child(odd),
+.orientation-black .ranks :nth-child(odd),
+.orientation-black .files :nth-child(even) {
+  color: #f0d9b5;
+}

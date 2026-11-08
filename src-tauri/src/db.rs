@@ -30,6 +30,8 @@ const MIGRATIONS: &[&str] = &[
     // 2: games from several platforms
     "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT 'lichess';
      CREATE INDEX games_source ON games(source, created_at);",
+    // 3: settings the backend needs (engine path, threads)
+    "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
 ];
 
 pub struct Db {
@@ -211,6 +213,38 @@ impl Db {
             .map_err(sql_err)
     }
 
+    pub fn setting(&self, key: &str) -> Result<Option<String>, String> {
+        self.conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .optional()
+            .map_err(sql_err)
+    }
+
+    /// `None` removes the setting.
+    pub fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), String> {
+        match value {
+            Some(v) => self.conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, v],
+            ),
+            None => self.conn.execute("DELETE FROM settings WHERE key = ?1", [key]),
+        }
+        .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Number of stored games and reviews (for the settings dialog).
+    pub fn counts(&self) -> Result<(u64, u64), String> {
+        self.conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM games), (SELECT COUNT(DISTINCT game_id) FROM reviews WHERE version = ?1)",
+                [REVIEW_VERSION],
+                |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
+            )
+            .map_err(sql_err)
+    }
+
     /// Best stored review for a game: the requested depth, or any deeper one.
     pub fn review(&self, game_id: &str, min_depth: u32) -> Result<Option<GameReview>, String> {
         let json: Option<String> = self
@@ -306,6 +340,17 @@ mod tests {
         let ids: Vec<_> = db.games_of(&both, 10).unwrap().into_iter().map(|g| g.game.id).collect();
         assert_eq!(ids, ["cc1", "l1"]);
         assert_eq!(db.count_games_of(&both).unwrap(), 2);
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let db = Db::in_memory();
+        assert_eq!(db.setting("threads").unwrap(), None);
+        db.set_setting("threads", Some("4")).unwrap();
+        db.set_setting("threads", Some("6")).unwrap();
+        assert_eq!(db.setting("threads").unwrap().as_deref(), Some("6"));
+        db.set_setting("threads", None).unwrap();
+        assert_eq!(db.setting("threads").unwrap(), None);
     }
 
     #[test]
