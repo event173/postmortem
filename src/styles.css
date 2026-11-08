@@ -880,3 +880,61 @@ button:disabled {
   opacity: 0.45;
   cursor: default;
 }
+
+/* --- sync status -------------------------------------------------------- */
+
+.games-head {
+  align-items: center;
+}
+
+.sync-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+
+.sync {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sync.busy::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+  vertical-align: -1px;
+}
+
+.sync.ok {
+  color: var(--accent);
+}
+
+.sync.offline {
+  color: #e3b341;
+}
+
+.sync.error {
+  color: var(--danger);
+  cursor: help;
+}
+
+button.icon {
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.load-older {
+  width: calc(100% - 24px);
+  margin: 12px;
+  color: var(--muted);
+  background: none;
+  border-style: dashed;
+}

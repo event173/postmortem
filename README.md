@@ -10,7 +10,9 @@ Built with [Tauri](https://tauri.app) (Rust backend, TypeScript frontend).
 ## Features
 
 - Load your recent games by Lichess username, or a single game by link
-- Stockfish analysis of every position (MultiPV 2), cached on disk
+- Works offline: games and reviews are stored in a local SQLite database;
+  on start only new games are synced from Lichess (older ones on demand)
+- Stockfish analysis of every position (MultiPV 2), stored with the game
 - Move classes: Brilliant, Great, Best, Excellent, Good, Book, Forced,
   Inaccuracy, Mistake, Miss, Blunder
 - Accuracy per player (Lichess-style win% model)

@@ -22,6 +22,8 @@ import {
   type PositionInfo,
   type Progress,
   type Score,
+  type StoredGame,
+  type SyncResult,
   type VarNode,
 } from "./types";
 
@@ -169,27 +171,79 @@ async function load(input: string) {
   input = input.trim();
   if (!input) return;
   const list = $("games-list");
-  list.innerHTML = `<p class="empty">Lade …</p>`;
-  try {
-    state.cached = new Set(await invoke<string[]>("cached_reviews").catch(() => []));
-    if (input.includes("/") || input.includes("lichess.org")) {
+  if (input.includes("/") || input.includes("lichess.org")) {
+    list.innerHTML = `<p class="empty">Lade Partie …</p>`;
+    try {
       const game = await invoke<GameInfo>("fetch_game", { url: input });
       state.games = [game];
       renderGames();
       selectGame(game);
-    } else {
-      state.username = input;
-      store.set("username", input);
-      state.games = await invoke<GameInfo[]>("fetch_games", { username: input, max: 40 });
-      renderGames();
-      if (state.games.length === 0) {
-        list.innerHTML = `<p class="empty">Keine Standard-Partien gefunden.</p>`;
-      }
+    } catch (e) {
+      list.innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
     }
+    return;
+  }
+  state.username = input;
+  store.set("username", input);
+  await showStoredGames();
+  syncGames();
+}
+
+/** Show the games already stored locally (instant, works offline). */
+async function showStoredGames() {
+  const username = state.username;
+  try {
+    const stored = await invoke<StoredGame[]>("list_games", { username });
+    if (username !== state.username) return;
+    state.games = stored;
+    state.cached = new Set(stored.filter((g) => g.analysed).map((g) => g.id));
+    renderGames();
   } catch (e) {
-    list.innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
+    $("games-list").innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
   }
 }
+
+let syncing = false;
+
+function setSyncStatus(kind: "busy" | "ok" | "offline" | "error", text: string) {
+  const el = $("sync-status");
+  el.className = `sync ${kind}`;
+  el.textContent = text;
+  el.title = kind === "error" ? text : "";
+}
+
+/** Pull new games (or, with `older`, the next older batch) from Lichess. */
+async function syncGames(older = false) {
+  const username = state.username;
+  if (!username || syncing) return;
+  syncing = true;
+  setSyncStatus("busy", older ? "Lade ältere …" : "Synchronisiere …");
+  if (!state.games.length) $("games-list").innerHTML = `<p class="empty">Lade Partien von Lichess …</p>`;
+  try {
+    const res = await invoke<SyncResult>("sync_games", { username, older });
+    if (username !== state.username) return;
+    if (res.offline) {
+      setSyncStatus("offline", "Offline");
+    } else {
+      if (res.added) await showStoredGames();
+      setSyncStatus("ok", res.added ? `${res.added} neu` : older ? "Keine älteren" : "Aktuell");
+    }
+    if (!state.games.length) {
+      $("games-list").innerHTML = res.offline
+        ? `<p class="empty">Offline – und für diesen Namen sind noch keine Partien gespeichert.</p>`
+        : `<p class="empty">Keine Standard-Partien gefunden.</p>`;
+    }
+  } catch (e) {
+    if (username !== state.username) return;
+    setSyncStatus("error", "Fehler");
+    $("sync-status").title = String(e);
+    if (!state.games.length) $("games-list").innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
+  } finally {
+    syncing = false;
+  }
+}
+
+$("btn-sync").addEventListener("click", () => syncGames());
 
 function renderGames() {
   const list = $("games-list");
@@ -229,6 +283,13 @@ function renderGames() {
       ${state.cached.has(g.id) ? `<span class="analysed" title="Bereits analysiert">●</span>` : ""}`;
     btn.addEventListener("click", () => selectGame(g));
     list.appendChild(btn);
+  }
+  if (state.username && state.games.length) {
+    const more = document.createElement("button");
+    more.className = "load-older";
+    more.textContent = "Ältere Partien von Lichess laden";
+    more.addEventListener("click", () => syncGames(true));
+    list.appendChild(more);
   }
 }
 

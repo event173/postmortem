@@ -34,8 +34,11 @@
     <main class="layout">
       <aside class="games">
         <div class="games-head">
-          <span>Partien</span>
-          <span id="games-count" class="muted"></span>
+          <span>Partien <span id="games-count" class="muted"></span></span>
+          <span class="sync-box">
+            <span id="sync-status" class="sync"></span>
+            <button id="btn-sync" class="icon" title="Neue Partien von Lichess holen">↻</button>
+          </span>
         </div>
         <div id="games-list" class="games-list">
           <p class="empty">Gib deinen Lichess-Namen ein, um deine letzten Partien zu laden.</p>

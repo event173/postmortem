@@ -116,9 +116,46 @@ impl RawGame {
     }
 }
 
+/// Errors from talking to Lichess; `Offline` means no connection at all.
+#[derive(Debug)]
+pub enum FetchError {
+    Offline,
+    Other(String),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Offline => write!(f, "Keine Verbindung zu Lichess."),
+            FetchError::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<String> for FetchError {
+    fn from(e: String) -> Self {
+        FetchError::Other(e)
+    }
+}
+
+impl From<&str> for FetchError {
+    fn from(e: &str) -> Self {
+        FetchError::Other(e.to_string())
+    }
+}
+
+fn network_error(e: reqwest::Error) -> FetchError {
+    if e.is_connect() || e.is_timeout() || e.is_request() {
+        FetchError::Offline
+    } else {
+        FetchError::Other(format!("Fehler beim Abruf von Lichess: {e}"))
+    }
+}
+
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| e.to_string())
 }
@@ -132,22 +169,47 @@ fn check_status(resp: &reqwest::Response, what: &str) -> Result<(), String> {
     }
 }
 
-/// Most recent standard games of a user.
-pub async fn fetch_user_games(username: &str, max: u32) -> Result<Vec<GameInfo>, String> {
+pub fn valid_username(username: &str) -> bool {
+    !username.is_empty()
+        && username.len() <= 30
+        && username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Which slice of a user's games to fetch.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GameQuery {
+    pub max: Option<u32>,
+    /// Only games created at or after this timestamp (ms).
+    pub since: Option<i64>,
+    /// Only games created at or before this timestamp (ms).
+    pub until: Option<i64>,
+}
+
+/// Standard games of a user, newest first.
+pub async fn fetch_user_games(username: &str, q: GameQuery) -> Result<Vec<GameInfo>, FetchError> {
     let username = username.trim();
-    if username.is_empty() || !username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !valid_username(username) {
         return Err("Ungültiger Benutzername.".into());
     }
-    let url = format!("{API}/api/games/user/{username}");
+    let mut params: Vec<(&str, String)> = vec![("opening", "true".into()), ("moves", "true".into())];
+    if let Some(max) = q.max {
+        params.push(("max", max.to_string()));
+    }
+    if let Some(since) = q.since {
+        params.push(("since", since.to_string()));
+    }
+    if let Some(until) = q.until {
+        params.push(("until", until.to_string()));
+    }
     let resp = client()?
-        .get(url)
-        .query(&[("max", max.to_string().as_str()), ("opening", "true"), ("moves", "true")])
+        .get(format!("{API}/api/games/user/{username}"))
+        .query(&params)
         .header("Accept", "application/x-ndjson")
         .send()
         .await
-        .map_err(|e| format!("Keine Verbindung zu Lichess: {e}"))?;
+        .map_err(network_error)?;
     check_status(&resp, "Spieler")?;
-    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let body = resp.text().await.map_err(network_error)?;
     let games = body
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -170,7 +232,7 @@ pub fn parse_game_id(input: &str) -> Option<String> {
 }
 
 /// A single game by URL or id.
-pub async fn fetch_game(input: &str) -> Result<GameInfo, String> {
+pub async fn fetch_game(input: &str) -> Result<GameInfo, FetchError> {
     let id = parse_game_id(input).ok_or("Das sieht nicht nach einem Lichess-Partielink aus.")?;
     let resp = client()?
         .get(format!("{API}/game/export/{id}"))
@@ -178,9 +240,12 @@ pub async fn fetch_game(input: &str) -> Result<GameInfo, String> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| format!("Keine Verbindung zu Lichess: {e}"))?;
+        .map_err(network_error)?;
     check_status(&resp, "Partie")?;
-    let raw: RawGame = resp.json().await.map_err(|e| format!("Unerwartete Antwort: {e}"))?;
+    let raw: RawGame = resp
+        .json()
+        .await
+        .map_err(|e| FetchError::Other(format!("Unerwartete Antwort: {e}")))?;
     raw.into_game()
         .ok_or_else(|| "Nur Standard-Schach ab der Grundstellung wird unterstützt.".into())
 }
@@ -212,5 +277,28 @@ mod tests {
         assert_eq!(g.moves.len(), 7);
         assert_eq!(g.time_control.as_deref(), Some("5+3"));
         assert_eq!(g.opening.unwrap().ply, 2);
+    }
+}
+
+#[cfg(test)]
+mod live_api {
+    use super::*;
+
+    /// Checks that `since` / `until` slice the game list as the sync expects.
+    /// Run with: cargo test live_api -- --ignored
+    #[test]
+    #[ignore]
+    fn since_and_until_filter_games() {
+        let rt = |q| tauri::async_runtime::block_on(fetch_user_games("thibault", q)).unwrap();
+        let latest = rt(GameQuery { max: Some(3), ..Default::default() });
+        assert_eq!(latest.len(), 3);
+        assert!(latest[0].created_at >= latest[1].created_at, "newest first");
+
+        let newer = rt(GameQuery { max: Some(10), since: Some(latest[1].created_at), ..Default::default() });
+        assert!(newer.iter().all(|g| g.created_at >= latest[1].created_at));
+        assert!(newer.iter().any(|g| g.id == latest[0].id));
+
+        let older = rt(GameQuery { max: Some(2), until: Some(latest[2].created_at - 1), ..Default::default() });
+        assert!(older.iter().all(|g| g.created_at < latest[2].created_at));
     }
 }

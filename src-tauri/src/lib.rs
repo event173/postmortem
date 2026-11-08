@@ -1,11 +1,11 @@
 mod analysis;
 mod coach;
+mod db;
 mod engine;
 mod explore;
 mod lichess;
 mod live;
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -13,13 +13,15 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use analysis::GameReview;
-use lichess::GameInfo;
+use lichess::{FetchError, GameInfo, GameQuery};
 
 /// Cancellation flag of the analysis currently running (if any).
 #[derive(Default)]
 struct AnalysisState {
     cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
+
+struct DbState(Mutex<db::Db>);
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -42,40 +44,48 @@ fn engine_status() -> EngineStatus {
     EngineStatus { found: path.is_some(), path: path.map(|p| p.display().to_string()) }
 }
 
+/// Games stored locally for a player (works offline), newest first.
 #[tauri::command]
-async fn fetch_games(username: String, max: Option<u32>) -> Result<Vec<GameInfo>, String> {
-    lichess::fetch_user_games(&username, max.unwrap_or(30).clamp(1, 100)).await
+fn list_games(db: State<DbState>, username: String, limit: Option<u32>) -> Result<Vec<db::StoredGame>, String> {
+    db.0.lock().unwrap().games_of(username.trim(), limit.unwrap_or(500))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncResult {
+    /// Games that were not stored before.
+    added: usize,
+    offline: bool,
+}
+
+/// Pull games from Lichess into the local store. By default only games newer
+/// than the newest stored one; with `older`, the next batch before the oldest.
 #[tauri::command]
-async fn fetch_game(url: String) -> Result<GameInfo, String> {
-    lichess::fetch_game(&url).await
+async fn sync_games(db: State<'_, DbState>, username: String, older: Option<bool>) -> Result<SyncResult, String> {
+    let username = username.trim().to_string();
+    let range = db.0.lock().unwrap().time_range(&username)?;
+    let query = match (range, older.unwrap_or(false)) {
+        (Some((_, oldest)), true) => GameQuery { max: Some(50), until: Some(oldest - 1), ..Default::default() },
+        (Some((newest, _)), false) => GameQuery { max: Some(500), since: Some(newest + 1), ..Default::default() },
+        // First sync: a reasonable recent batch.
+        (None, _) => GameQuery { max: Some(100), ..Default::default() },
+    };
+    match lichess::fetch_user_games(&username, query).await {
+        Ok(games) => {
+            let added = db.0.lock().unwrap().save_games(&games)?;
+            Ok(SyncResult { added, offline: false })
+        }
+        Err(FetchError::Offline) => Ok(SyncResult { added: 0, offline: true }),
+        Err(FetchError::Other(e)) => Err(e),
+    }
 }
 
-fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| e.to_string())?
-        .join("reviews");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir)
-}
-
-fn cache_file(app: &AppHandle, id: &str, depth: u32) -> Result<PathBuf, String> {
-    Ok(cache_dir(app)?.join(format!("{id}-d{depth}-v{}.json", analysis::REVIEW_VERSION)))
-}
-
-/// Ids of games that already have a cached review.
+/// A single game by link; stored locally so it stays available offline.
 #[tauri::command]
-fn cached_reviews(app: AppHandle) -> Result<Vec<String>, String> {
-    let suffix = format!("-v{}.json", analysis::REVIEW_VERSION);
-    let entries = std::fs::read_dir(cache_dir(&app)?).map_err(|e| e.to_string())?;
-    Ok(entries
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|n| n.ends_with(&suffix))
-        .filter_map(|n| n.split('-').next().map(str::to_string))
-        .collect())
+async fn fetch_game(db: State<'_, DbState>, url: String) -> Result<GameInfo, String> {
+    let game = lichess::fetch_game(&url).await.map_err(|e| e.to_string())?;
+    db.0.lock().unwrap().save_games(std::slice::from_ref(&game))?;
+    Ok(game)
 }
 
 #[tauri::command]
@@ -89,15 +99,12 @@ fn cancel_analysis(state: State<AnalysisState>) {
 async fn analyse_game(
     app: AppHandle,
     state: State<'_, AnalysisState>,
+    db: State<'_, DbState>,
     game: GameInfo,
     depth: Option<u32>,
 ) -> Result<GameReview, String> {
     let depth = depth.unwrap_or(16).clamp(8, 30);
-    let file = cache_file(&app, &game.id, depth)?;
-    if let Some(review) = std::fs::read(&file)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<GameReview>(&bytes).ok())
-    {
+    if let Some(review) = db.0.lock().unwrap().review(&game.id, depth)? {
         return Ok(review);
     }
 
@@ -108,13 +115,14 @@ async fn analyse_game(
     }
 
     let app2 = app.clone();
-    let review = tauri::async_runtime::spawn_blocking(move || run_analysis(&app2, &game, depth, &cancel))
+    let game2 = game.clone();
+    let review = tauri::async_runtime::spawn_blocking(move || run_analysis(&app2, &game2, depth, &cancel))
         .await
         .map_err(|e| e.to_string())??;
 
-    if let Ok(json) = serde_json::to_vec(&review) {
-        let _ = std::fs::write(&file, json);
-    }
+    let mut db = db.0.lock().unwrap();
+    db.save_games(std::slice::from_ref(&game))?;
+    db.save_review(&review)?;
     Ok(review)
 }
 
@@ -182,11 +190,22 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AnalysisState::default())
         .manage(live::Live::default())
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            let db = db::Db::open(&dir.join("postmortem.db"))?;
+            app.manage(DbState(Mutex::new(db)));
+            // Reviews used to be cached as JSON files; they now live in the database.
+            if let Ok(cache) = app.path().app_cache_dir() {
+                let _ = std::fs::remove_dir_all(cache.join("reviews"));
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             engine_status,
-            fetch_games,
+            list_games,
+            sync_games,
             fetch_game,
-            cached_reviews,
             cancel_analysis,
             analyse_game,
             position_info,
@@ -211,7 +230,8 @@ mod integration {
     fn review_real_game() {
         let user = std::env::var("POSTMORTEM_TEST_USER").unwrap_or_else(|_| "thibault".into());
         let depth = std::env::var("POSTMORTEM_TEST_DEPTH").ok().and_then(|d| d.parse().ok()).unwrap_or(12);
-        let games = tauri::async_runtime::block_on(lichess::fetch_user_games(&user, 5)).unwrap();
+        let query = GameQuery { max: Some(5), ..Default::default() };
+        let games = tauri::async_runtime::block_on(lichess::fetch_user_games(&user, query)).unwrap();
         let game = games.first().expect("no games");
         println!("{} vs {} ({} plies)", game.white.name, game.black.name, game.moves.len());
 

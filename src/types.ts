@@ -151,3 +151,13 @@ export interface VarNode {
   review?: MoveReview;
   error?: string;
 }
+
+/** A game from the local store. */
+export interface StoredGame extends GameInfo {
+  analysed: boolean;
+}
+
+export interface SyncResult {
+  added: number;
+  offline: boolean;
+}
