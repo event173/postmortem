@@ -93,10 +93,13 @@ jobs:
           retention-days: 1
 
   # Single-file Flatpak bundle (GNOME 51 runtime, Stockfish built from source),
-  # attached to the same draft release.
+  # built in Flathub's official container (privileged, so the builder's sandbox works).
   flatpak:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
@@ -107,24 +110,31 @@ jobs:
 
       - run: chmod +x src-tauri/target/release/postmortem
 
-      - name: Flatpak tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak
-          # Ubuntu 24.04 blocks unprivileged user namespaces, which the builder's sandbox needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y --noninteractive flathub org.flatpak.Builder org.gnome.Platform//51 org.gnome.Sdk//51
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: postmortem_x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.event173.postmortem.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          upload-artifact: false
 
-      - name: Build the bundle
-        run: |
-          flatpak run org.flatpak.Builder --user --force-clean --disable-rofiles-fuse \
-            --repo=repo build packaging/flatpak/io.github.event173.postmortem.yml
-          flatpak build-bundle repo "postmortem_${GITHUB_REF_NAME#v}_x86_64.flatpak" io.github.event173.postmortem \
-            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
-          ls -la *.flatpak
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: postmortem_x86_64.flatpak
+          retention-days: 1
 
-      - name: Attach to the release
+  # Attach the bundle to the draft release (the gh CLI is available on GitHub's runners).
+  attach-flatpak:
+    needs: flatpak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
+
+      - name: Upload to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" postmortem_*.flatpak --clobber
+        run: |
+          mv postmortem_x86_64.flatpak "postmortem_${GITHUB_REF_NAME#v}_x86_64.flatpak"
+          gh release upload "$GITHUB_REF_NAME" postmortem_*_x86_64.flatpak --clobber --repo "$GITHUB_REPOSITORY"

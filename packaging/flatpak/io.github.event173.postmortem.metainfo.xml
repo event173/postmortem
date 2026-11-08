@@ -42,7 +42,7 @@
     <control>keyboard</control>
   </supports>
   <releases>
-    <release version="0.1.1" date="2026-11-08">
+    <release version="0.1.2" date="2026-11-08">
       <description>
         <p>Release packages now include a Flatpak bundle.</p>
       </description>
