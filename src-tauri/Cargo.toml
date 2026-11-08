@@ -1,6 +1,6 @@
 [package]
 name = "postmortem"
-version = "0.1.3"
+version = "0.1.4"
 description = "Review your Lichess games with Stockfish and a rule-based coach"
 authors = ["event173"]
 license = "GPL-3.0-or-later"

@@ -11,8 +11,9 @@ import "./styles.css";
 import "./pieces.css";
 import { $, badgeHtml, esc, fig, store } from "./util";
 import { initStats, loadStats } from "./stats";
-import { errorSound, moveSound, setupSound, successSound } from "./sound";
+import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
+import { enterPlay, initPlay, isPlayMode, leavePlay, playMove } from "./play";
 import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, startFocus } from "./openings";
 import { displayPrefs, initSettings } from "./settings";
 
@@ -44,7 +45,7 @@ const state = {
   /** Which platform's games are shown ("all" = both). */
   view: "lichess" as Platform | "all",
   /** Your username per platform. */
-  names: { lichess: "", chesscom: "" } as Record<Platform, string>,
+  names: { lichess: "", chesscom: "", local: "Du" } as Record<Platform, string>,
   games: [] as GameInfo[],
   cached: new Set<string>(),
   game: null as GameInfo | null,
@@ -87,7 +88,7 @@ const board: Api = Chessground($("board"), {
 
 /** The accounts whose games are shown, given the platform switch. */
 function accounts(): Account[] {
-  const platforms: Platform[] = state.view === "all" ? ["lichess", "chesscom"] : [state.view];
+  const platforms: Platform[] = state.view === "all" ? ["lichess", "chesscom", "local"] : [state.view];
   return platforms.filter((p) => state.names[p]).map((p) => ({ source: p, username: state.names[p] }));
 }
 
@@ -156,7 +157,7 @@ async function checkEngine() {
 // ---------------------------------------------------------------------------
 // loading games
 
-const PLATFORM_LABEL: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com" };
+const PLATFORM_LABEL: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com", local: "Bots" };
 
 async function load(input: string) {
   input = input.trim();
@@ -188,10 +189,10 @@ function setView(view: Platform | "all") {
   document.querySelectorAll<HTMLElement>(".source-switch button").forEach((b) => b.classList.toggle("active", b.dataset.src === view));
   const input = $("load-input") as HTMLInputElement;
   const submit = document.querySelector<HTMLButtonElement>("#load-form button")!;
-  if (view === "all") {
+  if (view === "all" || view === "local") {
     input.value = "";
     input.disabled = submit.disabled = true;
-    input.placeholder = "Namen unter „Lichess“ und „chess.com“ festlegen";
+    input.placeholder = view === "local" ? "Deine Partien gegen den Computer" : "Namen unter „Lichess“ und „chess.com“ festlegen";
   } else {
     input.disabled = submit.disabled = false;
     input.value = state.names[view];
@@ -279,7 +280,9 @@ async function syncGames(older = false) {
       ? `<p class="empty error">${esc(errors.join(" · "))}</p>`
       : offline
         ? `<p class="empty">Offline – und für diesen Namen sind noch keine Partien gespeichert.</p>`
-        : `<p class="empty">Keine Standard-Partien gefunden.</p>`;
+        : state.view === "local"
+          ? `<p class="empty">Noch keine Partien gegen den Computer – starte eine im Reiter „Spielen“.</p>`
+          : `<p class="empty">Keine Standard-Partien gefunden.</p>`;
   }
 }
 
@@ -288,11 +291,11 @@ $("btn-sync").addEventListener("click", () => syncGames());
 // ---------------------------------------------------------------------------
 // tabs: Review | Statistik | Puzzles
 
-type Tab = "review" | "stats" | "puzzles" | "openings";
-const TABS: Tab[] = ["review", "stats", "puzzles", "openings"];
+type Tab = "review" | "stats" | "puzzles" | "openings" | "play";
+const TABS: Tab[] = ["review", "stats", "puzzles", "openings", "play"];
 
-/** Another mode (puzzles, openings) owns the board right now. */
-const boardTaken = () => isPuzzleMode() || isOpeningMode();
+/** Another mode (puzzles, openings, play) owns the board right now. */
+const boardTaken = () => isPuzzleMode() || isOpeningMode() || isPlayMode();
 let currentTab: Tab = "review";
 
 function showTab(tab: Tab) {
@@ -301,26 +304,29 @@ function showTab(tab: Tab) {
   currentTab = tab;
   const layout = document.querySelector(".layout")!;
   layout.classList.toggle("stats-mode", tab === "stats");
-  layout.classList.toggle("puzzle-mode", tab === "puzzles" || tab === "openings");
+  layout.classList.toggle("puzzle-mode", tab === "puzzles" || tab === "openings" || tab === "play");
   $("stats").hidden = tab !== "stats";
   $("puzzles").hidden = tab !== "puzzles";
   $("openings").hidden = tab !== "openings";
+  $("play").hidden = tab !== "play";
   for (const t of TABS) $(`tab-${t}`).classList.toggle("active", t === tab);
 
-  if (leaving === "puzzles" || leaving === "openings") {
+  if (leaving === "puzzles" || leaving === "openings" || leaving === "play") {
     if (leaving === "puzzles") leavePuzzles();
-    else leaveOpenings();
+    else if (leaving === "openings") leaveOpenings();
+    else leavePlay();
     // Give the board back to the review.
     board.setShapes([]);
     if (state.review) renderPosition();
     else board.set({ fen: START_FEN, lastMove: undefined, movable: { color: undefined, dests: new Map() } });
   }
   if (tab === "stats") loadStats();
-  if (tab === "puzzles" || tab === "openings") {
+  if (tab === "puzzles" || tab === "openings" || tab === "play") {
     stopPlayback();
     stopLive();
     if (tab === "puzzles") enterPuzzles();
-    else enterOpenings();
+    else if (tab === "openings") enterOpenings();
+    else enterPlay();
   }
 }
 
@@ -381,7 +387,7 @@ function renderGames() {
     btn.dataset.id = g.id;
     btn.innerHTML = `
       <span class="result ${resultClass}">${result}</span>
-      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${PLATFORM_LABEL[g.source ?? "lichess"]}">${g.source === "chesscom" ? "C" : "L"}</span>` : ""}
+      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${PLATFORM_LABEL[g.source ?? "lichess"]}">${g.source === "chesscom" ? "C" : g.source === "local" ? "B" : "L"}</span>` : ""}
       <span class="game-main">
         <span class="game-title">${title}</span>
         <span class="game-sub">${esc(g.opening?.name ?? "Unbekannte Eröffnung")}</span>
@@ -394,7 +400,7 @@ function renderGames() {
     });
     list.appendChild(btn);
   }
-  if (accounts().length && state.games.length) {
+  if (accounts().length && state.games.length && state.view !== "local") {
     const more = document.createElement("button");
     more.className = "load-older";
     more.textContent = "Ältere Partien von Lichess laden";
@@ -728,6 +734,7 @@ function renderPosition() {
 async function onUserMove(orig: Key, dest: Key, promotion?: string) {
   if (isPuzzleMode()) return puzzleMove(orig, dest, promotion);
   if (isOpeningMode()) return openingMove(orig, dest, promotion);
+  if (isPlayMode()) return playMove(orig, dest, promotion);
   if (training) return onTrainingMove(orig, dest, promotion);
   const r = state.review;
   if (!r) return;
@@ -1545,6 +1552,7 @@ document.addEventListener("keydown", (e) => {
     if (openingKey(e)) e.preventDefault();
     return;
   }
+  if (isPlayMode()) return;
   if (training) {
     if (e.key === "Escape") exitTraining();
     if (e.key === "Enter" && (training.phase === "solved")) trainingGoto(training.index + 1);
@@ -1578,6 +1586,18 @@ initPuzzles({
   animMs: () => animMs,
   openSettings: () => $("btn-settings").click(),
   openGame: (gameId, ply) => openGameAt(gameId, ply),
+});
+
+initPlay({
+  board,
+  animMs: () => animMs,
+  openGame: (game) => {
+    showTab("review");
+    selectGame(game, 0);
+  },
+  onGameSaved: () => {
+    if (state.view === "local" || state.view === "all") showStoredGames();
+  },
 });
 
 initOpenings({
@@ -1614,5 +1634,6 @@ state.liveEnabled = store.get("live") !== "0";
 state.names.lichess = store.get("name-lichess") ?? store.get("username") ?? "";
 state.names.chesscom = store.get("name-chesscom") ?? "";
 const savedView = store.get("view");
-setView(savedView === "chesscom" || savedView === "all" ? savedView : "lichess");
+setView(savedView === "chesscom" || savedView === "all" || savedView === "local" ? savedView : "lichess");
 checkEngine();
+preloadSounds();

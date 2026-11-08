@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.1.4" date="2026-11-08">
+      <description>
+        <p>Play against Stockfish at 8 levels and review the game afterwards; bot games in the game list. Own sound recordings now play in the installed app.</p>
+      </description>
+    </release>
     <release version="0.1.3" date="2026-11-08">
       <description>
         <p>Board colours and piece sets, wooden move sounds, step through and replay puzzles.</p>

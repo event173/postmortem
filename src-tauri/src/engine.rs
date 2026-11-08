@@ -218,6 +218,29 @@ impl Engine {
         self.wait_for("readyok")
     }
 
+    pub fn set_option(&mut self, name: &str, value: &str) -> Result<(), String> {
+        self.send(&format!("setoption name {name} value {value}"))
+    }
+
+    /// Wait until the engine has processed everything sent so far.
+    pub fn sync(&mut self) -> Result<(), String> {
+        self.send("isready")?;
+        self.wait_for("readyok")
+    }
+
+    /// Let the engine pick a move: `go` is the search limit, e.g. "depth 5" or "movetime 500".
+    pub fn best_move(&mut self, fen: &str, go: &str) -> Result<Option<String>, String> {
+        self.send(&format!("position fen {fen}"))?;
+        self.send(&format!("go {go}"))?;
+        loop {
+            let line = self.read_line()?;
+            if let Some(rest) = line.strip_prefix("bestmove") {
+                let mv = rest.split_whitespace().next().unwrap_or("(none)");
+                return Ok((mv != "(none)").then(|| mv.to_string()));
+            }
+        }
+    }
+
     /// Analyse a position to a fixed depth. Returns lines ordered by MultiPV rank.
     pub fn analyse(&mut self, fen: &str, depth: u32) -> Result<Vec<PvLine>, String> {
         self.send(&format!("position fen {fen}"))?;

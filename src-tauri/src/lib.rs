@@ -1,4 +1,5 @@
 mod analysis;
+mod bot;
 mod chesscom;
 mod coach;
 mod db;
@@ -106,6 +107,8 @@ async fn sync_games(db: State<'_, DbState>, account: Account, older: Option<bool
     let fetched = match account.source {
         Source::Lichess => lichess::fetch_user_games(&account.username, query).await,
         Source::Chesscom => chesscom::fetch_user_games(&account.username, query).await,
+        // Bot games only exist locally: nothing to sync.
+        Source::Local => return Ok(SyncResult { added: 0, offline: false }),
     };
     match fetched {
         Ok(games) => {
@@ -339,6 +342,7 @@ async fn set_engine_settings(
     db.set_setting("threads", threads.map(|t| t.to_string()).as_deref())?;
     engine::configure(engine::EngineConfig { path, threads });
     app.state::<live::Live>().reset();
+    app.state::<bot::Bot>().reset();
     settings_info(&db, &app.state::<DataDir>())
 }
 
@@ -540,6 +544,64 @@ async fn engine_line(fen: String, depth: Option<u32>, plies: Option<usize>) -> R
 }
 
 #[tauri::command]
+fn bot_levels() -> Vec<bot::Level> {
+    bot::levels()
+}
+
+/// The bot's reply in a position (blocking the engine is fine: off the main thread).
+#[tauri::command]
+async fn bot_move(app: AppHandle, fen: String, level: u8) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<bot::Bot>().play(&fen, level.clamp(1, 8)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn game_status(fens: Vec<String>) -> Result<explore::GameStatus, String> {
+    explore::game_status(&fens)
+}
+
+/// Name you appear under in games against the computer.
+const LOCAL_PLAYER: &str = "Du";
+
+/// Store a finished game against the bot so it can be reviewed like any other.
+#[tauri::command]
+fn save_bot_game(
+    db: State<DbState>,
+    moves: Vec<String>,
+    you: String,
+    level: u8,
+    winner: Option<String>,
+    status: String,
+    time_control: Option<String>,
+) -> Result<GameInfo, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let me = lichess::Player { name: LOCAL_PLAYER.into(), rating: None };
+    let bot = lichess::Player { name: format!("Stockfish Stufe {level}"), rating: Some(bot::level_elo(level)) };
+    let (white, black) = if you == "white" { (me, bot) } else { (bot, me) };
+    let game = GameInfo {
+        id: format!("pm{now}"),
+        source: Source::Local,
+        url: None,
+        white,
+        black,
+        winner,
+        status,
+        speed: "bot".into(),
+        rated: false,
+        time_control,
+        created_at: now,
+        opening: openings::identify(&moves),
+        moves,
+    };
+    db.0.lock().unwrap().save_games(std::slice::from_ref(&game))?;
+    Ok(game)
+}
+
+#[tauri::command]
 async fn live_analyse(app: AppHandle, id: u64, fen: String) -> Result<(), String> {
     // Stopping the previous search can block briefly, so keep it off the main thread.
     tauri::async_runtime::spawn_blocking(move || app.state::<live::Live>().analyse(&app, id, &fen))
@@ -674,6 +736,7 @@ pub fn run() {
         .manage(BatchState::default())
         .manage(PuzzleInstall::default())
         .manage(live::Live::default())
+        .manage(bot::Bot::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -726,7 +789,11 @@ pub fn run() {
             opening_next,
             opening_record,
             opening_progress,
-            opening_family_detail
+            opening_family_detail,
+            bot_levels,
+            bot_move,
+            game_status,
+            save_bot_game
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

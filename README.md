@@ -47,6 +47,12 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 - Eigene Puzzle-Wertung, Tipps, „Zeig mir, was passiert“, nach dem Lösen frei weiterspielen,
   Züge vor- und zurückgehen, Puzzle wiederholen
 
+**Spielen**
+- Gegen Stockfish in 8 Stufen (~800 bis ~2800 Elo), mit oder ohne Bedenkzeit,
+  Zug zurücknehmen, Aufgeben
+- Nach der Partie mit einem Klick in die Review; Bot-Partien erscheinen in der
+  Partieliste unter „Bots“ und zählen dort (und unter „Alle“) in der Statistik
+
 **Eröffnungen**
 - Alle 149 Eröffnungen als Kacheln mit Brett-Vorschau; „Als Weiß / Schwarz lernen“
 - Lernen wie mit Karteikarten: Variante mit Pfeilen zeigen → ohne Pfeile festigen →
@@ -82,7 +88,7 @@ Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install
 
 ## Erste Schritte
 
-1. **Namen eingeben:** Oben links „Lichess“ oder „chess.com“ wählen, Benutzernamen eingeben,
+1. **Namen eingeben:** In der Partieliste „Lichess“ oder „chess.com“ wählen, Benutzernamen eingeben,
    *Laden*. Deine letzten Partien erscheinen links; neue werden bei jedem Start nachgeladen.
 2. **Partie anklicken:** Die Analyse dauert je nach Länge und Rechner etwa eine halbe bis zwei
    Minuten und wird gespeichert – beim nächsten Mal ist sie sofort da.

@@ -11,7 +11,7 @@ export interface Opening {
   ply: number;
 }
 
-export type Platform = "lichess" | "chesscom";
+export type Platform = "lichess" | "chesscom" | "local";
 
 export interface Account {
   source: Platform;

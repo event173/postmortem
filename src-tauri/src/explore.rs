@@ -187,6 +187,48 @@ pub fn engine_line(fen: &str, depth: u32, plies: usize) -> Result<Refutation, St
     Ok(Refutation { moves: line_moves(fen, &pv)?, score: Some(score), text: coach::san_line(&pos, &pv, pv.len()) })
 }
 
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameStatus {
+    pub over: bool,
+    /// "white", "black" or None (draw / still running).
+    pub winner: Option<String>,
+    /// Why it ended, in German.
+    pub reason: Option<String>,
+}
+
+/// Is the game over after the last of `fens` (all positions so far, in order)?
+pub fn game_status(fens: &[String]) -> Result<GameStatus, String> {
+    let Some(last) = fens.last() else {
+        return Ok(GameStatus { over: false, winner: None, reason: None });
+    };
+    let pos = analysis::parse_fen(last)?;
+    let end = |winner: Option<Color>, reason: &str| GameStatus {
+        over: true,
+        winner: winner.map(color_name),
+        reason: Some(reason.to_string()),
+    };
+    if pos.is_checkmate() {
+        return Ok(end(Some(!pos.turn()), "Schachmatt"));
+    }
+    if pos.is_stalemate() {
+        return Ok(end(None, "Patt"));
+    }
+    if pos.is_insufficient_material() {
+        return Ok(end(None, "Zu wenig Material"));
+    }
+    if pos.halfmoves() >= 100 {
+        return Ok(end(None, "50-Züge-Regel"));
+    }
+    // Threefold repetition: same placement, side to move, castling and en passant.
+    let key = |f: &str| f.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
+    let k = key(last);
+    if fens.iter().filter(|f| key(f) == k).count() >= 3 {
+        return Ok(end(None, "Dreifache Stellungswiederholung"));
+    }
+    Ok(GameStatus { over: false, winner: None, reason: None })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +287,27 @@ mod tests {
         let r = engine_line(fen, 10, 4).unwrap();
         assert!(r.moves.is_empty());
         assert_eq!(r.score.unwrap().win_percent(), 0.0);
+    }
+
+    #[test]
+    fn detects_game_endings() {
+        let start = START.to_string();
+        assert!(!game_status(std::slice::from_ref(&start)).unwrap().over);
+        // Fool's mate
+        let mate = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3".to_string();
+        let s = game_status(&[mate]).unwrap();
+        assert_eq!((s.over, s.winner.as_deref(), s.reason.as_deref()), (true, Some("black"), Some("Schachmatt")));
+        let stalemate = "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1".to_string();
+        assert_eq!(game_status(&[stalemate]).unwrap().reason.as_deref(), Some("Patt"));
+        let kings = "8/8/4k3/8/8/3K4/8/8 w - - 0 1".to_string();
+        assert_eq!(game_status(&[kings]).unwrap().reason.as_deref(), Some("Zu wenig Material"));
+        // The same position three times (move counters differ) = repetition.
+        let a = "4k3/8/8/8/8/8/8/R3K3 w - - 0 1";
+        let b = "4k3/8/8/8/8/8/8/R3K3 w - - 4 3";
+        let c = "4k3/8/8/8/8/8/8/R3K3 w - - 8 5";
+        let three: Vec<String> = [a, b, c].iter().map(|s| s.to_string()).collect();
+        assert_eq!(game_status(&three).unwrap().reason.as_deref(), Some("Dreifache Stellungswiederholung"));
+        assert!(!game_status(&three[..2]).unwrap().over, "twice is not enough");
     }
 
     #[test]

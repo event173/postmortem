@@ -12,6 +12,8 @@ pub enum Source {
     #[default]
     Lichess,
     Chesscom,
+    /// Games played in postmortem against the computer.
+    Local,
 }
 
 impl Source {
@@ -19,6 +21,7 @@ impl Source {
         match self {
             Source::Lichess => "lichess",
             Source::Chesscom => "chesscom",
+            Source::Local => "local",
         }
     }
 }

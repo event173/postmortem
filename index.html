@@ -15,6 +15,7 @@
         <button id="tab-stats" class="tab">Statistik</button>
         <button id="tab-puzzles" class="tab">Puzzles</button>
         <button id="tab-openings" class="tab">Eröffnungen</button>
+        <button id="tab-play" class="tab">Spielen</button>
       </nav>
       <form id="load-form" class="load-form">
         <input
@@ -45,6 +46,7 @@
         <div class="source-switch">
           <button data-src="lichess" class="active">Lichess</button>
           <button data-src="chesscom">chess.com</button>
+          <button data-src="local" title="Deine Partien gegen den Computer">Bots</button>
           <button data-src="all">Alle</button>
         </div>
         <div id="games-list" class="games-list">
@@ -114,6 +116,10 @@
           <p class="panel-sub">Mischung: ca. 60 % deine Schwächen, 25 % gemischte Themen, 15 % Stellungen aus deinen Partien.</p>
           <div id="pz-mastery"></div>
         </div>
+      </section>
+
+      <section id="play" class="play" hidden>
+        <div id="play-body"></div>
       </section>
 
       <section id="op-browse-view" class="op-browse-view" hidden>

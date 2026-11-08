@@ -30,17 +30,57 @@ const RECORDED: Partial<Record<Name, string>> = {
   Setup: "setup",
 };
 
-/** Only the latest instance of each recording plays; quick steps don't pile up. */
-const playingFiles = new Map<string, HTMLAudioElement>();
+// Recordings are fetched and decoded into Web Audio buffers instead of being
+// played with <audio>: in the installed app WebKitGTK (Linux) cannot stream
+// media from Tauri's own URL scheme, but fetch() works. Buffers also start
+// without delay.
+const buffers = new Map<string, Promise<AudioBuffer | null>>();
 
-function playFile(url: string) {
-  playingFiles.get(url)?.pause();
-  const a = new Audio(url);
-  a.volume = volume();
-  playingFiles.set(url, a);
-  a.play().catch(() => {
-    /* audio not available: stay silent */
-  });
+function loadBuffer(url: string): Promise<AudioBuffer | null> {
+  let p = buffers.get(url);
+  if (!p) {
+    p = (async () => {
+      const ac = audio();
+      if (!ac) return null;
+      try {
+        const data = await (await fetch(url)).arrayBuffer();
+        return await ac.decodeAudioData(data);
+      } catch {
+        return null;
+      }
+    })();
+    buffers.set(url, p);
+  }
+  return p;
+}
+
+/** Only the latest instance of each recording plays; quick steps don't pile up. */
+const playingFiles = new Map<string, AudioBufferSourceNode>();
+
+async function playFile(url: string, fallback: () => void) {
+  const ac = audio();
+  const buffer = await loadBuffer(url);
+  if (!ac || !buffer) return fallback();
+  try {
+    playingFiles.get(url)?.stop();
+  } catch {
+    /* already finished */
+  }
+  const src = ac.createBufferSource();
+  src.buffer = buffer;
+  const gain = ac.createGain();
+  gain.gain.value = volume();
+  src.connect(gain).connect(ac.destination);
+  src.start();
+  playingFiles.set(url, src);
+}
+
+/** Decode all recordings up front so the first move already sounds instantly. */
+export function preloadSounds() {
+  for (const name of Object.values(RECORDED)) {
+    const url = name && recording(name);
+    if (url) void loadBuffer(url);
+  }
 }
 
 export function soundOn(): boolean {
@@ -193,7 +233,7 @@ function play(name: Name) {
   if (!soundOn()) return;
   const file = RECORDED[name];
   const url = (file && recording(file)) ?? (name === "Capture" ? recording("move") : undefined);
-  if (url) playFile(url);
+  if (url) void playFile(url, () => wood(name));
   else wood(name);
 }
 
