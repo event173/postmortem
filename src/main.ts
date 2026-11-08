@@ -353,7 +353,7 @@ async function selectGame(game: GameInfo, startPly = 0) {
 function setProgress(done: number, total: number) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   ($("review-progress").querySelector(".progress-fill") as HTMLElement).style.width = `${pct}%`;
-  $("progress-text").textContent = `Stellung ${done} von ${total}`;
+  $("progress-text").textContent = `${pct} %`;
 }
 
 listen<Progress>("analysis-progress", (e) => {

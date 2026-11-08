@@ -98,19 +98,33 @@ pub fn find_stockfish() -> Option<PathBuf> {
     .find(|p| p.is_file())
 }
 
+/// Start a Stockfish process with piped stdio and low CPU priority, so long
+/// analyses never make the rest of the system sluggish. When the machine is
+/// otherwise idle, low priority costs no speed.
+pub fn spawn_stockfish(path: &Path) -> Result<Child, String> {
+    let mut cmd = Command::new(path);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Stockfish konnte nicht gestartet werden ({}): {e}", path.display()))?;
+    #[cfg(unix)]
+    // SAFETY: plain syscall on the child's pid; failure only means normal priority.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, child.id() as libc::id_t, 10);
+    }
+    Ok(child)
+}
+
 impl Engine {
     pub fn start(path: &Path, threads: usize, hash_mb: usize, multipv: usize) -> Result<Engine, String> {
-        let mut cmd = Command::new(path);
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Stockfish konnte nicht gestartet werden ({}): {e}", path.display()))?;
+        let mut child = spawn_stockfish(path)?;
         let stdin = child.stdin.take().ok_or("kein stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("kein stdout")?);
         let mut engine = Engine { child, stdin, stdout };
@@ -149,6 +163,13 @@ impl Engine {
                 return Ok(());
             }
         }
+    }
+
+    /// Change the number of lines reported per search.
+    pub fn set_multipv(&mut self, n: usize) -> Result<(), String> {
+        self.send(&format!("setoption name MultiPV value {n}"))?;
+        self.send("isready")?;
+        self.wait_for("readyok")
     }
 
     /// Analyse a position to a fixed depth. Returns lines ordered by MultiPV rank.

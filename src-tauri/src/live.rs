@@ -6,7 +6,7 @@
 //! never attributed to the wrong position.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -101,14 +101,7 @@ fn to_live_lines(pos: &Chess, lines: &[PvLine]) -> Vec<LiveLine> {
 fn spawn(app: &AppHandle) -> Result<Process, String> {
     let path = engine::find_stockfish()
         .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
-    let mut cmd = Command::new(&path);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
-    let mut child = cmd.spawn().map_err(|e| format!("Stockfish konnte nicht gestartet werden: {e}"))?;
+    let mut child = engine::spawn_stockfish(&path)?;
     let mut stdin = child.stdin.take().ok_or("kein stdin")?;
     let stdout = BufReader::new(child.stdout.take().ok_or("kein stdout")?);
 

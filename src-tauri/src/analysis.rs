@@ -233,6 +233,27 @@ fn game_accuracy(win_white: &[f64], losses: &[f64]) -> Accuracy {
     Accuracy { white: for_color(0), black: for_color(1) }
 }
 
+/// Positions whose classification needs the engine's second-best line.
+///
+/// The second line only matters when the played move was the engine's choice
+/// ("Great" = only good move) or practically as good (it might be the engine's
+/// second choice). Analysing everything with one line first and only these
+/// positions again with two saves a large part of the work, with identical results.
+pub fn needs_second_line(positions: &[Chess], moves: &[Move], lines: &[Vec<PvLine>]) -> Vec<usize> {
+    (0..moves.len())
+        .filter(|&i| {
+            let before = &positions[i];
+            if lines[i].len() >= 2 || terminal_eval(before).is_some() || before.legal_moves().len() < 2 {
+                return false;
+            }
+            let played = UciMove::from_move(moves[i], CastlingMode::Standard).to_string();
+            let best = lines[i].first().and_then(|l| l.pv.first());
+            let loss = top_score(&lines[i]).win_percent() - top_score(&lines[i + 1]).negate().win_percent();
+            best == Some(&played) || loss < 0.5
+        })
+        .collect()
+}
+
 pub struct MoveInput<'a> {
     /// 1-based ply number of this move within the game.
     pub ply: usize,
@@ -423,6 +444,20 @@ mod tests {
         assert_eq!(ba6.classification, Class::Blunder);
         assert!(ba6.comment.contains("ungedeckt") || ba6.comment.contains("Läufer"), "{}", ba6.comment);
         assert_eq!(ba6.theme, Some(coach::Theme::HangingPiece));
+    }
+
+    #[test]
+    fn second_line_only_where_classification_needs_it() {
+        let g = game("e4 e5 Ba6 Nxa6");
+        let (pos, moves) = replay(&g.moves).unwrap();
+        let lines = vec![
+            line(Score::Cp(30), "e2e4"),   // played = best -> needed
+            line(Score::Cp(-30), "e7e5"),  // played = best -> needed
+            line(Score::Cp(30), "g1f3"),   // Ba6?? loses a piece -> not needed
+            line(Score::Cp(300), "b8a6"),  // played = best -> needed
+            line(Score::Cp(-300), "d2d4"),
+        ];
+        assert_eq!(needs_second_line(&pos, &moves, &lines), vec![0, 1, 3]);
     }
 
     #[test]

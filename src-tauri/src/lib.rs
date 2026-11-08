@@ -159,10 +159,15 @@ fn run_analysis(
         .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
     let (positions, moves) = analysis::replay(&game.moves)?;
 
-    let mut sf = engine::Engine::start(&path, threads, 256, 2)?;
-
-    let total = positions.len();
-    let mut lines = Vec::with_capacity(total);
+    // Pass 1: best line only. Pass 2: second-best line where the classification needs it.
+    let mut sf = engine::Engine::start(&path, threads, 256, 1)?;
+    let n = positions.len();
+    let progress = |done: usize, total: usize| {
+        let _ = app.emit("analysis-progress", Progress { game_id: game.id.clone(), done, total });
+    };
+    // Until pass 1 is done we only know roughly how much pass 2 will add.
+    let estimate = n + n / 2;
+    let mut lines = Vec::with_capacity(n);
     for (i, pos) in positions.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err("cancelled".into());
@@ -172,7 +177,20 @@ fn run_analysis(
             None => sf.analyse(&analysis::fen(pos), depth)?,
         };
         lines.push(l);
-        let _ = app.emit("analysis-progress", Progress { game_id: game.id.clone(), done: i + 1, total });
+        progress(i + 1, estimate);
+    }
+
+    let second = analysis::needs_second_line(&positions, &moves, &lines);
+    let total = n + second.len();
+    if !second.is_empty() {
+        sf.set_multipv(2)?;
+    }
+    for (k, &i) in second.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("cancelled".into());
+        }
+        lines[i] = sf.analyse(&analysis::fen(&positions[i]), depth)?;
+        progress(n + k + 1, total);
     }
     Ok(analysis::build_review(game, depth, &positions, &moves, &lines))
 }
