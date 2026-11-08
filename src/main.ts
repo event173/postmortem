@@ -65,7 +65,9 @@ const board: Api = Chessground($("board"), {
   coordinates: true,
   animation: { enabled: true, duration: ANIM_MS },
   draggable: { enabled: true, showGhost: true },
-  drawable: { enabled: false, visible: true },
+  // Right-click drag draws arrows, right-click on a square a circle (like Lichess):
+  // green; Shift/Ctrl = red, Alt = blue, both = yellow. Left-click erases.
+  drawable: { enabled: true, visible: true, eraseOnClick: true, defaultSnapToValidMove: true },
   premovable: { enabled: false },
   movable: { free: false, color: undefined, showDests: true, events: { after: (orig, dest) => onUserMove(orig, dest) } },
 });
@@ -527,6 +529,9 @@ const applyShapes = () => board.setAutoShapes([...baseShapes, ...liveShapes]);
 
 let positionToken = 0;
 
+/** Position the user's own arrows belong to; they are cleared when it changes. */
+let drawnFen = "";
+
 function renderPosition() {
   const r = state.review;
   if (!r) return;
@@ -548,6 +553,8 @@ function renderPosition() {
     baseShapes = move ? moveShapes(move) : [];
   }
   liveShapes = [];
+  if (fen !== drawnFen) board.setShapes([]);
+  drawnFen = fen;
   const turn: Color = fen.split(" ")[1] === "w" ? "white" : "black";
   board.set({
     fen,
@@ -1127,6 +1134,9 @@ function renderTraining() {
     movable: { color: undefined, dests: new Map() },
   });
   board.setAutoShapes(shapes);
+  const shown = attempt ? attempt.played.fen : fen;
+  if (shown !== drawnFen) board.setShapes([]);
+  drawnFen = shown;
   renderEvalBar();
   updateGraphCursor();
 

@@ -786,9 +786,9 @@ p.empty {
 
 /* --- smoother board feedback --------------------------------------------- */
 
-/* Badges and arrows fade in once the piece has (nearly) arrived instead of popping up. */
-.cg-wrap .cg-custom-svgs g,
-.cg-wrap .cg-shapes g {
+/* Badges fade in once the piece has (nearly) arrived instead of popping up.
+   (Not arrows: hand-drawn arrows are re-created while dragging and would flicker.) */
+.cg-wrap .cg-custom-svgs g {
   animation: shape-in 0.18s ease-out 0.16s both;
 }
 
