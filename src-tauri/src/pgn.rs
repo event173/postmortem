@@ -211,6 +211,20 @@ fn speed(base: u32, inc: u32) -> &'static str {
     }
 }
 
+/// A game from Lichess / chess.com (or with a time control) without a result
+/// and not over on the board is most likely still being played. Studies, books
+/// and analysis PGNs often have "*" too – they are not affected.
+fn still_running(p: &Parsed, result: &str, end: &Chess) -> bool {
+    if result != "*" || end.is_game_over() {
+        return false;
+    }
+    let site = p.header("Site").unwrap_or("").to_ascii_lowercase();
+    let online = (site.contains("lichess.org") && !site.contains("/study/") && !site.contains("/analysis"))
+        || site.contains("chess.com")
+        || p.header("TimeControl").is_some_and(|tc| tc != "-" && tc != "?");
+    online || p.header("CurrentPosition").is_some()
+}
+
 fn fnv(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
 }
@@ -253,6 +267,9 @@ pub fn to_game(p: &Parsed, you: Option<&str>, now_ms: i64) -> Result<GameInfo, S
     let mut black = player("Black", "BlackElo", "Schwarz");
 
     let result = p.header("Result").unwrap_or("*");
+    if still_running(p, result, &pos) {
+        return Err(crate::i18n::still_running());
+    }
     let winner = match result {
         "1-0" => Some("white".to_string()),
         "0-1" => Some("black".to_string()),
@@ -413,6 +430,24 @@ mod tests {
         assert_eq!(civil_from_days(g.created_at.div_euclid(86_400_000)), (2024, 3, 15));
         // same game again -> same id (no duplicates on re-import)
         assert_eq!(g.id, to_game(&p, Some("black"), 0).unwrap().id);
+    }
+
+    #[test]
+    fn refuses_games_that_are_still_running() {
+        let game = |headers: &str, result: &str| format!("{headers}\n[Result \"{result}\"]\n\n1. e4 e5 2. Nf3 Nc6 {result}\n");
+        let running = |pgn: &str| to_game(&parse(pgn), Some("white"), 0).err().is_some_and(|e| e.contains("läuft noch") || e.contains("still running"));
+        // chess.com daily game copied mid-game
+        assert!(running(&game("[Site \"Chess.com\"]\n[TimeControl \"1/86400\"]\n[CurrentPosition \"r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -\"]", "*")));
+        // Lichess game in progress
+        assert!(running(&game("[Site \"https://lichess.org/abcdefgh\"]\n[TimeControl \"300+3\"]", "*")));
+        // finished: fine
+        assert!(!running(&game("[Site \"https://lichess.org/abcdefgh\"]\n[TimeControl \"300+3\"]", "1-0")));
+        // studies, books, own analysis with "*": fine
+        assert!(!running(&game("[Site \"https://lichess.org/study/abcdefgh/ijklmnop\"]", "*")));
+        assert!(!running(&game("[Event \"Lehrbuch\"]", "*")));
+        // "*" but mate on the board: over
+        let mate = "[Site \"Chess.com\"]\n[Result \"*\"]\n\n1. f3 e5 2. g4 Qh4# *\n";
+        assert!(!running(mate));
     }
 
     #[test]

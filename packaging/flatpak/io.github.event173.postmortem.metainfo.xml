@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.3" date="2026-11-09">
+      <description>
+        <p>Fair play: games that are still running are not analysed (Lichess links, PGN imports), so you can't break the sites' rules by accident.</p>
+      </description>
+    </release>
     <release version="0.2.2" date="2026-11-09">
       <description>
         <p>See whether your mistakes are getting fewer over time; new games are analysed automatically in the background after syncing.</p>

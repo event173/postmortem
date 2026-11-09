@@ -200,6 +200,9 @@ fn run_analysis(
     cancel: &AtomicBool,
     threads: usize,
 ) -> Result<GameReview, String> {
+    if lichess::is_running(&game.status) {
+        return Err(i18n::still_running());
+    }
     let path = engine::find_stockfish()
         .ok_or_else(i18n::no_stockfish)?;
     let (positions, moves) = analysis::replay(&game.moves)?;

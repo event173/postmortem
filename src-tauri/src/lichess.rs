@@ -126,6 +126,11 @@ impl RawPlayer {
     }
 }
 
+/// Lichess statuses of games that have not ended yet.
+pub fn is_running(status: &str) -> bool {
+    matches!(status, "created" | "started")
+}
+
 impl RawGame {
     /// Only standard chess from the initial position is supported.
     fn into_game(self) -> Option<GameInfo> {
@@ -240,7 +245,13 @@ pub async fn fetch_user_games(username: &str, q: GameQuery) -> Result<Vec<GameIn
     if !valid_username(username) {
         return Err(crate::tr!("Ungültiger Benutzername.", "Invalid username.").into());
     }
-    let mut params: Vec<(&str, String)> = vec![("opening", "true".into()), ("moves", "true".into()), ("clocks", "true".into())];
+    // Finished games only (`ongoing=false` is the default; stated to be sure).
+    let mut params: Vec<(&str, String)> = vec![
+        ("opening", "true".into()),
+        ("moves", "true".into()),
+        ("clocks", "true".into()),
+        ("ongoing", "false".into()),
+    ];
     if let Some(max) = q.max {
         params.push(("max", max.to_string()));
     }
@@ -264,6 +275,7 @@ pub async fn fetch_user_games(username: &str, q: GameQuery) -> Result<Vec<GameIn
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<RawGame>(l).ok())
         .filter_map(RawGame::into_game)
+        .filter(|g| !is_running(&g.status))
         .collect();
     Ok(games)
 }
@@ -295,8 +307,23 @@ pub async fn fetch_game(input: &str) -> Result<GameInfo, FetchError> {
         .json()
         .await
         .map_err(|e| FetchError::Other(crate::tr!("Unerwartete Antwort: {e}", "Unexpected answer: {e}")))?;
+    if is_running(&raw.status) {
+        return Err(crate::i18n::still_running().into());
+    }
     raw.into_game()
         .ok_or_else(|| crate::tr!("Nur Standard-Schach ab der Grundstellung wird unterstützt.", "Only standard chess from the initial position is supported.").into())
+}
+
+#[cfg(test)]
+mod running_tests {
+    #[test]
+    fn running_statuses() {
+        assert!(super::is_running("started"));
+        assert!(super::is_running("created"));
+        for s in ["mate", "resign", "outoftime", "draw", "stalemate", "aborted", "timeout"] {
+            assert!(!super::is_running(s), "{s}");
+        }
+    }
 }
 
 #[cfg(test)]

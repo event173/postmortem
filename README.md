@@ -131,6 +131,11 @@ Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install
 
 ## Gut zu wissen
 
+**Fair Play.** postmortem analysiert nur beendete Partien. Laufende Partien – per
+Lichess-Link oder als PGN eingespielt, z. B. eine chess.com-Fernpartie – werden abgelehnt:
+Engine-Hilfe während einer Partie verstößt gegen die Regeln von Lichess und chess.com und
+kann zur Sperre führen.
+
 **Wie bewertet wird.** Jede Engine-Bewertung wird in Gewinnchancen (0–100 %) umgerechnet –
 mit derselben Kurve wie bei Lichess. Ein Zug ist so gut, wie wenig er von deinen
 Gewinnchancen kostet:

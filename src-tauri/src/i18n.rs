@@ -47,6 +47,15 @@ macro_rules! tr {
     };
 }
 
+/// Refusal to analyse a game that is still being played (engine help during a
+/// game gets accounts closed on Lichess and chess.com).
+pub fn still_running() -> String {
+    tr!(
+        "Diese Partie läuft noch – analysieren erst nach Partieende. Engine-Hilfe während einer laufenden Partie verstößt gegen die Fair-Play-Regeln von Lichess und chess.com und kann zur Sperre führen.",
+        "This game is still running – analyse it after it has ended. Engine help during a game breaks the fair-play rules of Lichess and chess.com and can get your account closed."
+    )
+}
+
 /// The "Stockfish is missing" error, shared by everything that starts the engine.
 pub fn no_stockfish() -> String {
     tr!(
