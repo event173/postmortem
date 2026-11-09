@@ -588,6 +588,8 @@ p.empty {
   flex: 1 0 0;
   min-height: 220px;
   overflow-y: auto;
+  /* at the top/bottom of the list, don't hand the scrolling to the column */
+  overscroll-behavior: contain;
   padding: 6px;
 }
 

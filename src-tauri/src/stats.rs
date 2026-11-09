@@ -325,6 +325,8 @@ mod tests {
             best_line: None,
             comment: String::new(),
             comment_en: None,
+            comment_other: None,
+            comment_other_en: None,
             theme,
         }
     }

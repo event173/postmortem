@@ -114,8 +114,13 @@ function formatScore(s: Score): string {
   }
 }
 
-/** English UI, but the review predates English coach comments. */
-const germanOnly = (r: GameReview) => lang === "en" && r.moves.some((m) => !m.commentEn);
+/** The review predates English comments (only matters in English) or the
+ *  comments about your opponent's moves ("Schwarz hatte Matt"). */
+function outdatedComments(r: GameReview): "language" | "perspective" | null {
+  if (lang === "en" && r.moves.some((m) => !m.commentEn)) return "language";
+  if (r.moves.some((m) => !m.commentOther)) return "perspective";
+  return null;
+}
 
 function badgeSvg(cls: Class): string {
   const c = CLASSES[cls];
@@ -468,8 +473,8 @@ async function selectGame(game: GameInfo, startPly = 0) {
       const pref = refinePref();
       if (pref === "always") refine(game, depth, token);
       else if (pref === "ask") askRefine(game, depth, token);
-    } else if (germanOnly(first)) {
-      askRefine(game, first.depth, token, true);
+    } else if (outdatedComments(first)) {
+      askRefine(game, first.depth, token, outdatedComments(first)!);
     }
   } catch (e) {
     if (token !== analysisToken) return;
@@ -484,16 +489,21 @@ async function selectGame(game: GameInfo, startPly = 0) {
 const PREVIEW_DEPTH = 10;
 
 /** After the quick preview: offer the full-depth analysis instead of starting it unasked. */
-function askRefine(game: GameInfo, depth: number, token: number, language = false) {
+/** Offer the deep analysis – or, with `outdated`, a new analysis of an older
+ *  review whose coach comments lack a language or your opponent's perspective. */
+function askRefine(game: GameInfo, depth: number, token: number, outdated: "language" | "perspective" | null = null) {
   $("refine").hidden = false;
   $("refine-spin").hidden = true;
   $("refine-ask").hidden = false;
-  $("refine-text").textContent = language
-    ? t("Die Coach-Kommentare dieser älteren Analyse gibt es nur auf Deutsch.")
-    : t("Schnellanalyse (Tiefe {d}). Tiefe Analyse (Tiefe {depth}) starten?", { d: state.review?.depth ?? "", depth });
-  $("refine-yes").textContent = language ? t("Neu analysieren") : t("Tief analysieren");
+  $("refine-text").textContent =
+    outdated === "language"
+      ? t("Die Coach-Kommentare dieser älteren Analyse gibt es nur auf Deutsch.")
+      : outdated === "perspective"
+        ? t("Ältere Analyse: Die Züge deines Gegners kommentiert der Coach hier noch in der Du-Form.")
+        : t("Schnellanalyse (Tiefe {d}). Tiefe Analyse (Tiefe {depth}) starten?", { d: state.review?.depth ?? "", depth });
+  $("refine-yes").textContent = outdated ? t("Neu analysieren") : t("Tief analysieren");
   ($("refine-yes") as HTMLButtonElement).onclick = () => {
-    if (token === analysisToken) refine(game, depth, token, language);
+    if (token === analysisToken) refine(game, depth, token, !!outdated);
   };
   ($("refine-no") as HTMLButtonElement).onclick = () => {
     $("refine").hidden = true;
@@ -1057,7 +1067,10 @@ function renderCoach() {
   const thinkHtml = think === null ? "" : `<span class="think" title="${t("Bedenkzeit für diesen Zug")}">⏱ ${fmtClock(think)}</span>`;
   head.innerHTML = `${badgeHtml(move.classification)}<span class="coach-title">${t("{move} ist {phrase}", { move: `<b>${num} ${esc(fig(move.san))}</b>`, phrase: info.phrase })}</span>${tag}${thinkHtml}`;
   head.style.setProperty("--c", info.color);
-  text.innerHTML = esc(fig(commentOf(move)));
+  // Your own moves and your tries on the board: "du". Your opponent's moves
+  // (and every move of a game you didn't play): about the mover.
+  const mine = !!node || userColor(state.game!) === move.color;
+  text.innerHTML = esc(fig(commentOf(move, mine)));
   const showBest = move.bestSan && move.bestUci !== move.uci && !NOT_BAD.includes(move.classification);
   best.innerHTML = showBest
     ? `<span class="best-label">${t("Bester Zug")}</span> <b>${esc(fig(move.bestSan!))}</b>${move.bestLine ? `<div class="best-line">${esc(fig(move.bestLine))}</div>` : ""}`
@@ -1151,6 +1164,19 @@ function revealMove(el: HTMLElement) {
   if (r.top < b.top) box.scrollBy({ top: r.top - b.top - 4, behavior: "smooth" });
   else if (r.bottom > b.bottom) box.scrollBy({ top: r.bottom - b.bottom + 4, behavior: "smooth" });
 }
+
+// Scrolling inside the move list stays there, also at its top and bottom
+// (some WebKitGTK versions ignore `overscroll-behavior`, so it's done by hand).
+document.querySelector<HTMLElement>(".moves-panel")!.addEventListener(
+  "wheel",
+  (e) => {
+    const box = e.currentTarget as HTMLElement;
+    const atTop = box.scrollTop <= 0;
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
+    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) e.preventDefault();
+  },
+  { passive: false },
+);
 
 let graphWidth = 0;
 

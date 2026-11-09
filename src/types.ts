@@ -72,6 +72,10 @@ export interface MoveReview {
   comment: string;
   /** … and English (missing in reviews from before 0.2.0). */
   commentEn?: string | null;
+  /** The same written about the mover ("Schwarz hatte Matt …"), for your
+   *  opponent's moves (missing in reviews from before 0.2.1). */
+  commentOther?: string | null;
+  commentOtherEn?: string | null;
   /** Why the move was bad (bad moves only). */
   theme?: Theme | null;
 }

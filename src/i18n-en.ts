@@ -87,6 +87,7 @@ export const EN: Record<string, string> = {
   "Schnellanalyse (Tiefe {d}). Tiefe Analyse (Tiefe {depth}) starten?": "Quick analysis (depth {d}). Start the deep analysis (depth {depth})?",
   "Die Coach-Kommentare dieser älteren Analyse gibt es nur auf Deutsch.": "The coach comments of this older analysis are only available in German.",
   "Neu analysieren": "Analyse again",
+  "Ältere Analyse: Die Züge deines Gegners kommentiert der Coach hier noch in der Du-Form.": "Older analysis: here the coach still talks about your opponent's moves as if they were yours.",
   "Analyse abgebrochen.": "Analysis cancelled.",
   "PGN kopieren": "Copy PGN",
   "FEN kopieren": "Copy FEN",

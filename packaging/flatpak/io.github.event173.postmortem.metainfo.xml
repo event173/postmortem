@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.1" date="2026-11-09">
+      <description>
+        <p>The coach describes your opponent's moves from their side instead of addressing you, praises completed development and castling, and the move list scrolls on its own.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-09">
       <description>
         <p>English interface (switchable in the settings), rating history and activity, positions in which you leave opening theory, and a hint in the puzzles tab when the puzzle database is missing.</p>

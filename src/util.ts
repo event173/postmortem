@@ -84,7 +84,13 @@ const PLATFORMS: Record<Platform, string> = { lichess: "Lichess", chesscom: "che
 
 export const platformLabel = (p: Platform) => PLATFORMS[p] ?? p;
 
-/** Coach comment in the UI language (reviews from before 0.2.0 only have German). */
-export function commentOf(m: Pick<MoveReview, "comment" | "commentEn">): string {
-  return lang === "en" && m.commentEn ? m.commentEn : m.comment;
+type Comments = Pick<MoveReview, "comment" | "commentEn" | "commentOther" | "commentOtherEn">;
+
+/** Coach comment in the UI language. `mine`: your own move ("Du hattest Matt"),
+ *  otherwise written about the mover ("Schwarz hatte Matt"). Older reviews lack
+ *  some variants and fall back to what they have. */
+export function commentOf(m: Comments, mine = true): string {
+  const de = mine ? m.comment : (m.commentOther ?? m.comment);
+  const en = mine ? m.commentEn : (m.commentOtherEn ?? m.commentEn);
+  return lang === "en" && en ? en : de;
 }

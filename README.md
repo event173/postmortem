@@ -33,6 +33,7 @@ Die Oberfläche gibt es auf Deutsch und Englisch (Zahnrad → *Sprache · Langua
 - Bewertung jedes Zugs: Brillant, Stark, Bester Zug, Ausgezeichnet, Gut, Theorie,
   Ungenauigkeit, Fehler, Verpasste Chance, Patzer – plus Genauigkeit pro Spieler
 - Coach-Kommentare auf Deutsch oder Englisch, Bewertungsbalken, Bewertungsverlauf, bester Zug als Pfeil
+- Auch Lob: der Coach merkt an, wenn ein guter Zug die Entwicklung abschließt oder rochiert (nicht bei Theoriezügen)
 - **Zeig mir, was passiert:** spielt die Widerlegung eines Fehlers auf dem Brett vor
 - Frei weiterziehen: eigene Varianten, jeder Zug wird bewertet; Live-Engine mit den 3 besten Zügen
 - **Aus Fehlern lernen:** deine Fehler einer Partie als Übungsaufgaben

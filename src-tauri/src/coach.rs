@@ -98,6 +98,8 @@ pub fn is_sacrifice(before: &Chess, after: &Chess, reply: Option<&PvLine>, mover
 // ---------------------------------------------------------------------------
 // Wording helpers (German grammar needs the case; English doesn't)
 
+use std::cell::Cell;
+
 use crate::i18n::en;
 
 fn name(role: Role) -> &'static str {
@@ -117,8 +119,58 @@ fn name(role: Role) -> &'static str {
     }
 }
 
-/// "dein Springer" / "deine Dame" – "your knight"
-fn your_nom(role: Role) -> String {
+thread_local! {
+    /// Write about the mover in the third person ("Schwarz hatte Matt") instead
+    /// of addressing them ("Du hattest Matt") – for your opponent's moves.
+    static THIRD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `f` with the comments written in the third person.
+pub fn in_third_person<T>(f: impl FnOnce() -> T) -> T {
+    let prev = THIRD.with(|t| t.replace(true));
+    let out = f();
+    THIRD.with(|t| t.set(prev));
+    out
+}
+
+fn third() -> bool {
+    THIRD.with(|t| t.get())
+}
+
+/// `say!(du_de, du_en, third_de, third_en)`: the sentence for the current
+/// language and perspective. The third-person texts may use `{side}` / `{opp}`.
+macro_rules! say {
+    ($de:literal, $en:literal, $de3:literal, $en3:literal) => {
+        if third() { tr!($de3, $en3) } else { tr!($de, $en) }
+    };
+}
+
+/// "Weiß" / "White"
+fn side_name(c: Color) -> &'static str {
+    match (c, en()) {
+        (Color::White, false) => "Weiß",
+        (Color::Black, false) => "Schwarz",
+        (Color::White, true) => "White",
+        (Color::Black, true) => "Black",
+    }
+}
+
+/// "weiße" / "weißen" (German adjective, weak declension)
+fn colour_adj(c: Color, accusative_masc: bool) -> String {
+    let stem = if c == Color::White { "weiß" } else { "schwarz" };
+    if accusative_masc { format!("{stem}en") } else { format!("{stem}e") }
+}
+
+/// "dein Springer" / "deine Dame" – "your knight";
+/// third person: "der weiße Springer" / "die weiße Dame" – "White's knight"
+fn your_nom(role: Role, owner: Color) -> String {
+    if third() {
+        return match role {
+            _ if en() => format!("{}'s {}", side_name(owner), name(role)),
+            Role::Queen => format!("die {} Dame", colour_adj(owner, false)),
+            r => format!("der {} {}", colour_adj(owner, false), name(r)),
+        };
+    }
     match role {
         _ if en() => format!("your {}", name(role)),
         Role::Queen => "deine Dame".into(),
@@ -126,8 +178,17 @@ fn your_nom(role: Role) -> String {
     }
 }
 
-/// "deinen Springer" / "deine Dame" / "deinen Bauern" – "your knight"
-fn your_acc(role: Role) -> String {
+/// "deinen Springer" / "deine Dame" / "deinen Bauern" – "your knight";
+/// third person: "den weißen Springer" / "die weiße Dame" / "den weißen Bauern"
+fn your_acc(role: Role, owner: Color) -> String {
+    if third() {
+        return match role {
+            _ if en() => format!("{}'s {}", side_name(owner), name(role)),
+            Role::Queen => format!("die {} Dame", colour_adj(owner, false)),
+            Role::Pawn => format!("den {} Bauern", colour_adj(owner, true)),
+            r => format!("den {} {}", colour_adj(owner, true), name(r)),
+        };
+    }
     match role {
         _ if en() => format!("your {}", name(role)),
         Role::Queen => "deine Dame".into(),
@@ -275,25 +336,89 @@ fn good_move_comment(ctx: &MoveContext) -> String {
             } else if ctx.win_after >= 40.0 {
                 tr!("Stark gefunden! {mv} ist der einzige Zug, der die Stellung hält.", "Great find! {mv} is the only move that holds the position.")
             } else {
-                tr!("Stark gefunden! {mv} ist der einzige Zug, der dich im Spiel hält.", "Great find! {mv} is the only move that keeps you in the game.")
+                let side = side_name(ctx.mover);
+                say!(
+                    "Stark gefunden! {mv} ist der einzige Zug, der dich im Spiel hält.",
+                    "Great find! {mv} is the only move that keeps you in the game.",
+                    "Stark gefunden! {mv} ist der einzige Zug, der {side} im Spiel hält.",
+                    "Great find! {mv} is the only move that keeps {side} in the game."
+                )
             }
         }
-        Class::Best => good_move_note(ctx).unwrap_or_else(|| tr!("Der beste Zug.", "The best move.")),
-        Class::Excellent => good_move_note(ctx)
-            .unwrap_or_else(|| tr!("Ausgezeichnet – praktisch so gut wie der beste Zug.", "Excellent – practically as good as the best move.")),
-        Class::Good => match ctx.best_san() {
-            Some(b) => tr!("Ein solider Zug, aber {b} war etwas genauer.", "A solid move, but {b} was a little more precise."),
-            None => tr!("Ein solider Zug.", "A solid move."),
-        },
+        Class::Best => with_praise(ctx, good_move_note(ctx).unwrap_or_else(|| tr!("Der beste Zug.", "The best move."))),
+        Class::Excellent => with_praise(
+            ctx,
+            good_move_note(ctx)
+                .unwrap_or_else(|| tr!("Ausgezeichnet – praktisch so gut wie der beste Zug.", "Excellent – practically as good as the best move.")),
+        ),
+        Class::Good => with_praise(
+            ctx,
+            match ctx.best_san() {
+                Some(b) => tr!("Ein solider Zug, aber {b} war etwas genauer.", "A solid move, but {b} was a little more precise."),
+                None => tr!("Ein solider Zug.", "A solid move."),
+            },
+        ),
         Class::Inaccuracy | Class::Mistake | Class::Miss | Class::Blunder => unreachable!(),
     }
+}
+
+thread_local! {
+    /// Tests switch the praise off to check that it changes nothing but the text.
+    static PRAISE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+#[cfg(test)]
+pub fn set_praise(on: bool) {
+    PRAISE.with(|p| p.set(on));
+}
+
+/// Append a short positive note (development, castling) to a good move's comment.
+/// Only called for Best / Excellent / Good – book moves keep their opening note.
+fn with_praise(ctx: &MoveContext, text: String) -> String {
+    match praise(ctx) {
+        Some(p) if PRAISE.with(|p| p.get()) => format!("{text} {p}"),
+        _ => text,
+    }
+}
+
+/// Minor pieces of `color` still standing on their starting squares.
+fn undeveloped(pos: &Chess, color: Color) -> usize {
+    let board = pos.board();
+    let rank = if color == Color::White { shakmaty::Rank::First } else { shakmaty::Rank::Eighth };
+    [(shakmaty::File::B, Role::Knight), (shakmaty::File::G, Role::Knight), (shakmaty::File::C, Role::Bishop), (shakmaty::File::F, Role::Bishop)]
+        .into_iter()
+        .filter(|&(file, role)| board.piece_at(Square::from_coords(file, rank)) == Some(role.of(color)))
+        .count()
+}
+
+/// Positive things a move does beyond the evaluation: castling (while the
+/// queens are on – in the endgame it's rarely about safety) or completing
+/// the development of the minor pieces.
+fn praise(ctx: &MoveContext) -> Option<String> {
+    if ctx.played.is_castle() {
+        let queens = ctx.before.board().queens();
+        let both = (queens & ctx.before.board().white()).any() && (queens & ctx.before.board().black()).any();
+        return both.then(|| tr!("Rochiert – der König ist in Sicherheit.", "Castled – the king is safe."));
+    }
+    (undeveloped(ctx.before, ctx.mover) > 0 && undeveloped(ctx.after, ctx.mover) == 0).then(|| {
+        tr!(
+            "Damit steht keine Leichtfigur mehr auf ihrem Ausgangsfeld – gute Entwicklung.",
+            "No minor piece is left on its starting square now – good development."
+        )
+    })
 }
 
 /// Positive notes for good moves: delivering mate soon, winning material.
 fn good_move_note(ctx: &MoveContext) -> Option<String> {
     let reply = ctx.reply?;
     if let Some(n) = reply.score.negate().mate_for() {
-        return Some(tr!("Stark! Damit erzwingst du Matt in {n}.", "Strong! This forces mate in {n}."));
+        let side = side_name(ctx.mover);
+        return Some(say!(
+            "Stark! Damit erzwingst du Matt in {n}.",
+            "Strong! This forces mate in {n}.",
+            "Stark! Damit erzwingt {side} Matt in {n}.",
+            "Strong! This forces mate in {n}."
+        ));
     }
     if ctx.played.is_capture() {
         let gain = balance_after_line(ctx.after, &reply.pv, ctx.mover) - balance(ctx.before, ctx.mover);
@@ -301,7 +426,13 @@ fn good_move_note(ctx: &MoveContext) -> Option<String> {
             let end = play_line(ctx.after, &reply.pv, LINE_HORIZON);
             let end = end.last().map(|(_, p)| p).unwrap_or(ctx.after);
             let what = describe_material(ctx.before, end, !ctx.mover, gain);
-            return Some(tr!("Gut gesehen – du gewinnst {what}.", "Well spotted – you win {what}."));
+            let side = side_name(ctx.mover);
+            return Some(say!(
+                "Gut gesehen – du gewinnst {what}.",
+                "Well spotted – you win {what}.",
+                "Gut gesehen – {side} gewinnt {what}.",
+                "Well spotted – {side} wins {what}."
+            ));
         }
     }
     None
@@ -334,7 +465,13 @@ fn missed_mate(ctx: &MoveContext) -> Option<String> {
     let best = ctx.best?;
     let n = best.score.mate_for()?;
     let line = san_line(ctx.before, &best.pv, (2 * n as usize).saturating_sub(1).max(1));
-    Some(tr!("Du hattest Matt in {n}: {line}.", "You had mate in {n}: {line}."))
+    let side = side_name(ctx.mover);
+    Some(say!(
+        "Du hattest Matt in {n}: {line}.",
+        "You had mate in {n}: {line}.",
+        "{side} hatte Matt in {n}: {line}.",
+        "{side} had mate in {n}: {line}."
+    ))
 }
 
 /// Net material the mover loses along the opponent's best reply line.
@@ -367,7 +504,7 @@ fn allows_fork(ctx: &MoveContext) -> Option<String> {
     let mut names: Vec<String> = targets
         .iter()
         .map(|&(t, r)| {
-            let piece = your_acc(r);
+            let piece = your_acc(r, ctx.mover);
             tr!("{piece} auf {t}", "{piece} on {t}")
         })
         .collect();
@@ -393,7 +530,7 @@ fn hanging_piece(ctx: &MoveContext) -> Option<String> {
     if defenders.is_empty() {
         let it = pronoun(captured);
         let mv = ctx.played_san;
-        let piece = your_nom(captured);
+        let piece = your_nom(captured, ctx.mover);
         if sq == ctx.played.to() {
             Some(tr!(
                 "Nach {mv} steht {piece} auf {sq} ungedeckt – {reply_san} schlägt {it} einfach.",
@@ -404,11 +541,14 @@ fn hanging_piece(ctx: &MoveContext) -> Option<String> {
             Some(tr!("{piece} auf {sq} hängt – {reply_san} schlägt {it} einfach.", "{piece} on {sq} is hanging – {reply_san} simply takes {it}."))
         }
     } else if piece_value(m.role()) < piece_value(captured) {
-        let piece = your_acc(captured);
+        let piece = your_acc(captured, ctx.mover);
         let what = describe_material(ctx.before, &end, ctx.mover, loss);
-        Some(tr!(
+        let side = side_name(ctx.mover);
+        Some(say!(
             "{reply_san} schlägt {piece} auf {sq}. Die Deckung reicht nicht, du verlierst {what}.",
-            "{reply_san} takes {piece} on {sq}. It is not defended enough – you lose {what}."
+            "{reply_san} takes {piece} on {sq}. It is not defended enough – you lose {what}.",
+            "{reply_san} schlägt {piece} auf {sq}. Die Deckung reicht nicht, {side} verliert {what}.",
+            "{reply_san} takes {piece} on {sq}. It is not defended enough – {side} loses {what}."
         ))
     } else {
         None
@@ -435,30 +575,58 @@ fn missed_material(ctx: &MoveContext) -> Option<String> {
     let line = play_line(ctx.before, &best.pv, LINE_HORIZON);
     let end = line.last().map(|(_, p)| p)?;
     let what = describe_material(ctx.before, end, !ctx.mover, gain);
-    let prefix = if ctx.opponent_blundered { tr!("Dein Gegner hat gerade gepatzt. ", "Your opponent just blundered. ") } else { String::new() };
+    let (side, opp) = (side_name(ctx.mover), side_name(!ctx.mover));
+    let prefix = if ctx.opponent_blundered {
+        say!("Dein Gegner hat gerade gepatzt. ", "Your opponent just blundered. ", "{opp} hat gerade gepatzt. ", "{opp} just blundered. ")
+    } else {
+        String::new()
+    };
     let best_san = ctx.best_san()?;
     let line = san_line(ctx.before, &best.pv, 4);
-    Some(tr!("{prefix}Mit {best_san} hättest du {what} gewonnen: {line}.", "{prefix}With {best_san} you would have won {what}: {line}."))
+    Some(say!(
+        "{prefix}Mit {best_san} hättest du {what} gewonnen: {line}.",
+        "{prefix}With {best_san} you would have won {what}: {line}.",
+        "{prefix}Mit {best_san} hätte {side} {what} gewonnen: {line}.",
+        "{prefix}With {best_san} {side} would have won {what}: {line}."
+    ))
 }
 
 fn positional(ctx: &MoveContext) -> (String, Theme) {
     let missed_chance = ctx.class == Class::Miss || (ctx.opponent_blundered && ctx.win_before >= 60.0);
     let theme = if missed_chance { Theme::MissedChance } else { Theme::Positional };
+    let (side, opp) = (side_name(ctx.mover), side_name(!ctx.mover));
     let base = if missed_chance {
-        tr!(
+        say!(
             "Dein Gegner hat gerade einen Fehler gemacht, aber dieser Zug nutzt ihn nicht aus.",
-            "Your opponent just made a mistake, but this move does not take advantage of it."
+            "Your opponent just made a mistake, but this move does not take advantage of it.",
+            "{opp} hat gerade einen Fehler gemacht, aber dieser Zug nutzt ihn nicht aus.",
+            "{opp} just made a mistake, but this move does not take advantage of it."
         )
     } else if ctx.win_before >= 70.0 && ctx.win_after < 55.0 {
-        tr!("Damit gibst du deinen Vorteil aus der Hand.", "This throws away your advantage.")
+        say!(
+            "Damit gibst du deinen Vorteil aus der Hand.",
+            "This throws away your advantage.",
+            "Damit gibt {side} den Vorteil aus der Hand.",
+            "This throws away {side}'s advantage."
+        )
     } else if ctx.win_before >= 40.0 && ctx.win_after < 30.0 {
-        tr!("Danach steht deine Stellung deutlich schlechter.", "After this your position is clearly worse.")
+        say!(
+            "Danach steht deine Stellung deutlich schlechter.",
+            "After this your position is clearly worse.",
+            "Danach steht {side} deutlich schlechter.",
+            "After this {side}'s position is clearly worse."
+        )
     } else if ctx.win_after < 15.0 {
         tr!("Das macht eine schwierige Stellung noch schwieriger.", "This makes a difficult position even harder.")
     } else {
         match ctx.class {
             Class::Inaccuracy => tr!("Etwas ungenau – es gab einen besseren Plan.", "Slightly inaccurate – there was a better plan."),
-            _ => tr!("Das verschlechtert deine Stellung spürbar.", "This noticeably worsens your position."),
+            _ => say!(
+                "Das verschlechtert deine Stellung spürbar.",
+                "This noticeably worsens your position.",
+                "Das verschlechtert die Stellung von {side} spürbar.",
+                "This noticeably worsens {side}'s position."
+            ),
         }
     };
     let text = match (ctx.best_san(), ctx.best) {

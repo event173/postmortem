@@ -46,6 +46,12 @@ pub struct MoveReview {
     /// … and in English (missing in reviews made before 0.2.0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment_en: Option<String>,
+    /// The same about the mover in the third person ("Schwarz hatte Matt …"),
+    /// shown for your opponent's moves (missing in reviews made before 0.2.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_other: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_other_en: Option<String>,
     /// Why the move was bad (only for inaccuracies, mistakes, misses and blunders).
     #[serde(default)]
     pub theme: Option<coach::Theme>,
@@ -312,6 +318,8 @@ pub fn review_move(input: &MoveInput) -> (MoveReview, f64) {
     // Both languages, so switching the UI language doesn't need a new analysis.
     let (comment, theme) = i18n::with(Lang::De, || coach::explain(&ctx));
     let (comment_en, _) = i18n::with(Lang::En, || coach::explain(&ctx));
+    let (comment_other, _) = i18n::with(Lang::De, || coach::in_third_person(|| coach::explain(&ctx)));
+    let (comment_other_en, _) = i18n::with(Lang::En, || coach::in_third_person(|| coach::explain(&ctx)));
 
     let review = MoveReview {
         ply,
@@ -326,6 +334,8 @@ pub fn review_move(input: &MoveInput) -> (MoveReview, f64) {
         best_line: best.map(|l| coach::san_line(before, &l.pv, 8)),
         comment,
         comment_en: Some(comment_en),
+        comment_other: Some(comment_other),
+        comment_other_en: Some(comment_other_en),
         theme,
     };
     (review, c.loss)
@@ -413,6 +423,125 @@ mod tests {
         vec![PvLine { score, depth: 10, pv: pv.split_whitespace().map(String::from).collect() }]
     }
 
+    /// Review a game in which every move is the engine's choice (alternating ±30 cp).
+    fn all_best(g: &GameInfo) -> GameReview {
+        let (pos, moves) = replay(&g.moves).unwrap();
+        let mut lines: Vec<Vec<PvLine>> = moves
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let uci = UciMove::from_move(*m, CastlingMode::Standard).to_string();
+                line(Score::Cp(if i % 2 == 0 { 30 } else { -30 }), &uci)
+            })
+            .collect();
+        lines.push(line(Score::Cp(if moves.len() % 2 == 0 { 30 } else { -30 }), "a7a6"));
+        build_review(g, 10, &pos, &moves, &lines)
+    }
+
+    /// The third-person comments never address the mover.
+    fn assert_third_person(r: &GameReview) {
+        for m in &r.moves {
+            let de = m.comment_other.as_deref().unwrap();
+            let en = m.comment_other_en.as_deref().unwrap();
+            for w in de.split(|c: char| !c.is_alphabetic()) {
+                assert!(!matches!(w, "du" | "Du" | "dich" | "dein" | "deine" | "deinen" | "Dein" | "Deine"), "{de}");
+            }
+            for w in en.split(|c: char| !c.is_alphabetic()) {
+                assert!(!matches!(w, "you" | "You" | "your" | "Your"), "{en}");
+            }
+        }
+    }
+
+    #[test]
+    fn praises_development_and_castling_only_on_good_moves() {
+        // 6. Bg5: no white minor piece on b1/c1/f1/g1 any more; 7. O-O with queens on.
+        let g = game("e4 e5 Nf3 Nc6 Bc4 Bc5 d3 Nf6 Nc3 d6 Bg5 h6 O-O");
+        let r = all_best(&g);
+        let bg5 = &r.moves[10];
+        assert_eq!((bg5.san.as_str(), bg5.classification), ("Bg5", Class::Best));
+        assert!(bg5.comment.contains("gute Entwicklung"), "{}", bg5.comment);
+        assert!(bg5.comment_en.as_deref().unwrap().contains("good development"));
+        let castle = &r.moves[12];
+        assert!(castle.comment.contains("Rochiert"), "{}", castle.comment);
+        assert_eq!(castle.comment_en.as_deref(), Some("The best move. Castled – the king is safe."));
+        // Nothing for the other moves (Nc3 still leaves the c1 bishop at home).
+        let praised = r.moves.iter().filter(|m| m.comment.contains("Entwicklung") || m.comment.contains("Rochiert")).count();
+        assert_eq!(praised, 2);
+        assert_third_person(&r);
+
+        // Exchanged pieces count as developed: after 4. Bxf6 no white minor is at home.
+        let g = game("d4 d5 Nf3 Nf6 Nc3 e6 Bg5 Be7 e3 O-O Bd3 h6 Bxf6");
+        let r = all_best(&g);
+        assert!(r.moves[10].comment.contains("gute Entwicklung"), "{}", r.moves[10].comment); // 6. Bd3
+        assert!(r.moves[9].comment.contains("Rochiert"), "{}", r.moves[9].comment); // 5... O-O
+        assert!(!r.moves[12].comment.contains("Entwicklung"), "only once");
+    }
+
+    #[test]
+    fn no_praise_for_book_moves_or_bad_moves() {
+        // Book: the Italian main line up to 4. O-O is theory.
+        let mut g = game("e4 e5 Nf3 Nc6 Bc4 Bc5 O-O");
+        g.opening = Some(crate::lichess::Opening { eco: "C50".into(), name: "Italian Game".into(), ply: 7 });
+        let r = all_best(&g);
+        assert_eq!(r.moves[6].classification, Class::Book);
+        assert_eq!(r.moves[6].comment, "Theoriezug: Italian Game.");
+
+        // A castling move that loses a lot is explained as a mistake, not praised.
+        let g = game("e4 e5 Nf3 Nc6 Bc4 Bc5 O-O");
+        let (pos, moves) = replay(&g.moves).unwrap();
+        let mut lines: Vec<Vec<PvLine>> = (0..6)
+            .map(|i| {
+                let uci = UciMove::from_move(moves[i], CastlingMode::Standard).to_string();
+                line(Score::Cp(if i % 2 == 0 { 30 } else { -30 }), &uci)
+            })
+            .collect();
+        lines.push(line(Score::Cp(30), "d2d3")); // before O-O: d3 is best
+        lines.push(line(Score::Cp(300), "f6f5")); // after O-O: Black is much better
+        let r = build_review(&g, 10, &pos, &moves, &lines);
+        assert!(matches!(r.moves[6].classification, Class::Mistake | Class::Blunder), "{:?}", r.moves[6].classification);
+        assert!(!r.moves[6].comment.contains("Rochiert"), "{}", r.moves[6].comment);
+    }
+
+    #[test]
+    fn missed_mate_in_both_perspectives() {
+        // 4. a3?? instead of Qxf7#.
+        let g = game("e4 e5 Qh5 Nc6 Bc4 Nf6 a3");
+        let (pos, moves) = replay(&g.moves).unwrap();
+        let mut lines: Vec<Vec<PvLine>> = (0..6)
+            .map(|i| {
+                let uci = UciMove::from_move(moves[i], CastlingMode::Standard).to_string();
+                line(Score::Cp(if i % 2 == 0 { 30 } else { -30 }), &uci)
+            })
+            .collect();
+        lines.push(line(Score::Mate(1), "h5f7"));
+        lines.push(line(Score::Cp(150), "f6h5"));
+        let r = build_review(&g, 10, &pos, &moves, &lines);
+        let a3 = &r.moves[6];
+        assert!(a3.comment.starts_with("Du hattest Matt in 1"), "{}", a3.comment);
+        assert!(a3.comment_other.as_deref().unwrap().starts_with("Weiß hatte Matt in 1"), "{:?}", a3.comment_other);
+        assert!(a3.comment_other_en.as_deref().unwrap().starts_with("White had mate in 1"), "{:?}", a3.comment_other_en);
+        assert_third_person(&r);
+    }
+
+    #[test]
+    fn praise_changes_only_the_text() {
+        let g = game("e4 e5 Nf3 Nc6 Bc4 Bc5 d3 Nf6 Nc3 d6 Bg5 h6 O-O");
+        let with = all_best(&g);
+        coach::set_praise(false);
+        let without = all_best(&g);
+        coach::set_praise(true);
+        assert_eq!(with.accuracy.white, without.accuracy.white);
+        assert_eq!(with.accuracy.black, without.accuracy.black);
+        assert_eq!(with.win_white, without.win_white);
+        let mut differ = 0;
+        for (a, b) in with.moves.iter().zip(&without.moves) {
+            assert_eq!((a.classification, a.theme, a.win_before, a.win_after), (b.classification, b.theme, b.win_before, b.win_after));
+            assert_eq!((&a.best_san, &a.best_line), (&b.best_san, &b.best_line));
+            differ += (a.comment != b.comment) as usize;
+        }
+        assert_eq!(differ, 2, "only the two praised moves");
+    }
+
     #[test]
     fn replays_and_detects_mate() {
         let (pos, moves) = replay(&game("e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#").moves).unwrap();
@@ -442,6 +571,7 @@ mod tests {
         assert_eq!(nf6.classification, Class::Blunder);
         assert!(nf6.comment.contains("Matt in 1"), "{}", nf6.comment);
         assert_eq!(nf6.comment_en.as_deref(), Some("This allows mate in 1: 4. Qxf7#."));
+        assert_third_person(&r);
         assert_eq!(nf6.theme, Some(coach::Theme::AllowedMate));
         assert_eq!(r.moves[0].theme, None);
         assert_eq!(r.moves[6].comment, "Schachmatt!");
@@ -468,6 +598,10 @@ mod tests {
         assert!(ba6.comment.contains("ungedeckt") || ba6.comment.contains("Läufer"), "{}", ba6.comment);
         let en = ba6.comment_en.as_deref().unwrap();
         assert!(en.contains("your bishop on a6") && en.contains("Nxa6"), "{en}");
+        // For your opponent's view of this move: third person.
+        assert_eq!(ba6.comment_other.as_deref(), Some("Nach Ba6 steht der weiße Läufer auf a6 ungedeckt – Nxa6 schlägt ihn einfach."));
+        assert_eq!(ba6.comment_other_en.as_deref(), Some("After Ba6, White's bishop on a6 is undefended – Nxa6 simply takes it."));
+        assert_third_person(&r);
         assert_eq!(ba6.theme, Some(coach::Theme::HangingPiece));
     }
 

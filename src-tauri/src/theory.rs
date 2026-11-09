@@ -263,6 +263,8 @@ mod tests {
             best_line: None,
             comment: String::new(),
             comment_en: None,
+            comment_other: None,
+            comment_other_en: None,
             theme: None,
         };
         let mut moves: Vec<MoveReview> = (1..=4).map(|p| mv(p, "x", "x", Class::Book, 50.0, 50.0)).collect();
