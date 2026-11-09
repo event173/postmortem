@@ -257,6 +257,12 @@ export interface WeaknessStats {
   /** Errors by remaining clock before the move (games with clock data only). */
   clock: Partial<Record<ClockBucket, PhaseStat>>;
   trend: TrendPoint[];
+  /** Errors per game in consecutive blocks of all analysed games, oldest first. */
+  history: {
+    blocks: { from: number; to: number; games: number }[];
+    errors: number[];
+    themes: { theme: Theme; rates: number[] }[];
+  };
 }
 
 export interface BatchProgress {

@@ -455,6 +455,7 @@ mod tests {
             phases: HashMap::new(),
             clock: HashMap::new(),
             trend: vec![],
+            history: Default::default(),
         };
         let mut mastery = HashMap::new();
         mastery.insert("allowedFork".to_string(), (10, 10)); // always solved

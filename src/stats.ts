@@ -232,10 +232,13 @@ function render() {
       ${tiles.map((x) => `<div class="tile"><div class="tile-value">${x.value}</div><div class="tile-label">${x.label}</div></div>`).join("")}
     </div>
     <div class="stats-grid">
-      <div class="panel themes-panel">
-        <h3>${t("Woran es hapert")}</h3>
-        <p class="panel-sub">${t("Deine Fehler, Patzer und verpassten Chancen nach Ursache")}</p>
-        <div id="theme-rows">${renderThemes(s.themes, games)}</div>
+      <div class="stats-side">
+        <div class="panel themes-panel">
+          <h3>${t("Woran es hapert")}</h3>
+          <p class="panel-sub">${t("Deine Fehler, Patzer und verpassten Chancen nach Ursache")}</p>
+          <div id="theme-rows">${renderThemes(s.themes, games)}</div>
+        </div>
+        ${renderHistory(s)}
       </div>
       <div class="stats-side">
         <div class="panel">
@@ -293,6 +296,56 @@ function renderThemes(themes: ThemeStat[], games: number): string {
       </div>`;
     })
     .join("");
+}
+
+/** "Werden deine Fehler weniger?": errors per game over time, as sparklines. */
+function renderHistory(s: WeaknessStats): string {
+  const h = s.history;
+  const head = `<h3>${t("Werden deine Fehler weniger?")}</h3>`;
+  if (!h || h.blocks.length < 2) {
+    return `<div class="panel">${head}<p class="muted">${t("Ab 10 analysierten Partien siehst du hier, wie sich deine Fehler über die Zeit entwickeln.")}</p></div>`;
+  }
+  const size = h.blocks[0].games;
+  const from = date(h.blocks[0].from);
+  const to = date(h.blocks[h.blocks.length - 1].to);
+  const rows = [{ label: t("Alle Fehler und Patzer"), rates: h.errors, all: true }, ...h.themes.map((x) => ({ label: THEMES[x.theme].label, rates: x.rates, all: false }))];
+  const max = Math.max(0.1, ...rows.flatMap((r) => r.rates));
+  return `<div class="panel history-panel">
+    ${head}
+    <p class="panel-sub">${t("Pro Partie, in Blöcken zu je {n} analysierten Partien ({from} – {to}), links die ältesten. Unabhängig von der Auswahl oben.", { n: size, from, to })}</p>
+    ${rows
+      .map((r) => {
+        const first = r.rates[0];
+        const last = r.rates[r.rates.length - 1];
+        // Lower is better; ignore tiny changes.
+        const cls = last < first * 0.8 ? "better" : last > first * 1.25 && last - first >= 0.1 ? "worse" : "same";
+        return `<div class="history-row${r.all ? " all" : ""}">
+          <span class="theme-label">${esc(r.label)}</span>
+          ${sparkline(r.rates, max, h.blocks)}
+          <span class="theme-count"><span class="muted">${fmt(first)} →</span> <b class="trend-arrow-text ${cls}">${fmt(last)}</b></span>
+        </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function sparkline(rates: number[], max: number, blocks: WeaknessStats["history"]["blocks"]): string {
+  const w = 160;
+  const h = 28;
+  const x = (i: number) => 3 + (i / (rates.length - 1)) * (w - 6);
+  const y = (v: number) => 3 + (1 - v / max) * (h - 6);
+  const pts = rates.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const dots = rates
+    .map(
+      (v, i) =>
+        `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.5"><title>${t("{rate} pro Partie · {from} – {to}", {
+          rate: fmt(v),
+          from: date(blocks[i].from),
+          to: date(blocks[i].to),
+        })}</title></circle>`,
+    )
+    .join("");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}"/>${dots}</svg>`;
 }
 
 function renderOpenings(list: OpeningStat[]) {
@@ -855,17 +908,31 @@ function renderBatch() {
 }
 
 async function startBatch() {
+  if (!stats) return;
+  await runBatch(Math.min(stats.gamesTotal - stats.gamesAnalysed, BATCH_SIZE));
+}
+
+/** Analyse new games in the background after a sync (unless a batch is running). */
+export function autoAnalyse(count: number) {
+  if (batch || count <= 0) return;
+  runBatch(Math.min(count, AUTO_LIMIT));
+}
+
+/** At most this many games are analysed automatically after one sync. */
+const AUTO_LIMIT = 20;
+
+async function runBatch(limit: number) {
   const accounts = deps.accounts();
-  if (!accounts.length || !stats) return;
-  const missing = stats.gamesTotal - stats.gamesAnalysed;
-  batch = { done: 0, total: Math.min(missing, BATCH_SIZE), current: null, finished: false };
+  if (!accounts.length || limit <= 0) return;
+  batch = { done: 0, total: limit, current: null, finished: false };
   renderBatch();
   try {
-    await invoke<number>("analyse_all", { accounts, depth: deps.depth(), limit: BATCH_SIZE });
+    await invoke<number>("analyse_all", { accounts, depth: deps.depth(), limit });
   } catch (e) {
     $("batch").innerHTML = `<span class="error">${esc(String(e))}</span>`;
   } finally {
     batch = null;
-    loadStats();
+    if (!$("stats").hidden) loadStats();
+    else renderBatch();
   }
 }

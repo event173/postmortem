@@ -79,6 +79,11 @@ export function displayPrefs(): DisplayPrefs {
 /** What happens after the quick preview analysis. */
 export type RefinePref = "ask" | "always" | "never";
 
+/** Analyse new games in the background after a sync (default on). */
+export function autoAnalysePref(): boolean {
+  return store.get("auto-analyse") !== "0";
+}
+
 export function refinePref(): RefinePref {
   const v = store.get("refine");
   return v === "always" || v === "never" ? v : "ask";
@@ -107,6 +112,10 @@ export function initSettings(d: SettingsDeps) {
   const refine = $("pref-refine") as HTMLSelectElement;
   refine.value = refinePref();
   refine.addEventListener("change", () => store.set("refine", refine.value));
+
+  const auto = $("pref-auto") as HTMLInputElement;
+  auto.checked = autoAnalysePref();
+  auto.addEventListener("change", () => store.set("auto-analyse", auto.checked ? "1" : "0"));
 
   const live = $("pref-live") as HTMLInputElement;
   live.checked = store.get("live") !== "0";

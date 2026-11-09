@@ -120,6 +120,98 @@ pub struct WeaknessStats {
     pub clock: HashMap<ClockBucket, PhaseStat>,
     /// Accuracy per game, oldest first.
     pub trend: Vec<TrendPoint>,
+    /// How your errors developed over *all* analysed games (ignores the window).
+    pub history: History,
+}
+
+/// Consecutive blocks of analysed games, oldest first.
+#[derive(Serialize, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct History {
+    pub blocks: Vec<Block>,
+    /// Your mistakes, misses and blunders per game, per block.
+    pub errors: Vec<f64>,
+    /// Your most frequent themes, occurrences per game, per block.
+    pub themes: Vec<ThemeHistory>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Block {
+    /// Dates of the first and last game in the block.
+    pub from: i64,
+    pub to: i64,
+    pub games: usize,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeHistory {
+    pub theme: Theme,
+    pub rates: Vec<f64>,
+}
+
+/// History needs at least two blocks of this many games.
+const MIN_BLOCK: usize = 5;
+const MAX_BLOCKS: usize = 8;
+const HISTORY_THEMES: usize = 6;
+
+/// Your serious errors (and their themes) per game in consecutive blocks of
+/// games, oldest first. `games` newest first, as returned by the database.
+pub fn history(accounts: &[Account], games: &[(GameInfo, GameReview)]) -> History {
+    // (date, serious errors, themes of those errors), oldest first
+    let mut per_game: Vec<(i64, usize, Vec<Theme>)> = games
+        .iter()
+        .rev()
+        .filter_map(|(game, review)| {
+            let color = crate::repertoire::my_color(game, accounts)?;
+            let serious: Vec<_> = review
+                .moves
+                .iter()
+                .filter(|m| m.color == color && matches!(m.classification, Class::Mistake | Class::Miss | Class::Blunder))
+                .collect();
+            Some((game.created_at, serious.len(), serious.iter().filter_map(|m| m.theme).collect()))
+        })
+        .collect();
+    let n = per_game.len();
+    let size = MIN_BLOCK.max(n.div_ceil(MAX_BLOCKS));
+    let count = n / size;
+    if count < 2 {
+        return History::default();
+    }
+    // The oldest games that don't fill a block are left out, so every block
+    // (in particular the latest) has the same size.
+    per_game.drain(..n - count * size);
+
+    let mut totals: HashMap<Theme, usize> = HashMap::new();
+    for (_, _, themes) in &per_game {
+        for t in themes {
+            *totals.entry(*t).or_default() += 1;
+        }
+    }
+    let mut top: Vec<(Theme, usize)> = totals.into_iter().filter(|&(_, c)| c >= 2).collect();
+    top.sort_by_key(|&(t, c)| (std::cmp::Reverse(c), t as u8));
+    top.truncate(HISTORY_THEMES);
+
+    let chunks: Vec<_> = per_game.chunks(size).collect();
+    let rate = |c: usize| (c as f64 / size as f64 * 100.0).round() / 100.0;
+    History {
+        blocks: chunks
+            .iter()
+            .map(|c| Block { from: c[0].0, to: c[c.len() - 1].0, games: c.len() })
+            .collect(),
+        errors: chunks.iter().map(|c| rate(c.iter().map(|g| g.1).sum())).collect(),
+        themes: top
+            .into_iter()
+            .map(|(theme, _)| ThemeHistory {
+                theme,
+                rates: chunks
+                    .iter()
+                    .map(|c| rate(c.iter().map(|g| g.2.iter().filter(|&&t| t == theme).count()).sum()))
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 fn phase_of(review: &GameReview, ply: usize) -> Phase {
@@ -222,6 +314,7 @@ pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, Gam
         phases,
         clock,
         trend,
+        history: History::default(),
     }
 }
 
@@ -302,6 +395,7 @@ pub fn compute_window(
             t.baseline_per_game = (all.games_analysed > 0).then(|| base as f64 / all.games_analysed as f64);
         }
     }
+    stats.history = history(accounts, games);
     stats
 }
 
@@ -410,6 +504,38 @@ mod tests {
         assert_eq!(w.themes[0].count, 1);
         assert_eq!(w.themes[0].baseline_per_game, Some(1.0)); // 2 forks in 2 games
         assert_eq!(compute_window(&me, 5, &games, None).themes[0].baseline_per_game, None);
+    }
+
+    #[test]
+    fn history_in_equal_blocks_oldest_first() {
+        // 23 games, newest first: the 12 older ones have 2 forks each, the 11 newer none.
+        // Blocks of 5 (the 3 oldest are left out): 5 / 4 / 0 / 0 games with forks.
+        let games: Vec<_> = (0..23)
+            .map(|i| {
+                let id = format!("g{i}");
+                let at = 1000 - i as i64;
+                let moves = if i >= 11 {
+                    vec![mv(1, Class::Mistake, Some(Theme::AllowedFork)), mv(3, Class::Blunder, Some(Theme::AllowedFork))]
+                } else {
+                    vec![mv(1, Class::Best, None)]
+                };
+                (game(&id, "me", "x", None, at), review(&id, 80.0, 80.0, moves))
+            })
+            .collect();
+        let me = [Account::new(crate::lichess::Source::Lichess, "me")];
+        let h = history(&me, &games);
+        // 23 games -> blocks of 5, 4 blocks, the 3 oldest left out
+        assert_eq!(h.blocks.len(), 4);
+        assert!(h.blocks.iter().all(|b| b.games == 5));
+        assert_eq!(h.blocks[3].to, 1000, "the newest game is in the last block");
+        assert_eq!(h.errors, vec![2.0, 1.6, 0.0, 0.0]);
+        assert_eq!(h.themes.len(), 1);
+        assert_eq!(h.themes[0].theme, Theme::AllowedFork);
+        assert_eq!(h.themes[0].rates, vec![2.0, 1.6, 0.0, 0.0]);
+        // Too few games: no history.
+        assert!(history(&me, &games[..9]).blocks.is_empty());
+        // The window doesn't limit it.
+        assert_eq!(compute_window(&me, 23, &games, Some(10)).history.blocks.len(), 4);
     }
 
     #[test]

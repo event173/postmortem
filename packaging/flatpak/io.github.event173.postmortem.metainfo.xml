@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.2" date="2026-11-09">
+      <description>
+        <p>See whether your mistakes are getting fewer over time; new games are analysed automatically in the background after syncing.</p>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-11-09">
       <description>
         <p>The coach describes your opponent's moves from their side instead of addressing you, praises completed development and castling, and the move list scrolls on its own.</p>

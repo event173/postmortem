@@ -205,6 +205,11 @@ export const EN: Record<string, string> = {
   "Fragen": "Ask",
   "Immer": "Always",
   "Nie": "Never",
+  "Neue Partien automatisch analysieren": "Analyse new games automatically",
+  "Nach dem Synchronisieren im Hintergrund, höchstens 20 auf einmal – damit Statistik und Puzzles aktuell bleiben.":
+    "In the background after syncing, at most 20 at a time – so statistics and puzzles stay up to date.",
+  "Analysiert ✓": "Analysed ✓",
+  "Analysiere {done}/{total} …": "Analysing {done}/{total} …",
   "Live-Engine beim Start an": "Live engine on at start",
   "Zeigt die besten Varianten zur Stellung auf dem Brett.": "Shows the best lines for the position on the board.",
   "Eigener Pfad": "Custom path",
@@ -341,6 +346,14 @@ export const EN: Record<string, string> = {
   "Nach einem überraschenden Zug des Gegners: Was hat er gerade ungedeckt gelassen?": "After a surprising move by your opponent: what did they just leave undefended?",
   "Stellung verschlechtert": "Position got worse",
   "Keine direkte Taktik – oft passive Figuren, schwache Felder oder ein fehlender Plan.": "No direct tactic – often passive pieces, weak squares or a missing plan.",
+
+  // are your errors getting fewer?
+  "Werden deine Fehler weniger?": "Are your mistakes getting fewer?",
+  "Ab 10 analysierten Partien siehst du hier, wie sich deine Fehler über die Zeit entwickeln.": "From 10 analysed games on, you'll see here how your mistakes develop over time.",
+  "Alle Fehler und Patzer": "All mistakes and blunders",
+  "Pro Partie, in Blöcken zu je {n} analysierten Partien ({from} – {to}), links die ältesten. Unabhängig von der Auswahl oben.":
+    "Per game, in blocks of {n} analysed games ({from} – {to}), oldest on the left. Independent of the selection above.",
+  "{rate} pro Partie · {from} – {to}": "{rate} per game · {from} – {to}",
 
   // rating and activity
   "Wertung und Aktivität": "Rating and activity",

@@ -11,12 +11,12 @@ import "./styles.css";
 import "./pieces.css";
 import { lang, locale, playerName, t, tn } from "./i18n";
 import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedLabel, store } from "./util";
-import { initStats, loadStats } from "./stats";
+import { autoAnalyse, initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
 import { enterPlay, initPlay, isPlayMode, leavePlay, playMove } from "./play";
 import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, startFocus } from "./openings";
-import { displayPrefs, initSettings, refinePref } from "./settings";
+import { autoAnalysePref, displayPrefs, initSettings, refinePref } from "./settings";
 
 import {
   BAD,
@@ -275,6 +275,8 @@ async function syncGames(older = false) {
   } else {
     setSyncStatus("ok", added ? t("{n} neu", { n: added }) : older ? t("Keine älteren") : t("Aktuell"));
   }
+  // New games get analysed in the background, so statistics and puzzles keep up.
+  if (added && !older && autoAnalysePref()) autoAnalyse(added);
   if (!state.games.length) {
     $("games-list").innerHTML = errors.length
       ? `<p class="empty error">${esc(errors.join(" · "))}</p>`
@@ -287,6 +289,15 @@ async function syncGames(older = false) {
 }
 
 $("btn-sync").addEventListener("click", () => syncGames());
+
+// Background analysis (automatic after a sync, or started in the statistics):
+// show its progress next to the game list.
+listen<{ done: number; total: number; finished: boolean }>("batch-progress", (e) => {
+  if (syncing) return;
+  const p = e.payload;
+  if (p.finished) setSyncStatus("ok", t("Analysiert ✓"));
+  else setSyncStatus("busy", t("Analysiere {done}/{total} …", { done: p.done, total: p.total }));
+});
 
 // ---------------------------------------------------------------------------
 // tabs: Review | Statistik | Puzzles

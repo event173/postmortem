@@ -1228,6 +1228,49 @@ button.icon {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
+/* statistics: are your errors getting fewer? */
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px 96px;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 6px;
+}
+
+.history-row.all {
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+}
+
+.spark {
+  width: 160px;
+  height: 28px;
+  overflow: visible;
+}
+
+.spark polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.spark circle {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 1;
+}
+
+.trend-arrow-text.better {
+  color: var(--accent);
+}
+
+.trend-arrow-text.worse {
+  color: var(--danger);
+}
+
 /* statistics: rating history, activity, theory exits */
 .rating-panel,
 .theory-panel {

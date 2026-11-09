@@ -44,6 +44,9 @@ Die Oberfläche gibt es auf Deutsch und Englisch (Zahnrad → *Sprache · Langua
 - Deine Schwächen nach Ursache (Figur hängen lassen, Gabel zugelassen, Matt übersehen …)
   mit Beispielen und Trainingstipps, Fehler nach Spielphase und nach Bedenkzeit (Zeitnot),
   Genauigkeitsverlauf
+- **Werden deine Fehler weniger?** Fehler pro Partie und deine häufigsten Schwächen im Verlauf
+  (Blöcke zu je mindestens 5 analysierten Partien)
+- Neue Partien werden nach dem Synchronisieren automatisch im Hintergrund analysiert (abschaltbar)
 - Zeitraum wählbar (letzte 10 / 20 / 50 / alle Partien) mit Trend gegenüber deinem Schnitt
 - **Wertung und Aktivität:** deine Wertung nach jeder gewerteten Partie (pro Plattform und
   Bedenkzeit, 3 Monate / 1 Jahr / alles) und deine Partien pro Woche bzw. Monat mit S/R/N
