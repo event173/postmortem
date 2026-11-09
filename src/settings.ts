@@ -75,6 +75,14 @@ export function displayPrefs(): DisplayPrefs {
   return { animMs: Number.isFinite(anim) ? anim : 230, coordinates: store.get("coords") !== "0" };
 }
 
+/** What happens after the quick preview analysis. */
+export type RefinePref = "ask" | "always" | "never";
+
+export function refinePref(): RefinePref {
+  const v = store.get("refine");
+  return v === "always" || v === "never" ? v : "ask";
+}
+
 export function initSettings(d: SettingsDeps) {
   deps = d;
   const dialog = $("settings") as HTMLDialogElement;
@@ -90,6 +98,10 @@ export function initSettings(d: SettingsDeps) {
   const depth = $("depth") as HTMLSelectElement;
   depth.value = store.get("depth") ?? "16";
   depth.addEventListener("change", () => store.set("depth", depth.value));
+
+  const refine = $("pref-refine") as HTMLSelectElement;
+  refine.value = refinePref();
+  refine.addEventListener("change", () => store.set("refine", refine.value));
 
   const live = $("pref-live") as HTMLInputElement;
   live.checked = store.get("live") !== "0";

@@ -47,42 +47,6 @@ struct RawPlayer {
     result: String,
 }
 
-/// SAN moves from a PGN, ignoring headers, comments (`{[%clk …]}`),
-/// variations, move numbers, NAGs and the result.
-pub fn parse_pgn_moves(pgn: &str) -> Vec<String> {
-    let body: String = pgn
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('['))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut cleaned = String::with_capacity(body.len());
-    let (mut brace, mut paren) = (0u32, 0u32);
-    for c in body.chars() {
-        match c {
-            '{' => brace += 1,
-            '}' => brace = brace.saturating_sub(1),
-            '(' if brace == 0 => paren += 1,
-            ')' if brace == 0 => paren = paren.saturating_sub(1),
-            _ if brace == 0 && paren == 0 => cleaned.push(c),
-            _ => {}
-        }
-    }
-    cleaned
-        .split_whitespace()
-        .filter_map(|tok| {
-            // "12." / "12..." / "12.e4" -> strip the move number
-            let tok = tok.trim_start_matches(|c: char| c.is_ascii_digit());
-            let tok = tok.trim_start_matches('.');
-            let tok = tok.trim_end_matches(['!', '?']);
-            if tok.is_empty() || tok.starts_with('$') || matches!(tok, "1-0" | "0-1" | "1/2-1/2" | "*" | "-0" | "-1" | "/2-1/2") {
-                None
-            } else {
-                Some(tok.to_string())
-            }
-        })
-        .collect()
-}
-
 /// "180+2" -> "3+2", "600" -> "10+0"; daily games ("1/259200") -> None.
 fn time_control(tc: &str) -> Option<String> {
     if tc.contains('/') {
@@ -101,7 +65,9 @@ impl RawGame {
         if self.rules != "chess" || (!self.initial_setup.is_empty() && self.initial_setup != START_FEN) {
             return None;
         }
-        let moves = parse_pgn_moves(&self.pgn);
+        let parsed = crate::pgn::parse(&self.pgn);
+        let clocks = parsed.full_clocks();
+        let moves = parsed.moves;
         if moves.is_empty() {
             return None;
         }
@@ -132,6 +98,7 @@ impl RawGame {
             created_at: self.end_time * 1000,
             opening,
             moves,
+            clocks,
         })
     }
 }
@@ -230,7 +197,7 @@ mod tests {
 
     #[test]
     fn parses_pgn_moves() {
-        let moves = parse_pgn_moves(PGN);
+        let moves = crate::pgn::parse(PGN).moves;
         assert_eq!(
             moves,
             ["e4", "d5", "exd5", "Qxd5", "Nc3", "Qa5", "g3", "Nf6", "Bg2", "c6", "Nge2", "Bf5", "O-O", "e6", "d3", "Qxa2", "Rxa2"]

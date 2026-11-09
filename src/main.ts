@@ -15,7 +15,7 @@ import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
 import { enterPlay, initPlay, isPlayMode, leavePlay, playMove } from "./play";
 import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, startFocus } from "./openings";
-import { displayPrefs, initSettings } from "./settings";
+import { displayPrefs, initSettings, refinePref } from "./settings";
 
 import {
   BAD,
@@ -131,6 +131,7 @@ const SPEEDS: Record<string, string> = {
   rapid: "Schnellschach",
   classical: "Klassisch",
   correspondence: "Fernschach",
+  import: "Eingespielt",
 };
 
 // ---------------------------------------------------------------------------
@@ -157,7 +158,7 @@ async function checkEngine() {
 // ---------------------------------------------------------------------------
 // loading games
 
-const PLATFORM_LABEL: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com", local: "Bots" };
+const PLATFORM_LABEL: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com", local: "Eigene" };
 
 async function load(input: string) {
   input = input.trim();
@@ -192,7 +193,7 @@ function setView(view: Platform | "all") {
   if (view === "all" || view === "local") {
     input.value = "";
     input.disabled = submit.disabled = true;
-    input.placeholder = view === "local" ? "Deine Partien gegen den Computer" : "Namen unter „Lichess“ und „chess.com“ festlegen";
+    input.placeholder = view === "local" ? "Partien gegen den Computer und eingespielte" : "Namen unter „Lichess“ und „chess.com“ festlegen";
   } else {
     input.disabled = submit.disabled = false;
     input.value = state.names[view];
@@ -281,7 +282,7 @@ async function syncGames(older = false) {
       : offline
         ? `<p class="empty">Offline – und für diesen Namen sind noch keine Partien gespeichert.</p>`
         : state.view === "local"
-          ? `<p class="empty">Noch keine Partien gegen den Computer – starte eine im Reiter „Spielen“.</p>`
+          ? `<p class="empty">Noch keine eigenen Partien – spiele im Reiter „Spielen“ gegen den Computer oder spiel eine Partie mit <b>+</b> oben ein.</p>`
           : `<p class="empty">Keine Standard-Partien gefunden.</p>`;
   }
 }
@@ -387,7 +388,7 @@ function renderGames() {
     btn.dataset.id = g.id;
     btn.innerHTML = `
       <span class="result ${resultClass}">${result}</span>
-      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${PLATFORM_LABEL[g.source ?? "lichess"]}">${g.source === "chesscom" ? "C" : g.source === "local" ? "B" : "L"}</span>` : ""}
+      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${PLATFORM_LABEL[g.source ?? "lichess"]}">${g.source === "chesscom" ? "C" : g.source === "local" ? "E" : "L"}</span>` : ""}
       <span class="game-main">
         <span class="game-title">${title}</span>
         <span class="game-sub">${esc(g.opening?.name ?? "Unbekannte Eröffnung")}</span>
@@ -469,7 +470,11 @@ async function selectGame(game: GameInfo, startPly = 0) {
     goto(startPly);
     renderGraph();
     updateTrainButton();
-    if (first.depth < depth) askRefine(game, depth, token);
+    if (first.depth < depth) {
+      const pref = refinePref();
+      if (pref === "always") refine(game, depth, token);
+      else if (pref === "ask") askRefine(game, depth, token);
+    }
   } catch (e) {
     if (token !== analysisToken) return;
     $("review-progress").hidden = true;
@@ -779,6 +784,7 @@ function renderPosition() {
   });
 
   renderEvalBar();
+  renderPlayers();
   renderCoach();
   updateGraphCursor();
   renderMoveHighlight();
@@ -929,14 +935,58 @@ $("live-toggle").addEventListener("change", (e) => {
   }
 });
 
+// --- clock times (when the platform recorded them) ---------------------------
+
+/** "4:59", "1:02:03", or "9,5" under ten seconds – from centiseconds. */
+function fmtClock(cs: number): string {
+  if (cs < 1000) return (cs / 100).toFixed(1).replace(".", ",");
+  const s = Math.floor(cs / 100);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+/** Starting time and increment in centiseconds. */
+function clockSetup(g: GameInfo): { initial: number; inc: number } | null {
+  if (!g.clocks?.length) return null;
+  const [base, inc] = (g.timeControl ?? "").split("+").map(Number);
+  return {
+    initial: Number.isFinite(base) && base > 0 ? Math.round(base * 6000) : g.clocks[0],
+    inc: Number.isFinite(inc) ? inc * 100 : 0,
+  };
+}
+
+/** Clock of `color` after main-line ply `ply` (i.e. after its last move up to there). */
+function clockOf(g: GameInfo, color: Color, ply: number): number | null {
+  const setup = clockSetup(g);
+  if (!setup) return null;
+  // own plies: white 1, 3, 5 … / black 2, 4, 6 …
+  const last = color === "white" ? (ply % 2 === 1 ? ply : ply - 1) : ply % 2 === 0 ? ply : ply - 1;
+  return last >= 1 ? (g.clocks![last - 1] ?? null) : setup.initial;
+}
+
+/** Time spent on the move at `ply` (1-based), in centiseconds. */
+function thinkTime(g: GameInfo, ply: number): number | null {
+  const setup = clockSetup(g);
+  if (!setup || ply < 1 || ply > g.clocks!.length) return null;
+  const before = ply > 2 ? g.clocks![ply - 3] : setup.initial;
+  return Math.max(0, before - g.clocks![ply - 1] + (ply > 2 ? setup.inc : 0));
+}
+
 function renderPlayers() {
   const g = state.game;
   if (!g) return;
   const r = state.review;
+  const ply = mainPly();
+  const turn: Color = ply % 2 === 0 ? "white" : "black";
   const html = (c: Color) => {
     const p = g[c];
     const acc = r ? `<span class="acc">${r.accuracy[c].toFixed(1)}</span>` : "";
-    return `<span class="pdot ${c}"></span><span class="pname">${esc(p.name)}</span>${p.rating ? `<span class="muted">${p.rating}</span>` : ""}${acc}`;
+    const clock = r ? clockOf(g, c, ply) : null;
+    const clockHtml =
+      clock === null ? "" : `<span class="pclock${turn === c ? " running" : ""}" title="Restzeit">${fmtClock(clock)}</span>`;
+    return `<span class="pdot ${c}"></span><span class="pname">${esc(p.name)}</span>${p.rating ? `<span class="muted">${p.rating}</span>` : ""}${acc}${clockHtml}`;
   };
   const bottom = state.orientation;
   const top: Color = bottom === "white" ? "black" : "white";
@@ -1005,7 +1055,9 @@ function renderCoach() {
   }
   const info = CLASSES[move.classification];
   const num = Math.ceil(move.ply / 2) + (move.color === "white" ? "." : "...");
-  head.innerHTML = `${badgeHtml(move.classification)}<span class="coach-title"><b>${num} ${esc(fig(move.san))}</b> ist ${info.phrase}</span>${tag}`;
+  const think = node ? null : thinkTime(state.game!, move.ply);
+  const thinkHtml = think === null ? "" : `<span class="think" title="Bedenkzeit für diesen Zug">⏱ ${fmtClock(think)}</span>`;
+  head.innerHTML = `${badgeHtml(move.classification)}<span class="coach-title"><b>${num} ${esc(fig(move.san))}</b> ist ${info.phrase}</span>${tag}${thinkHtml}`;
   head.style.setProperty("--c", info.color);
   text.innerHTML = esc(fig(move.comment));
   const showBest = move.bestSan && move.bestUci !== move.uci && !NOT_BAD.includes(move.classification);
@@ -1706,3 +1758,137 @@ const savedView = store.get("view");
 setView(savedView === "chesscom" || savedView === "all" || savedView === "local" ? savedView : "lichess");
 checkEngine();
 preloadSounds();
+
+// A newer release on GitHub? Show a small pill in the top bar (once per start, silent when offline).
+invoke<{ current: string; latest: string | null; available: boolean }>("app_update")
+  .then((u) => {
+    if (!u.available || !u.latest) return;
+    const btn = $("app-update");
+    btn.textContent = `Update ${u.latest} verfügbar`;
+    btn.hidden = false;
+    btn.addEventListener("click", () => invoke("open_releases_page").catch((e) => alert(String(e))));
+  })
+  .catch(() => {});
+
+// Fold the game list away (more room for the board on small screens).
+function setGamesCollapsed(on: boolean) {
+  document.querySelector(".layout")!.classList.toggle("games-collapsed", on);
+  const btn = $("games-toggle");
+  btn.textContent = on ? "›" : "‹";
+  btn.title = on ? "Partieliste ausklappen" : "Partieliste einklappen";
+  store.set("games-collapsed", on ? "1" : "0");
+  // the board changed size
+  requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+}
+$("games-toggle").addEventListener("click", () =>
+  setGamesCollapsed(!document.querySelector(".layout")!.classList.contains("games-collapsed")),
+);
+setGamesCollapsed(store.get("games-collapsed") === "1");
+
+// ---------------------------------------------------------------------------
+// PGN import / export
+
+interface ImportResult {
+  games: GameInfo[];
+  known: number;
+  errors: string[];
+}
+
+const importDialog = $("import") as HTMLDialogElement;
+$("btn-import").addEventListener("click", () => {
+  $("import-msg").textContent = "";
+  $("import-msg").className = "msg";
+  const side = store.get("import-side");
+  ($("import-side") as HTMLSelectElement).value = side === null ? "white" : side;
+  importDialog.showModal();
+  ($("import-text") as HTMLTextAreaElement).focus();
+});
+importDialog.addEventListener("click", (e) => {
+  if (e.target === importDialog) importDialog.close();
+});
+
+$("import-file").addEventListener("change", async () => {
+  const file = ($("import-file") as HTMLInputElement).files?.[0];
+  if (!file) return;
+  ($("import-text") as HTMLTextAreaElement).value = await file.text();
+  ($("import-file") as HTMLInputElement).value = "";
+});
+
+$("import-go").addEventListener("click", async () => {
+  const text = ($("import-text") as HTMLTextAreaElement).value;
+  const you = ($("import-side") as HTMLSelectElement).value || null;
+  store.set("import-side", you ?? "");
+  const msg = $("import-msg");
+  msg.className = "msg";
+  msg.textContent = "Lese Partien …";
+  let r: ImportResult;
+  try {
+    r = await invoke<ImportResult>("import_pgn", { pgn: text, you });
+  } catch (e) {
+    msg.className = "msg error";
+    msg.textContent = String(e);
+    return;
+  }
+  if (!r.games.length) {
+    msg.className = "msg error";
+    msg.textContent = r.errors.join("\n");
+    return;
+  }
+  const parts = [`${r.games.length === 1 ? "1 Partie" : `${r.games.length} Partien`} eingespielt`];
+  if (r.known) parts.push(`davon ${r.known} schon vorhanden`);
+  if (r.errors.length) {
+    // keep the dialog open so the problems can be read
+    msg.className = "msg error";
+    msg.textContent = `${parts.join(", ")}.\nNicht lesbar:\n${r.errors.join("\n")}`;
+  } else {
+    importDialog.close();
+    ($("import-text") as HTMLTextAreaElement).value = "";
+  }
+  const first = r.games[0];
+  showTab("review");
+  if (you) {
+    if (state.view !== "local" && state.view !== "all") setView("local");
+    else await showStoredGames();
+  } else {
+    // not "yours": not in any list, just open it
+    state.games = [first, ...state.games.filter((g) => g.id !== first.id)];
+    renderGames();
+  }
+  selectGame(first);
+});
+
+/** Clipboard with a fallback for webviews that refuse navigator.clipboard. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }
+}
+
+let copyTimer = 0;
+function copied(ok: boolean, what: string) {
+  const el = $("copy-msg");
+  el.textContent = ok ? `${what} kopiert ✓` : "Kopieren nicht möglich";
+  clearTimeout(copyTimer);
+  copyTimer = window.setTimeout(() => (el.textContent = ""), 2000);
+}
+
+$("copy-pgn").addEventListener("click", async () => {
+  if (!state.game) return;
+  const pgn = await invoke<string>("export_pgn", { game: state.game });
+  copied(await copyText(pgn), "PGN");
+});
+$("copy-fen").addEventListener("click", async () => {
+  if (!state.review) return;
+  copied(await copyText(currentFen()), "FEN");
+});

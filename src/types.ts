@@ -32,6 +32,8 @@ export interface GameInfo {
   createdAt: number;
   opening: Opening | null;
   moves: string[];
+  /** Remaining clock after each ply in centiseconds, if known. */
+  clocks?: number[] | null;
 }
 
 export type Score =
@@ -219,6 +221,8 @@ export interface ThemeStat {
   examples: ThemeExample[];
 }
 
+export type ClockBucket = "plenty" | "low" | "scramble";
+
 export interface PhaseStat {
   moves: number;
   inaccuracies: number;
@@ -241,6 +245,8 @@ export interface WeaknessStats {
   classes: Partial<Record<Class, number>>;
   themes: ThemeStat[];
   phases: Partial<Record<Phase, PhaseStat>>;
+  /** Errors by remaining clock before the move (games with clock data only). */
+  clock: Partial<Record<ClockBucket, PhaseStat>>;
   trend: TrendPoint[];
 }
 

@@ -26,6 +26,41 @@ pub enum Phase {
     Endgame,
 }
 
+/// How much time was left on the player's clock before a move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ClockBucket {
+    /// More than half of the starting time.
+    Plenty,
+    /// 10–50 % of the starting time.
+    Low,
+    /// Under 10 % of the starting time or under 30 seconds.
+    Scramble,
+}
+
+/// Starting time in centiseconds: from the time control ("5+3"), else the first clock.
+fn initial_clock(game: &GameInfo, clocks: &[u32]) -> Option<u32> {
+    let from_tc = game.time_control.as_deref().and_then(|tc| {
+        let minutes: f64 = tc.split('+').next()?.parse().ok()?;
+        Some((minutes * 6000.0).round() as u32)
+    });
+    from_tc.filter(|&t| t > 0).or_else(|| clocks.first().copied())
+}
+
+/// Bucket of the clock *before* the move at `ply` (1-based), if clocks are known.
+pub fn clock_bucket(game: &GameInfo, ply: usize) -> Option<ClockBucket> {
+    let clocks = game.clocks.as_deref()?;
+    let initial = initial_clock(game, clocks)?;
+    let before = if ply > 2 { *clocks.get(ply - 3)? } else { initial };
+    Some(if before < 3000 || before * 10 < initial {
+        ClockBucket::Scramble
+    } else if before * 2 < initial {
+        ClockBucket::Low
+    } else {
+        ClockBucket::Plenty
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Example {
@@ -81,6 +116,8 @@ pub struct WeaknessStats {
     /// Sorted by count, most frequent first.
     pub themes: Vec<ThemeStat>,
     pub phases: HashMap<Phase, PhaseStat>,
+    /// Errors by remaining clock time (games with clock data only).
+    pub clock: HashMap<ClockBucket, PhaseStat>,
     /// Accuracy per game, oldest first.
     pub trend: Vec<TrendPoint>,
 }
@@ -109,6 +146,7 @@ pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, Gam
     let mut classes: HashMap<Class, usize> = HashMap::new();
     let mut themes: HashMap<Theme, ThemeStat> = HashMap::new();
     let mut phases: HashMap<Phase, PhaseStat> = HashMap::new();
+    let mut clock: HashMap<ClockBucket, PhaseStat> = HashMap::new();
     let mut trend = Vec::new();
     let mut moves = 0;
     let mut accuracy_sum = 0.0;
@@ -146,16 +184,9 @@ pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, Gam
         for m in review.moves.iter().filter(|m| m.color == color) {
             moves += 1;
             *classes.entry(m.classification).or_default() += 1;
-            let phase = phases.entry(phase_of(review, m.ply)).or_default();
-            phase.moves += 1;
-            match m.classification {
-                Class::Inaccuracy => phase.inaccuracies += 1,
-                Class::Mistake | Class::Miss => phase.mistakes += 1,
-                Class::Blunder => {
-                    phase.mistakes += 1;
-                    phase.blunders += 1;
-                }
-                _ => {}
+            phases.entry(phase_of(review, m.ply)).or_default().count(m.classification);
+            if let Some(bucket) = clock_bucket(game, m.ply) {
+                clock.entry(bucket).or_default().count(m.classification);
             }
             // Themes only for real errors; inaccuracies are mostly noise.
             let serious = matches!(m.classification, Class::Mistake | Class::Miss | Class::Blunder);
@@ -189,7 +220,23 @@ pub fn compute(accounts: &[Account], games_total: usize, games: &[(GameInfo, Gam
         classes,
         themes,
         phases,
+        clock,
         trend,
+    }
+}
+
+impl PhaseStat {
+    fn count(&mut self, class: Class) {
+        self.moves += 1;
+        match class {
+            Class::Inaccuracy => self.inaccuracies += 1,
+            Class::Mistake | Class::Miss => self.mistakes += 1,
+            Class::Blunder => {
+                self.mistakes += 1;
+                self.blunders += 1;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -251,6 +298,7 @@ mod tests {
             created_at: at,
             opening: None,
             moves: vec![],
+            clocks: None,
         }
     }
 
@@ -314,5 +362,19 @@ mod tests {
         assert_eq!(w.themes[0].count, 1);
         assert_eq!(w.themes[0].baseline_per_game, Some(1.0)); // 2 forks in 2 games
         assert_eq!(compute_window(&me, 5, &games, None).themes[0].baseline_per_game, None);
+    }
+
+    #[test]
+    fn clock_buckets_use_the_clock_before_the_move() {
+        let mut g = game("c", "me", "you", None, 0);
+        g.time_control = Some("5+0".into()); // 30000 cs
+        // after ply: 1      2      3      4     5     6
+        g.clocks = Some(vec![29_000, 29_500, 14_000, 20_000, 2_500, 19_000]);
+        assert_eq!(clock_bucket(&g, 1), Some(ClockBucket::Plenty)); // initial
+        assert_eq!(clock_bucket(&g, 3), Some(ClockBucket::Plenty)); // 29000 before
+        assert_eq!(clock_bucket(&g, 5), Some(ClockBucket::Low)); // 14000 before
+        assert_eq!(clock_bucket(&g, 7), Some(ClockBucket::Scramble)); // 2500 (< 30 s)
+        g.clocks = None;
+        assert_eq!(clock_bucket(&g, 3), None);
     }
 }

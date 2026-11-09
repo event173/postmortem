@@ -63,6 +63,9 @@ pub struct GameInfo {
     pub opening: Option<Opening>,
     /// Moves in SAN.
     pub moves: Vec<String>,
+    /// Remaining clock after each ply in centiseconds (when the platform provides it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clocks: Option<Vec<u32>>,
 }
 
 #[derive(Deserialize)]
@@ -82,6 +85,9 @@ struct RawGame {
     moves: String,
     initial_fen: Option<String>,
     clock: Option<RawClock>,
+    /// Clock after each ply, centiseconds (with `clocks=true`).
+    #[serde(default)]
+    clocks: Option<Vec<u32>>,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +132,8 @@ impl RawGame {
         if self.variant != "standard" || self.initial_fen.is_some() || self.moves.trim().is_empty() {
             return None;
         }
+        let moves: Vec<String> = self.moves.split_whitespace().map(str::to_string).collect();
+        let plies = moves.len();
         Some(GameInfo {
             url: Some(format!("{API}/{}", self.id)),
             id: self.id,
@@ -139,7 +147,11 @@ impl RawGame {
             time_control: self.clock.map(|c| format!("{}+{}", c.initial / 60, c.increment)),
             created_at: self.created_at,
             opening: self.opening,
-            moves: self.moves.split_whitespace().map(str::to_string).collect(),
+            clocks: self.clocks.filter(|c| c.len() >= plies).map(|mut c| {
+                c.truncate(plies);
+                c
+            }),
+            moves,
         })
     }
 }
@@ -219,7 +231,7 @@ pub async fn fetch_user_games(username: &str, q: GameQuery) -> Result<Vec<GameIn
     if !valid_username(username) {
         return Err("Ungültiger Benutzername.".into());
     }
-    let mut params: Vec<(&str, String)> = vec![("opening", "true".into()), ("moves", "true".into())];
+    let mut params: Vec<(&str, String)> = vec![("opening", "true".into()), ("moves", "true".into()), ("clocks", "true".into())];
     if let Some(max) = q.max {
         params.push(("max", max.to_string()));
     }
@@ -264,7 +276,7 @@ pub async fn fetch_game(input: &str) -> Result<GameInfo, FetchError> {
     let id = parse_game_id(input).ok_or("Das sieht nicht nach einem Lichess-Partielink aus.")?;
     let resp = client()?
         .get(format!("{API}/game/export/{id}"))
-        .query(&[("opening", "true"), ("moves", "true")])
+        .query(&[("opening", "true"), ("moves", "true"), ("clocks", "true")])
         .header("Accept", "application/json")
         .send()
         .await

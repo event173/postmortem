@@ -155,7 +155,7 @@ button.accent:hover {
 .layout {
   height: calc(100% - 56px);
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr) 380px;
+  grid-template-columns: var(--games-w, 290px) minmax(0, 1fr) var(--side-w, 380px);
   /* One row that never grows past the window: columns scroll inside instead of
      overflowing the page (which then got scrolled by the browser and moved the board). */
   grid-template-rows: minmax(0, 1fr);
@@ -2663,4 +2663,132 @@ body[data-board] cg-board {
 .refine-ask button.primary {
   padding: 3px 10px;
   font-size: 12px;
+}
+
+/* "new version available" pill in the top bar */
+.app-update {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: none;
+  white-space: nowrap;
+}
+
+/* --- smaller windows (laptops) ---------------------------------------------- */
+
+@media (max-width: 1440px) {
+  .layout {
+    --games-w: 240px;
+    --side-w: 340px;
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .layout {
+    --games-w: 200px;
+    --side-w: 300px;
+  }
+  .topbar {
+    gap: 10px;
+  }
+}
+
+/* game list folded to a thin strip (button in its header) */
+.games-toggle {
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.layout.games-collapsed {
+  --games-w: 40px;
+}
+
+.layout.games-collapsed .games > :not(.games-head),
+.layout.games-collapsed .games-head > :not(.games-toggle) {
+  display: none;
+}
+
+.layout.games-collapsed .games-head {
+  justify-content: center;
+  padding: 10px 0;
+  border-bottom: none;
+}
+
+.games-head {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.games-head .sync-box {
+  margin-left: auto;
+}
+
+/* --- import dialog / copy buttons ------------------------------------------- */
+
+.import-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: 12px/1.45 ui-monospace, "DejaVu Sans Mono", monospace;
+  margin: 8px 0 4px;
+}
+
+.import-file {
+  cursor: pointer;
+}
+
+.import-file .link {
+  color: #8fb4e8;
+  font-size: 13px;
+}
+
+.import-file .link:hover {
+  text-decoration: underline;
+}
+
+.import-dialog .msg {
+  white-space: pre-line;
+  font-size: 12px;
+}
+
+.copy-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+/* clock times from the platform */
+.pclock {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.pclock.running {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.coach-head .think {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }

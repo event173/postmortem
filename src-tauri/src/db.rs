@@ -452,6 +452,7 @@ mod tests {
             created_at: at,
             opening: None,
             moves: vec!["e4".into(), "e5".into()],
+            clocks: None,
         }
     }
 

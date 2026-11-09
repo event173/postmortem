@@ -28,6 +28,7 @@
         <button type="submit" class="primary">Laden</button>
       </form>
       <div id="engine-status" class="engine-status"></div>
+      <button id="app-update" class="app-update" hidden title="Release-Seite im Browser öffnen"></button>
       <button id="btn-settings" class="gear" title="Einstellungen">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.5 7.5 0 0 0 .05-.94 7.5 7.5 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.3 7.3 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.56-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.12.22.39.3.6.22l2.39-.96c.5.38 1.04.7 1.63.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.63-.94l2.39.96c.22.08.48 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>
         <span id="settings-dot" class="dot" hidden></span>
@@ -37,16 +38,18 @@
     <main class="layout">
       <aside class="games">
         <div class="games-head">
+          <button id="games-toggle" class="icon games-toggle" title="Partieliste einklappen">‹</button>
           <span>Partien <span id="games-count" class="muted"></span></span>
           <span class="sync-box">
             <span id="sync-status" class="sync"></span>
+            <button id="btn-import" class="icon" title="Partie einspielen (PGN)">+</button>
             <button id="btn-sync" class="icon" title="Neue Partien von Lichess holen">↻</button>
           </span>
         </div>
         <div class="source-switch">
           <button data-src="lichess" class="active">Lichess</button>
           <button data-src="chesscom">chess.com</button>
-          <button data-src="local" title="Deine Partien gegen den Computer">Bots</button>
+          <button data-src="local" title="Deine Partien gegen den Computer und eingespielte Partien">Eigene</button>
           <button data-src="all">Alle</button>
         </div>
         <div id="games-list" class="games-list">
@@ -208,6 +211,11 @@
 
           <div class="panel summary">
             <table id="summary-table"></table>
+            <div class="copy-row">
+              <button id="copy-pgn" class="link" title="Partie als PGN in die Zwischenablage">PGN kopieren</button>
+              <button id="copy-fen" class="link" title="Stellung auf dem Brett als FEN in die Zwischenablage">FEN kopieren</button>
+              <span id="copy-msg" class="muted"></span>
+            </div>
           </div>
 
           <div class="panel moves-panel">
@@ -216,6 +224,31 @@
         </div>
       </section>
     </main>
+    <dialog id="import" class="settings import-dialog">
+      <form method="dialog" class="settings-head">
+        <h2>Partie einspielen</h2>
+        <button class="icon" title="Schließen (Esc)">✕</button>
+      </form>
+      <section>
+        <p class="hint">PGN einfügen – z. B. eine Turnierpartie, eine Partie von einer anderen Seite oder ein ganzer Export mit vielen Partien.</p>
+        <textarea id="import-text" rows="10" spellcheck="false" placeholder='[White "…"]&#10;[Black "…"]&#10;&#10;1. e4 e5 2. Nf3 Nc6 …'></textarea>
+        <div class="row">
+          <label class="import-file"><input id="import-file" type="file" accept=".pgn,.txt,text/plain" hidden /><span class="link">… oder PGN-Datei öffnen</span></label>
+        </div>
+        <label class="row">
+          <span>Du hast gespielt<small>Damit die Partie in „Eigene“, deiner Statistik und deinen Puzzles zählt.</small></span>
+          <select id="import-side">
+            <option value="white">Weiß</option>
+            <option value="black">Schwarz</option>
+            <option value="">Keine Seite – nur anschauen</option>
+          </select>
+        </label>
+        <div class="row actions">
+          <span id="import-msg" class="msg"></span>
+          <button id="import-go" class="primary">Einspielen</button>
+        </div>
+      </section>
+    </dialog>
     <dialog id="settings" class="settings">
       <form method="dialog" class="settings-head">
         <h2>Einstellungen</h2>
@@ -231,6 +264,14 @@
             <option value="16" selected>16 · normal</option>
             <option value="20">20 · gründlich</option>
             <option value="24">24 · sehr gründlich</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Tiefe Analyse<small>Nach der Schnellanalyse (Tiefe 10) auf die gewählte Tiefe verfeinern.</small></span>
+          <select id="pref-refine">
+            <option value="ask">Fragen</option>
+            <option value="always">Immer</option>
+            <option value="never">Nie</option>
           </select>
         </label>
         <label class="row">

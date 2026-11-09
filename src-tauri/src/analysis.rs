@@ -387,6 +387,7 @@ mod tests {
             created_at: 0,
             opening: None,
             moves: moves.split_whitespace().map(String::from).collect(),
+            clocks: None,
         }
     }
 

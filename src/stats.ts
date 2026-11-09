@@ -4,7 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { Account, BatchProgress, Phase, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
+import type { Account, BatchProgress, ClockBucket, Phase, PhaseStat, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
 import { $, badgeHtml, esc, fig, store } from "./util";
 
 /** Shared with the puzzle trainer: how many recent games to base things on. */
@@ -187,6 +187,7 @@ function render() {
           <p class="panel-sub">Fehler und Patzer pro 100 eigene Züge</p>
           ${renderPhases(s)}
         </div>
+        ${renderClock(s)}
         <div class="panel">
           <h3>Genauigkeit</h3>
           <p class="panel-sub">Deine letzten ${s.trend.length} analysierten Partien</p>
@@ -293,15 +294,35 @@ function bindThemeRows() {
 }
 
 function renderPhases(s: WeaknessStats): string {
-  const rows = PHASES.map(({ key, label }) => {
-    const p = s.phases[key];
+  return errorRateRows(PHASES.map(({ key, label }) => ({ label, p: s.phases[key] })));
+}
+
+const CLOCK_BUCKETS: { key: ClockBucket; label: string; hint: string }[] = [
+  { key: "plenty", label: "Viel Zeit", hint: "mehr als die Hälfte der Bedenkzeit übrig" },
+  { key: "low", label: "Wenig Zeit", hint: "10–50 % der Bedenkzeit übrig" },
+  { key: "scramble", label: "Zeitnot", hint: "unter 10 % der Bedenkzeit oder unter 30 Sekunden" },
+];
+
+/** Errors by time left on the clock – only when some games carry clock times. */
+function renderClock(s: WeaknessStats): string {
+  const total = CLOCK_BUCKETS.reduce((n, b) => n + (s.clock?.[b.key]?.moves ?? 0), 0);
+  if (!total) return "";
+  return `<div class="panel">
+    <h3>Fehler nach Bedenkzeit</h3>
+    <p class="panel-sub">Fehler und Patzer pro 100 eigene Züge, nach Restzeit auf deiner Uhr vor dem Zug</p>
+    ${errorRateRows(CLOCK_BUCKETS.map((b) => ({ label: b.label, p: s.clock[b.key], hint: b.hint })))}
+  </div>`;
+}
+
+function errorRateRows(items: { label: string; p?: PhaseStat; hint?: string }[]): string {
+  const rows = items.map(({ label, p, hint }) => {
     const rate = p && p.moves ? (p.mistakes / p.moves) * 100 : 0;
-    return { label, rate, p };
+    return { label, rate, p, hint };
   });
   const max = Math.max(1, ...rows.map((r) => r.rate));
   return rows
     .map(
-      ({ label, rate, p }) => `<div class="phase-row" title="${p ? `${p.mistakes} Fehler (davon ${p.blunders} Patzer) in ${p.moves} Zügen` : "Keine Züge"}">
+      ({ label, rate, p, hint }) => `<div class="phase-row" title="${hint ? `${hint}: ` : ""}${p ? `${p.mistakes} Fehler (davon ${p.blunders} Patzer) in ${p.moves} Zügen` : "Keine Züge"}">
         <span class="theme-label">${label}</span>
         <span class="bar-track"><span class="bar" style="width:${(rate / max) * 100}%"></span></span>
         <span class="theme-count"><b>${p?.moves ? fmt(rate) : "–"}</b></span>

@@ -8,10 +8,12 @@ mod explore;
 mod lichess;
 mod live;
 mod openings;
+mod pgn;
 mod puzzles;
 mod repertoire;
 mod stats;
 mod trainer;
+mod update;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -359,6 +361,62 @@ fn puzzle_status(dir: State<DataDir>) -> puzzles::PuzzleStatus {
     puzzles::status(&dir.0)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportResult {
+    games: Vec<GameInfo>,
+    /// Games that were already stored.
+    known: usize,
+    /// One line per game that could not be read.
+    errors: Vec<String>,
+}
+
+/// Store games from pasted PGN (one or many). `you` = "white" / "black" / None.
+#[tauri::command]
+fn import_pgn(db: State<DbState>, pgn: String, you: Option<String>) -> Result<ImportResult, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let mut games = Vec::new();
+    let mut errors = Vec::new();
+    for (i, text) in pgn::split_games(&pgn).iter().enumerate() {
+        let parsed = pgn::parse(text);
+        match pgn::to_game(&parsed, you.as_deref(), now) {
+            Ok(g) => games.push(g),
+            Err(e) => {
+                let who = match (parsed.header("White"), parsed.header("Black")) {
+                    (Some(w), Some(b)) => format!("{w} – {b}"),
+                    _ => format!("Partie {}", i + 1),
+                };
+                errors.push(format!("{who}: {e}"));
+            }
+        }
+    }
+    if games.is_empty() && errors.is_empty() {
+        return Err("Keine Partie gefunden. Bitte PGN einfügen (Züge wie „1. e4 e5 2. Nf3 …“).".into());
+    }
+    let added = db.0.lock().unwrap().save_games(&games)?;
+    Ok(ImportResult { known: games.len() - added, games, errors })
+}
+
+/// A game as PGN text.
+#[tauri::command]
+fn export_pgn(game: GameInfo) -> String {
+    pgn::export(&game)
+}
+
+/// Is a newer postmortem release published on GitHub?
+#[tauri::command]
+async fn app_update() -> update::AppUpdate {
+    update::check().await
+}
+
+#[tauri::command]
+fn open_releases_page() -> Result<(), String> {
+    update::open_releases_page()
+}
+
 #[tauri::command]
 async fn puzzle_check_update(dir: State<'_, DataDir>) -> Result<puzzles::UpdateCheck, String> {
     Ok(puzzles::check_update(&dir.0).await)
@@ -570,7 +628,7 @@ fn game_status(fens: Vec<String>) -> Result<explore::GameStatus, String> {
 }
 
 /// Name you appear under in games against the computer.
-const LOCAL_PLAYER: &str = "Du";
+use pgn::LOCAL_PLAYER;
 
 /// Store a finished game against the bot so it can be reviewed like any other.
 #[tauri::command]
@@ -604,6 +662,7 @@ fn save_bot_game(
         created_at: now,
         opening: openings::identify(&moves),
         moves,
+        clocks: None,
     };
     db.0.lock().unwrap().save_games(std::slice::from_ref(&game))?;
     Ok(game)
@@ -733,6 +792,7 @@ mod migration_tests {
             created_at: 1,
             opening: None,
             moves: vec!["e4".into()],
+            clocks: None,
         }
     }
 }
@@ -769,6 +829,10 @@ pub fn run() {
             fetch_game,
             cancel_analysis,
             stored_review,
+            app_update,
+            import_pgn,
+            export_pgn,
+            open_releases_page,
             analyse_game,
             position_info,
             play_move,

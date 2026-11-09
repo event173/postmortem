@@ -24,6 +24,10 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 
 **Partie-Review**
 - Partien per Lichess- oder chess.com-Name laden (oder einen Lichess-Partielink einfügen)
+- **Eigene Partien einspielen:** PGN einfügen oder als Datei öffnen (+ über der Partieliste) –
+  Turnierpartien, Partien von anderen Seiten oder ein ganzer Export; sie erscheinen unter „Eigene“
+- Partie als PGN und Stellung als FEN kopieren
+- Bedenkzeit: Restzeit an den Spielern und Zeit pro Zug (wenn Lichess / chess.com / die PGN sie enthält)
 - Bewertung jedes Zugs: Brillant, Stark, Bester Zug, Ausgezeichnet, Gut, Theorie,
   Ungenauigkeit, Fehler, Verpasste Chance, Patzer – plus Genauigkeit pro Spieler
 - Coach-Kommentare auf Deutsch, Bewertungsbalken, Bewertungsverlauf, bester Zug als Pfeil
@@ -35,7 +39,8 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 
 **Statistik**
 - Deine Schwächen nach Ursache (Figur hängen lassen, Gabel zugelassen, Matt übersehen …)
-  mit Beispielen und Trainingstipps, Fehler nach Spielphase, Genauigkeitsverlauf
+  mit Beispielen und Trainingstipps, Fehler nach Spielphase und nach Bedenkzeit (Zeitnot),
+  Genauigkeitsverlauf
 - Zeitraum wählbar (letzte 10 / 20 / 50 / alle Partien) mit Trend gegenüber deinem Schnitt
 - Deine Eröffnungen: Ergebnis und wie oft du in der Eröffnung patzt
 - „Partien analysieren“ läuft im Hintergrund
@@ -51,7 +56,7 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 - Gegen Stockfish in 8 Stufen (~800 bis ~2800 Elo), mit oder ohne Bedenkzeit,
   Zug zurücknehmen, Aufgeben
 - Nach der Partie mit einem Klick in die Review; Bot-Partien erscheinen in der
-  Partieliste unter „Bots“ und zählen dort (und unter „Alle“) in der Statistik
+  Partieliste unter „Eigene“ und zählen dort (und unter „Alle“) in der Statistik
 
 **Eröffnungen**
 - Alle 149 Eröffnungen als Kacheln mit Brett-Vorschau; „Als Weiß / Schwarz lernen“
@@ -139,7 +144,8 @@ Findet er keine konkrete Taktik, sagt er „Stellung verschlechtert“.
 
 **Offline und Datenschutz.** Ins Internet geht die App nur, um deine Partien bei Lichess /
 chess.com abzurufen (öffentliche APIs, ohne Anmeldung) und um die Puzzle-Datenbank
-herunterzuladen bzw. auf Updates zu prüfen. Analyse, Statistik und Training passieren
+herunterzuladen bzw. auf Updates zu prüfen. Beim Start fragt sie außerdem GitHub, ob es eine
+neuere postmortem-Version gibt, und zeigt dann oben einen Hinweis. Analyse, Statistik und Training passieren
 lokal; es werden keine Daten an Dritte gesendet.
 
 **Rechenzeit.** Die Analyse nutzt alle CPU-Kerne bis auf einen, Hintergrund-Analysen die

@@ -453,6 +453,7 @@ mod tests {
                 stats::ThemeStat { theme: Theme::HangingPiece, count: pins, baseline_per_game: None, examples: vec![] },
             ],
             phases: HashMap::new(),
+            clock: HashMap::new(),
             trend: vec![],
         };
         let mut mastery = HashMap::new();
