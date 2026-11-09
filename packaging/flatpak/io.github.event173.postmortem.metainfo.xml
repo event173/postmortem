@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.5" date="2026-11-09">
+      <description>
+        <p>New start page for openings (learn, review, mistakes from your games), guided lessons that go through a line move by move with explanations, main lines before sidelines, and built-in sounds as loud as your recordings.</p>
+      </description>
+    </release>
     <release version="0.2.4" date="2026-11-09">
       <description>
         <p>Opening training: explanations for every move from the Wikibooks opening theory, progress shown like a flashcard box, a back button and "learn again with arrows". Move sounds now play reliably through the sound card, and the Flatpak can play sound at all.</p>

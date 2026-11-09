@@ -3121,3 +3121,123 @@ body[data-board] cg-board {
 .sound-diag .ok {
   color: var(--accent);
 }
+
+/* --- Openings: home (what do you want to do?) ------------------------------ */
+.op-home {
+  grid-column: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.op-home-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.op-home-head p {
+  margin: 4px 0 0;
+  font-size: 15px;
+}
+
+.op-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.op-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 150px;
+  padding: 18px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  line-height: 1.45;
+}
+
+.op-choice b {
+  font-size: 17px;
+}
+
+.op-choice > span:last-child {
+  color: var(--muted);
+}
+
+.op-choice-icon {
+  color: var(--accent);
+}
+
+.op-choice:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+
+.op-choice.hot {
+  border-color: rgba(124, 173, 63, 0.7);
+}
+
+.op-choice:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.op-choice:disabled .op-choice-icon {
+  color: var(--muted);
+}
+
+.op-home-mine h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.op-mine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.op-mine-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.op-mine-name {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* --- Openings: top of the board column ------------------------------------ */
+.op-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.op-top-title {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-theory-text details summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 6px;
+}

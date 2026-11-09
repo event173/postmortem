@@ -132,10 +132,12 @@
         <div id="play-body"></div>
       </section>
 
+      <section id="op-home" class="op-home" hidden></section>
+
       <section id="op-browse-view" class="op-browse-view" hidden>
         <div class="op-browse-head">
-          <button id="op-back">← Zum Training</button>
-          <h2>Eröffnung wählen</h2>
+          <button id="op-back">← Übersicht</button>
+          <h2>Neue Eröffnung lernen</h2>
           <input id="op-search" type="search" placeholder="Suchen, z. B. Sicilian, Caro, Gambit, B20 …" autocomplete="off" spellcheck="false" />
           <div id="op-sort" class="segmented">
             <button data-s="popular" class="active" title="Viel Theorie zuerst">Beliebt</button>
@@ -148,17 +150,8 @@
       </section>
 
       <section id="openings" class="openings" hidden>
-        <div id="op-view" class="segmented wide">
-          <button data-v="train" class="active">Trainieren</button>
-          <button data-v="browse">Eröffnungen wählen</button>
-        </div>
-
+        <div id="op-top" class="op-top"></div>
         <div id="op-focus" class="panel op-focus" hidden></div>
-        <div id="op-mode" class="segmented" title="Woraus geübt wird">
-          <button data-m="mixed" class="active">Alles</button>
-          <button data-m="repertoire">Nur Repertoire</button>
-          <button data-m="own">Nur aus meinen Partien</button>
-        </div>
         <div class="panel coach pz-card">
           <div id="op-head" class="pz-head"></div>
           <p id="op-text" class="coach-text"></p>
@@ -168,14 +161,6 @@
         <div id="op-theory" class="panel op-theory" hidden></div>
         <div id="op-variations" class="panel op-variations" hidden></div>
 
-        <div id="op-summary" class="panel op-summary">
-          <div class="op-summary-head">
-            <h3>Dein Repertoire</h3>
-            <button id="op-manage" class="link">Eröffnungen wählen →</button>
-          </div>
-          <div class="op-summary-body"></div>
-          <p class="panel-sub">„Alles“ mischt fällige Wiederholungen mit Stellungen, in denen du in deinen Partien in der Eröffnung gepatzt hast.</p>
-        </div>
       </section>
 
       <section class="review">

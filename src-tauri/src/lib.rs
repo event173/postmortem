@@ -563,6 +563,12 @@ async fn opening_next(
     with_db(app, move |db, _| repertoire::next(db, &accounts, &window(db, &accounts, last)?, mode, focus.as_ref())).await
 }
 
+/// Opening mistakes from your own games that are due for practice.
+#[tauri::command]
+async fn opening_own_count(app: AppHandle, accounts: Vec<Account>, last: Option<usize>) -> Result<usize, String> {
+    with_db(app, move |db, _| repertoire::own_due_count(db, &accounts, &window(db, &accounts, last)?)).await
+}
+
 /// Variations of an opening for one colour, with learning progress.
 #[tauri::command]
 fn opening_family_detail(db: State<DbState>, color: String, family: String) -> Result<Vec<repertoire::VariationGroup>, String> {
@@ -936,6 +942,7 @@ pub fn run() {
             repertoire_set,
             opening_status,
             opening_next,
+            opening_own_count,
             opening_record,
             opening_progress,
             opening_family_detail,

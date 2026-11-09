@@ -122,7 +122,7 @@ function toWav(buf: AudioBuffer): Uint8Array {
   return new Uint8Array(out.buffer);
 }
 
-async function prepareOne(name: Name): Promise<Prepared> {
+async function loadOne(name: Name): Promise<Prepared> {
   const url = recordingFor(name);
   let buffer: AudioBuffer | null = null;
   let source: Prepared["source"] = url ? "file" : "synth";
@@ -137,23 +137,69 @@ async function prepareOne(name: Name): Promise<Prepared> {
       buffer = await renderSynth(name).catch(() => null);
     }
   }
-  let native = false;
-  if (buffer && nativeOutput) {
-    try {
-      await invoke("sound_register", { name, data: Array.from(toWav(buffer)) });
-      native = true;
-    } catch (e) {
-      error ??= String(e);
+  return { buffer, source, error, native: false };
+}
+
+/** Loudness of a sound: the strongest 50 ms (RMS over all channels), plus its peak. */
+function loudness(buf: AudioBuffer): { rms: number; peak: number } {
+  const win = Math.max(1, Math.round(buf.sampleRate * 0.05));
+  const chans = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
+  let best = 0;
+  let peak = 0;
+  for (let start = 0; start < buf.length; start += Math.ceil(win / 2)) {
+    let sum = 0;
+    let n = 0;
+    for (const d of chans) {
+      for (let i = start; i < Math.min(buf.length, start + win); i++) {
+        sum += d[i] * d[i];
+        peak = Math.max(peak, Math.abs(d[i]));
+        n++;
+      }
+    }
+    if (n) best = Math.max(best, Math.sqrt(sum / n));
+  }
+  return { rms: best, peak };
+}
+
+/**
+ * Bring the built-in (synthesised) sounds to the loudness of the own
+ * recordings, so "correct" or "won" isn't louder than a move. Without
+ * recordings nothing changes.
+ */
+function matchLoudness() {
+  const recorded = [...prepared.values()].filter((p) => p.source === "file" && p.buffer).map((p) => loudness(p.buffer!).rms);
+  if (!recorded.length) return;
+  recorded.sort((a, b) => a - b);
+  const target = recorded[Math.floor(recorded.length / 2)];
+  for (const p of prepared.values()) {
+    if (p.source !== "synth" || !p.buffer) continue;
+    const { rms, peak } = loudness(p.buffer);
+    if (!rms || !peak) continue;
+    const gain = Math.min(target / rms, 0.98 / peak);
+    for (let c = 0; c < p.buffer.numberOfChannels; c++) {
+      const d = p.buffer.getChannelData(c);
+      for (let i = 0; i < d.length; i++) d[i] *= gain;
     }
   }
-  return { buffer, source, error, native };
+}
+
+async function register(name: Name, p: Prepared) {
+  if (!p.buffer || !nativeOutput) return;
+  try {
+    await invoke("sound_register", { name, data: Array.from(toWav(p.buffer)) });
+    p.native = true;
+  } catch (e) {
+    p.error ??= String(e);
+  }
 }
 
 /** Prepare all sounds once (call at start). */
 export function preloadSounds(): Promise<void> {
   preparing ??= (async () => {
     nativeOutput = await invoke<boolean>("sound_available").catch(() => false);
-    for (const name of NAMES) prepared.set(name, await prepareOne(name));
+    for (const name of NAMES) prepared.set(name, await loadOne(name));
+    matchLoudness();
+    for (const [name, p] of prepared) await register(name, p);
   })();
   unlockOnGesture();
   return preparing;

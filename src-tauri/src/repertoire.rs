@@ -65,6 +65,8 @@ pub enum Mode {
     Repertoire,
     /// Only positions from your own games.
     Own,
+    /// Only repertoire lines that are due now (the "Wiederholen" card).
+    Due,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +110,8 @@ pub struct SideStatus {
     pub learned: usize,
     pub due: usize,
     pub new: usize,
+    /// When the next line comes back (ms), if none is due now.
+    pub next_due: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,6 +213,8 @@ pub fn status(db: &Db) -> Result<Status, String> {
                     }
                     if p.due <= now {
                         s.due += 1;
+                    } else {
+                        s.next_due = Some(s.next_due.map_or(p.due, |d| d.min(p.due)));
                     }
                 }
             }
@@ -320,6 +326,25 @@ fn trim_to_own_move(moves: &mut Vec<String>, book_len: usize, color: &str) {
     }
 }
 
+/// Sort key for "main lines first": for every move of the line, its rank among
+/// the theory moves of that position (0 = the move with the most named lines
+/// behind it). Sorting by it walks the move tree with the main line first and
+/// keeps a parent line before its sub-lines – instead of 2.a3 before 2.Nf3
+/// just because "a2a3" sorts first.
+fn main_line_key(line: &Line) -> Vec<usize> {
+    use shakmaty::{uci::UciMove, Chess, Position};
+    let book = openings::book();
+    let mut pos = Chess::default();
+    let mut key = Vec::with_capacity(line.moves.len());
+    for uci in &line.moves {
+        let rank = book.next.get(&openings::epd(&pos)).and_then(|m| m.iter().position(|u| u == uci)).unwrap_or(usize::MAX);
+        key.push(rank);
+        let Some(m) = uci.parse::<UciMove>().ok().and_then(|u| u.to_move(&pos).ok()) else { break };
+        pos.play_unchecked(m);
+    }
+    key
+}
+
 /// Learn one opening for one colour (the "Lernen" buttons in the opening list).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -340,6 +365,16 @@ impl Focus {
             && self.variation.as_deref().is_none_or(|v| l.variation() == v)
             && self.line.as_deref().is_none_or(|id| l.id == id)
     }
+}
+
+/// Opening mistakes from your games that are due for practice (the third card).
+pub fn own_due_count(db: &Db, accounts: &[Account], games: &[(GameInfo, GameReview)]) -> Result<usize, String> {
+    let now = now_ms();
+    let (w, b) = (db.opening_progress("white")?, db.opening_progress("black")?);
+    Ok(own_mistakes(games, accounts)
+        .iter()
+        .filter(|d| (if d.color == "white" { &w } else { &b }).get(&d.id).is_none_or(|p| p.due <= now))
+        .count())
 }
 
 /// Next drill: due lines first (oldest first), then new lines (shortest, i.e.
@@ -374,6 +409,9 @@ pub fn next(
         .into_iter()
         .filter(|d| progress_of(&d.color).get(&d.id).is_none_or(|p| p.due <= now))
         .collect();
+    if mode == Mode::Own {
+        return Ok((!own.is_empty()).then(|| own[rng.usize(..own.len())].clone()));
+    }
 
     let mut due: Vec<(i64, &Line, &str)> = Vec::new();
     let mut new: Vec<(&Line, &str)> = Vec::new();
@@ -388,8 +426,8 @@ pub fn next(
         }
     }
 
-    if mode == Mode::Own {
-        return Ok((!own.is_empty()).then(|| own[rng.usize(..own.len())].clone()));
+    if mode == Mode::Due && due.is_empty() {
+        return Ok(None);
     }
     let take_own = mode == Mode::Mixed && (rng.f64() < OWN_SHARE || (due.is_empty() && new.is_empty()));
     if !own.is_empty() && take_own {
@@ -404,7 +442,7 @@ pub fn next(
     } else if !new.is_empty() {
         // Follow the move tree (a parent line before its sub-lines, siblings
         // together) instead of jumping across the opening.
-        new.sort_by(|(a, _), (b, _)| a.moves.cmp(&b.moves));
+        new.sort_by_cached_key(|(l, _)| main_line_key(l));
         let (line, color) = new[pick(new.len(), &mut rng)];
         Some(line_drill(line, color, "new"))
     } else {
@@ -501,7 +539,7 @@ pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<Vec<Variation
         Repertoire { white: vec![], black: vec![family.to_string()] }
     };
     let mut lines = trainable(&rep, color);
-    lines.sort_by(|a, b| a.moves.cmp(&b.moves));
+    lines.sort_by_cached_key(|l| main_line_key(l));
     let mut groups: Vec<VariationGroup> = Vec::new();
     for l in lines {
         let p = progress.get(&l.id);
@@ -720,6 +758,29 @@ mod tests {
     }
 
     #[test]
+    fn due_mode_only_offers_due_lines() {
+        let db = Db::in_memory();
+        save(&db, &Repertoire { white: vec!["Italian Game".into()], black: vec![] }).unwrap();
+        // Nothing learned yet: nothing to review (new lines are not offered).
+        assert!(next(&db, &[], &[], Mode::Due, None).unwrap().is_none());
+        let d = next(&db, &[], &[], Mode::Repertoire, None).unwrap().unwrap();
+        record(&db, &d.id, "white", false).unwrap();
+        // Box 1 comes back in 10 minutes: still nothing due, but the status knows when.
+        assert!(next(&db, &[], &[], Mode::Due, None).unwrap().is_none());
+        assert!(status(&db).unwrap().white.next_due.is_some());
+    }
+
+    #[test]
+    fn main_lines_come_before_sidelines() {
+        let db = Db::in_memory();
+        let groups = family_detail(&db, "white", "Sicilian Defense").unwrap();
+        let first: Vec<&str> = groups.iter().take(3).map(|g| g.name.as_str()).collect();
+        assert!(!first.iter().any(|n| n.contains("Mengarini") || n.contains("Myers")), "{first:?}");
+        // The base line (1. e4 c5) is still the very first one.
+        assert_eq!(groups[0].lines[0].plies, 2);
+    }
+
+    #[test]
     fn empty_repertoire_without_games_has_no_drill() {
         let db = Db::in_memory();
         assert!(next(&db, &[], &[], Mode::Mixed, None).unwrap().is_none());
@@ -744,3 +805,4 @@ mod tests {
         assert!(next(&db, &[], &[], Mode::Repertoire, None).unwrap().is_some());
     }
 }
+

@@ -1,10 +1,13 @@
 // "Eröffnungen" tab (see repertoire.rs):
-// - opening list (full width, board thumbnails): pick an opening, "Als Weiß/Schwarz lernen"
-// - training: learn a new line with arrows, then consolidate it without arrows
-//   until it sits twice in a row; reviews come back with spaced repetition
-// - while learning one opening, its variations are listed with progress bars
-//   and can be chosen individually
-// - besides: the opening mistakes from your own games
+// - home (no board): "Was möchtest du tun?" – learn a new opening, review the
+//   due cards, or practise the opening mistakes from your own games – plus your
+//   openings with their flashcard progress
+// - opening list (full width, board thumbnails): pick an opening and a colour
+// - learning: a guided lesson – intro, then move by move ("Weiter" shows the
+//   opponent's move, you play your own after the green arrow), each with its
+//   Wikibooks explanation; then the line is consolidated without arrows until
+//   it works twice in a row, and comes back with spaced repetition
+// - while learning one opening, its variations are listed and can be chosen
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Api } from "chessground/api";
@@ -14,7 +17,7 @@ import type { Key } from "chessground/types";
 import { windowLast } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
 import { playerName, t, tn } from "./i18n";
-import { $, badgeHtml, commentOf, esc, fig, miniPieces, store } from "./util";
+import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 
 type Color = "white" | "black";
@@ -59,6 +62,8 @@ interface SideStatus {
   learned: number;
   due: number;
   new: number;
+  /** When the next line comes back (ms), if none is due now. */
+  nextDue: number | null;
 }
 
 interface Status {
@@ -131,9 +136,12 @@ export interface OpeningDeps {
   openGame: (gameId: string, ply: number) => void;
 }
 
-type Mode = "mixed" | "repertoire" | "own";
+/** What the board is used for: learning (one opening), the due reviews, or your own mistakes. */
+type TrainMode = "learn" | "due" | "own";
+type View = "home" | "browse" | "train";
 type Sort = "popular" | "mine" | "learning" | "az";
-type Phase = "loading" | "empty" | "opponent" | "solve" | "checking" | "wrong" | "done";
+/** "intro": lesson start, "next": waiting for "Weiter" before the opponent's move (lesson). */
+type Phase = "loading" | "empty" | "intro" | "next" | "opponent" | "solve" | "checking" | "wrong" | "done";
 
 const ACCEPTED: Class[] = ["brilliant", "great", "best", "excellent"];
 const SIDE: Record<Color, string> = { white: t("Weiß"), black: t("Schwarz") };
@@ -145,7 +153,7 @@ const CONSOLIDATE_MAX = 5;
 
 let deps: OpeningDeps;
 let active = false;
-let view: "train" | "browse" = "train";
+let view: View = "home";
 
 // drill state
 let drill: Drill | null = null;
@@ -183,8 +191,10 @@ let variations: VariationGroup[] = [];
 let expanded = new Set<string>();
 
 // choices
-let mode: Mode = (store.get("op-mode") as Mode) || "mixed";
+let trainMode: TrainMode = "learn";
 let sort: Sort = "popular";
+/** Opening mistakes from your games that are due (third card on the home view). */
+let ownCount = 0;
 let focus: Focus | null = null;
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
@@ -199,19 +209,7 @@ export function initOpenings(d: OpeningDeps) {
   deps = d;
   invoke<Family[]>("opening_families").then((f) => (families = f));
 
-  document.querySelectorAll<HTMLElement>("#op-view button").forEach((b) =>
-    b.addEventListener("click", () => setView(b.dataset.v as "train" | "browse")),
-  );
-  $("op-back").addEventListener("click", () => setView("train"));
-  document.querySelectorAll<HTMLElement>("#op-mode button").forEach((b) => {
-    b.classList.toggle("active", b.dataset.m === mode);
-    b.addEventListener("click", () => {
-      mode = b.dataset.m as Mode;
-      store.set("op-mode", mode);
-      document.querySelectorAll<HTMLElement>("#op-mode button").forEach((x) => x.classList.toggle("active", x === b));
-      loadNext();
-    });
-  });
+  $("op-back").addEventListener("click", () => setView("home"));
   document.querySelectorAll<HTMLElement>("#op-sort button").forEach((b) =>
     b.addEventListener("click", () => {
       sort = b.dataset.s as Sort;
@@ -220,7 +218,6 @@ export function initOpenings(d: OpeningDeps) {
     }),
   );
   $("op-search").addEventListener("input", renderList);
-  $("op-manage").addEventListener("click", () => setView("browse"));
 }
 
 export function isOpeningMode(): boolean {
@@ -230,12 +227,8 @@ export function isOpeningMode(): boolean {
 export function enterOpenings() {
   active = true;
   deps.board.setShapes([]);
-  setView("train");
-  Promise.all([loadRepertoire(), loadProgress()]).then(() => {
-    renderSidebar();
-    if (!drill || phase === "empty") loadNext();
-    else render();
-  });
+  // A lesson or review in progress continues; otherwise start at the choice.
+  setView(view === "train" && drill && phase !== "empty" ? "train" : "home");
   loadPlayed();
 }
 
@@ -244,9 +237,15 @@ export function leaveOpenings() {
   clearTimeout(timer);
   document.querySelector(".layout")!.classList.remove("op-browse-mode");
   $("op-browse-view").hidden = true;
+  $("op-home").hidden = true;
 }
 
 export function openingKey(e: KeyboardEvent): boolean {
+  if (view !== "train") return false;
+  if ((e.key === "Enter" || e.key === "ArrowRight") && (phase === "intro" || phase === "next")) {
+    advance();
+    return true;
+  }
   if (e.key === "Enter" && phase === "done") {
     loadNext();
     return true;
@@ -258,19 +257,32 @@ export function openingKey(e: KeyboardEvent): boolean {
   return false;
 }
 
-function setView(v: "train" | "browse") {
+function setView(v: View) {
   view = v;
-  // The opening list takes the whole width; the board is hidden meanwhile.
-  document.querySelector(".layout")!.classList.toggle("op-browse-mode", v === "browse" && active);
+  // Home and the opening list take the whole width; the board is hidden meanwhile.
+  document.querySelector(".layout")!.classList.toggle("op-browse-mode", v !== "train" && active);
+  $("op-home").hidden = !(v === "home" && active);
   $("op-browse-view").hidden = !(v === "browse" && active);
   $("openings").hidden = !(v === "train" && active);
-  if (v === "browse") {
+  if (v !== "train") {
+    // Leaving the board ends what was going on there.
+    token++;
+    clearTimeout(timer);
+    drill = null;
+    consolidate = null;
+    showTheory(null);
+  }
+  if (v === "home") {
+    renderHome();
+    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount()]).then(renderHome);
+  } else if (v === "browse") {
     renderList();
     Promise.all([loadProgress(), loadRepertoire()]).then(renderList);
   } else {
     // The board was hidden (size 0): let chessground measure it again before
     // drawing, otherwise the first arrow is drawn with zero size and stays invisible.
     if (active) deps.board.redrawAll();
+    renderTop();
     renderSidebar();
     render();
   }
@@ -288,6 +300,14 @@ async function loadProgress() {
     progress = await invoke<Record<string, FamilyProgress>>("opening_progress");
   } catch {
     progress = {};
+  }
+}
+
+async function loadOwnCount() {
+  try {
+    ownCount = await invoke<number>("opening_own_count", { accounts: deps.accounts(), last: windowLast() });
+  } catch {
+    ownCount = 0;
   }
 }
 
@@ -337,10 +357,123 @@ async function setFocus(f: Focus | null) {
   loadNext();
 }
 
+/** Start the board in one of the three modes. */
+async function startTrain(m: TrainMode, f: Focus | null) {
+  trainMode = m;
+  focus = f;
+  setView("train");
+  await setFocus(f);
+}
+
 /** Start learning from the opening list. Also used by "Üben" in the statistics. */
 export async function startFocus(color: Color, family: string) {
-  setView("train");
-  await setFocus({ color, family });
+  await startTrain("learn", { color, family });
+}
+
+// ---------------------------------------------------------------------------
+// home: what do you want to do?
+
+const ICON = {
+  learn: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2z"/><path d="M4 20a2 2 0 0 0 2 2h13v-4"/><path d="M9 8h6M9 11h4"/></svg>`,
+  due: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="14" height="13" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-2"/><path d="M7 13l2 2 4-4"/></svg>`,
+  own: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>`,
+};
+
+function renderHome() {
+  if (!active || view !== "home") return;
+  const due = (status?.white.due ?? 0) + (status?.black.due ?? 0);
+  const nexts = [status?.white.nextDue, status?.black.nextDue].filter((x): x is number => !!x);
+  const nextDue = nexts.length ? Math.min(...nexts) : null;
+  const dueText = due
+    ? tn(due, "<b>1 Karte</b> ist heute dran.", "<b>{n} Karten</b> sind heute dran.")
+    : nextDue
+      ? t("Alles erledigt – die nächste Karte kommt {when}.", { when: relDays(nextDue) })
+      : t("Noch nichts zu wiederholen – lern zuerst eine Eröffnung.");
+  const ownText = ownCount
+    ? tn(ownCount, "<b>1 Stellung</b>, in der du in der Eröffnung danebengegriffen hast.", "<b>{n} Stellungen</b>, in denen du in der Eröffnung danebengegriffen hast.")
+    : t("Gerade nichts offen. Neue Fehler kommen aus deinen analysierten Partien.");
+
+  const mine = Object.entries(progress)
+    .map(([key, p]) => {
+      const [color, family] = key.split("|") as [Color, string];
+      return { color, family, p };
+    })
+    .sort((a, b) => b.p.due - a.p.due || b.p.started - a.p.started || a.family.localeCompare(b.family));
+
+  $("op-home").innerHTML = `
+    <div class="op-home-head">
+      <h2>${t("Eröffnungen")}</h2>
+      <p class="muted">${t("Was möchtest du tun?")}</p>
+    </div>
+    <div class="op-choices">
+      <button class="op-choice" data-go="learn">
+        <span class="op-choice-icon">${ICON.learn}</span>
+        <b>${t("Neue Eröffnung lernen")}</b>
+        <span>${t("Eröffnung und Farbe aussuchen. Dann Zug für Zug, mit Erklärung zu jedem Zug.")}</span>
+      </button>
+      <button class="op-choice ${due ? "hot" : ""}" data-go="due" ${due ? "" : "disabled"}>
+        <span class="op-choice-icon">${ICON.due}</span>
+        <b>${t("Wiederholen")}</b>
+        <span>${dueText}</span>
+      </button>
+      <button class="op-choice" data-go="own" ${ownCount ? "" : "disabled"}>
+        <span class="op-choice-icon">${ICON.own}</span>
+        <b>${t("Fehler aus deinen Partien")}</b>
+        <span>${ownText}</span>
+      </button>
+    </div>
+    <div class="op-home-mine">
+      <h3>${t("Deine Eröffnungen")}</h3>
+      ${
+        mine.length
+          ? `<p class="panel-sub">${BOX_HELP()}</p>
+             <div class="op-mine-list">${mine
+               .map(
+                 ({ color, family, p }) => `<div class="op-mine-row">
+                   <span class="pdot ${color}"></span>
+                   <span class="op-mine-name"><b>${esc(family)}</b> <span class="muted">${t("als {side}", { side: SIDE[color] })}</span></span>
+                   ${progressBar(p.lines, p.started, p.learned)}
+                   <span class="op-progress-text">${cardSummary(p.lines, p.started, p.learned, p.due)}</span>
+                   <button class="op-mine-go" data-color="${color}" data-family="${esc(family)}">${p.started ? t("Weiterlernen") : t("Anfangen")}</button>
+                   <button class="op-remove" data-color="${color}" data-family="${esc(family)}" title="${t("Aus dem Repertoire nehmen (Lernstand bleibt)")}">✕</button>
+                 </div>`,
+               )
+               .join("")}</div>`
+          : `<p class="muted">${t("Noch keine. Wähl oben „Neue Eröffnung lernen“.")}</p>`
+      }
+    </div>`;
+  const home = $("op-home");
+  home.querySelectorAll<HTMLButtonElement>(".op-choice").forEach((b) =>
+    b.addEventListener("click", () => {
+      const go = b.dataset.go;
+      if (go === "learn") setView("browse");
+      else startTrain(go as TrainMode, null);
+    }),
+  );
+  home.querySelectorAll<HTMLElement>(".op-mine-go").forEach((b) =>
+    b.addEventListener("click", () => startFocus(b.dataset.color as Color, b.dataset.family!)),
+  );
+  home.querySelectorAll<HTMLElement>(".op-remove").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await removeFromRepertoire(b.dataset.color as Color, b.dataset.family!);
+      await loadProgress();
+      renderHome();
+    }),
+  );
+}
+
+/** Top of the board column: way back to the choice, and what you're doing. */
+function renderTop() {
+  const title =
+    trainMode === "due"
+      ? t("Wiederholen")
+      : trainMode === "own"
+        ? t("Fehler aus deinen Partien")
+        : focus
+          ? t("Lernen: {family} als {side}", { family: esc(focus.family), side: SIDE[focus.color] })
+          : t("Lernen");
+  $("op-top").innerHTML = `<button id="op-home-btn">← ${t("Übersicht")}</button><span class="op-top-title">${title}</span>`;
+  $("op-home-btn").addEventListener("click", () => setView("home"));
 }
 
 // ---------------------------------------------------------------------------
@@ -465,24 +598,9 @@ function renderSidebar() {
   if (!active || view !== "train") return;
   const focusEl = $("op-focus");
   const varsEl = $("op-variations");
-  const summaryEl = $("op-summary");
-  $("op-mode").hidden = !!focus;
   focusEl.hidden = !focus;
   varsEl.hidden = !focus;
-  summaryEl.hidden = !!focus;
-
-  if (!focus) {
-    const fams = [
-      ...repertoire.white.map((f) => `<span class="pdot white"></span>${esc(f)}`),
-      ...repertoire.black.map((f) => `<span class="pdot black"></span>${esc(f)}`),
-    ];
-    const due = (status?.white.due ?? 0) + (status?.black.due ?? 0);
-    summaryEl.querySelector(".op-summary-body")!.innerHTML = fams.length
-      ? `<div class="op-rep-list">${fams.map((f) => `<span class="op-rep">${f}</span>`).join("")}</div>
-         <div class="muted">${due ? t("<b>{n}</b> Varianten fällig", { n: due }) : t("Nichts fällig")}</div>`
-      : `<span class="muted">${t("Noch keine Eröffnungen gewählt.")}</span>`;
-    return;
-  }
+  if (!focus) return;
 
   const p = progress[`${focus.color}|${focus.family}`];
   const sub = focus.line
@@ -493,11 +611,9 @@ function renderSidebar() {
       <span class="pdot ${focus.color}"></span>
       <div class="op-focus-title"><b>${esc(focus.family)}</b> <span class="muted">${t("als {side}", { side: SIDE[focus.color] })}</span>
         ${sub ? `<div class="op-focus-sub">${t("nur:")} ${esc(varName(sub))} <button id="op-focus-all" class="link">${t("alle Varianten")}</button></div>` : ""}</div>
-      <button id="op-focus-x" class="icon" title="${t("Lernen beenden – zurück zum gemischten Training")}">✕</button>
     </div>
     ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${cardSummary(p.lines, p.started, p.learned, p.due)}</span></div>` : ""}
     <p class="panel-sub op-box-help">${BOX_HELP()}</p>`;
-  $("op-focus-x").addEventListener("click", () => setFocus(null));
   document.getElementById("op-focus-all")?.addEventListener("click", () => setFocus({ color: focus!.color, family: focus!.family }));
 
   const current = drill?.kind === "line" ? drill.id : null;
@@ -582,7 +698,25 @@ function startDrill(d: Drill | null, tk: number) {
   step = 0;
   setupSound();
   renderSidebar();
+  // First lesson of an opening: a short introduction before the first move.
+  if (d.status === "new" && !(progress[`${d.color}|${familyOf(d)}`]?.started ?? 0)) {
+    phase = "intro";
+    const base = families.find((f) => f.name === familyOf(d));
+    if (base) showTheory(base.fen);
+    return render();
+  }
   continueLine(tk);
+}
+
+const familyOf = (d: Drill) => d.name.split(":")[0].trim();
+
+/** "Weiter" in the lesson: start it, or show the opponent's next move. */
+function advance() {
+  if (phase === "intro") {
+    showTheory(null);
+    return continueLine(token);
+  }
+  if (phase === "next") opponentMove(token, 0);
 }
 
 async function loadNext() {
@@ -596,6 +730,7 @@ async function loadNext() {
   render();
   let d: Drill | null;
   try {
+    const mode = trainMode === "learn" ? "repertoire" : trainMode;
     d = await invoke<Drill | null>("opening_next", { accounts: deps.accounts(), last: windowLast(), mode, focus });
   } catch (e) {
     if (tk !== token) return;
@@ -619,26 +754,40 @@ function continueLine(tk: number) {
     phase = "solve";
     return render();
   }
+  // In a lesson the opponent's move waits for "Weiter" (time to read).
+  if (learning()) {
+    phase = "next";
+    return render();
+  }
+  opponentMove(tk, step === 0 ? 500 : deps.animMs() + 250);
+}
+
+function opponentMove(tk: number, delay: number) {
+  const d = drill!;
   phase = "opponent";
   render();
   const n = nav;
-  timer = window.setTimeout(
-    async () => {
-      if (tk !== token || n !== nav) return;
-      const played = await play(fen, d.moves[step]);
-      if (tk !== token || n !== nav) return;
-      history.push({ fen, lastMove, step });
-      fen = played.fen;
-      lastMove = played.uci;
-      moveSound(played.san);
-      step++;
-      // While learning, explain every move; otherwise only your own (so the
-      // text doesn't give away the answer you're asked for).
-      if (learning()) showTheory(fen);
-      continueLine(tk);
-    },
-    step === 0 ? 500 : deps.animMs() + 250,
-  );
+  timer = window.setTimeout(async () => {
+    if (tk !== token || n !== nav) return;
+    const played = await play(fen, d.moves[step]);
+    if (tk !== token || n !== nav) return;
+    history.push({ fen, lastMove, step });
+    fen = played.fen;
+    lastMove = played.uci;
+    moveSound(played.san);
+    step++;
+    // While learning, explain every move; otherwise only your own (so the
+    // text doesn't give away the answer you're asked for).
+    if (learning()) showTheory(fen, moveText(step - 1, played.san));
+    continueLine(tk);
+  }, delay);
+}
+
+/** "Schwarz spielt 1…c5." – shown in a lesson when Wikibooks has nothing. */
+function moveText(ply: number, san: string): string {
+  const n = Math.floor(ply / 2) + 1;
+  const move = `<b>${n}${ply % 2 ? "…" : ". "}${esc(fig(san))}</b>`;
+  return t("{side} spielt {move}.", { side: SIDE[ply % 2 ? "black" : "white"], move });
 }
 
 function play(from: string, uci: string): Promise<PlayedMove> {
@@ -691,7 +840,7 @@ function correct(played: PlayedMove, tk: number) {
   wrongTry = null;
   hint = false;
   if (drill!.kind === "own") return finish(tk);
-  showTheory(fen);
+  showTheory(fen, learning() ? moveText(step - 1, played.san) : undefined);
   continueLine(tk);
 }
 
@@ -785,8 +934,12 @@ function back() {
   render();
 }
 
-/** Show the explanation of a position, if Wikibooks has one. */
-async function showTheory(f: string | null) {
+/**
+ * Show the explanation of a position, if Wikibooks has one: the first
+ * paragraph (usually about the move just played), the rest folded away.
+ * `fallback` is shown instead when there is no text (lesson: "Weiß spielt …").
+ */
+async function showTheory(f: string | null, fallback?: string) {
   theoryFen = f;
   const box = $("op-theory");
   if (!f) {
@@ -799,11 +952,18 @@ async function showTheory(f: string | null) {
     theoryCache.set(f, text);
   }
   if (theoryFen !== f) return;
-  // Keep the previous text when this position has none: it still describes the line.
-  if (!text) return;
+  if (!text) {
+    if (fallback) {
+      box.innerHTML = `<h3>${t("Eröffnungstheorie")}</h3><div class="op-theory-text"><p>${fallback}</p></div>`;
+      box.hidden = false;
+    }
+    // Otherwise keep the previous text: it still describes the line.
+    return;
+  }
+  const [first, ...rest] = text.paragraphs.map((p) => `<p>${esc(fig(p))}</p>`);
   box.innerHTML = `
     <h3>${t("Eröffnungstheorie")}${text.untranslated ? ` <span class="muted">${t("(englisch)")}</span>` : ""}</h3>
-    <div class="op-theory-text">${text.paragraphs.map((p) => `<p>${esc(fig(p))}</p>`).join("")}</div>
+    <div class="op-theory-text">${first ?? ""}${rest.length ? `<details><summary>${t("mehr dazu")}</summary>${rest.join("")}</details>` : ""}</div>
     <p class="op-theory-source">${t("Quelle:")} <a href="#" data-url="${esc(text.url)}">Wikibooks – Chess Opening Theory</a> · CC BY-SA 4.0</p>`;
   box.hidden = false;
   box.querySelector<HTMLElement>(".op-theory-text")!.scrollTop = 0;
@@ -897,15 +1057,16 @@ function renderText(error?: string) {
     return;
   }
   if (phase === "empty" || !d) {
-    head.innerHTML = `<span class="coach-title">${focus ? t("Alles gelernt") : t("Nichts zu üben")}</span>`;
+    const title = trainMode === "due" ? t("Alles wiederholt") : trainMode === "own" ? t("Nichts offen") : t("Alles gelernt");
+    head.innerHTML = `<span class="coach-title">${title}</span>`;
     text.innerHTML = error
       ? `<span class="error">${esc(error)}</span>`
-      : focus
-        ? t("Alle Varianten hier sind gelernt und gerade nichts fällig. Die Wiederholungen kommen zur rechten Zeit – oder wähl rechts eine andere Variante.")
-        : mode === "own"
+      : trainMode === "due"
+        ? t("Für heute ist nichts mehr fällig. Die Karten kommen zur rechten Zeit wieder.")
+        : trainMode === "own"
           ? t("Gerade keine Eröffnungsfehler aus deinen Partien fällig – gelöste Stellungen ruhen eine Weile.")
-          : t("Such dir unter „Eröffnungen wählen“ aus, was du lernen willst.");
-    actions.innerHTML = focus ? "" : `<button data-act="browse" class="primary">${t("Eröffnungen wählen")}</button>`;
+          : t("Alle Varianten hier sind gelernt und gerade nichts fällig. Die Wiederholungen kommen zur rechten Zeit – oder wähl rechts eine andere Variante.");
+    actions.innerHTML = `${trainMode === "due" && ownCount ? `<button data-act="own">${t("Fehler aus deinen Partien üben ({n})", { n: ownCount })}</button>` : ""}<button data-act="home" class="primary end">${t("Zur Übersicht")}</button>`;
     bindActions(d);
     return;
   }
@@ -924,6 +1085,12 @@ function renderText(error?: string) {
   const side = SIDE[d.color];
   const expected = d.moves[step];
   switch (phase) {
+    case "intro":
+      text.innerHTML = `${t("<b>So geht die Lektion:</b> Mit <b>Weiter</b> siehst du den nächsten Zug deines Gegners, deine eigenen Züge spielst du selbst nach dem grünen Pfeil. Unten steht zu jedem Zug, worum es geht.")}<br>${lineProgress(d)}`;
+      break;
+    case "next":
+      text.innerHTML = `${t("Lies die Erklärung unten, dann weiter mit <b>Weiter</b> (oder →).")}<br>${lineProgress(d)}`;
+      break;
     case "opponent":
       text.innerHTML = `<span class="muted">${t("Der Gegner zieht …")}</span><br>${lineProgress(d)}`;
       break;
@@ -936,7 +1103,7 @@ function renderText(error?: string) {
           phrase: CLASSES[d.own.classification].phrase,
         });
       } else if (learning()) {
-        text.innerHTML = `${t("<b>Spiel den grünen Pfeil nach.</b> Der Gegner antwortet, merk dir die Zugfolge.")}<br>${lineProgress(d)}`;
+        text.innerHTML = `${t("<b>Du bist dran:</b> spiel den grünen Pfeil nach.")}<br>${lineProgress(d)}`;
       } else if (d.status === "practice") {
         text.innerHTML = `${t("<b>Jetzt ohne Pfeile:</b> spiel die Variante, die du gerade gelernt hast.")}<br>${lineProgress(d)}`;
       } else {
@@ -987,6 +1154,11 @@ function renderText(error?: string) {
     d.kind === "line"
       ? `<button data-act="back" title="${t("Deinen letzten Zug zurücknehmen (←)")}" ${backTarget() >= 0 && phase !== "checking" ? "" : "disabled"}>← ${t("Zurück")}</button>`
       : "";
+  if (phase === "intro" || phase === "next") {
+    actions.innerHTML = `${phase === "next" ? backBtn : ""}<button data-act="advance" class="primary end">${phase === "intro" ? t("Los geht's") : t("Weiter")} →</button>`;
+    bindActions(d);
+    return;
+  }
   actions.innerHTML =
     phase === "done"
       ? `${backBtn}${game}${d.kind === "line" && !learning() && failed ? `<button data-act="relearn">${t("Mit Pfeilen neu lernen")}</button>` : ""}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
@@ -1027,8 +1199,14 @@ function bindActions(d: Drill | null) {
           case "game":
             if (d?.own) deps.openGame(d.own.gameId, d.own.ply);
             break;
-          case "browse":
-            setView("browse");
+          case "advance":
+            advance();
+            break;
+          case "home":
+            setView("home");
+            break;
+          case "own":
+            startTrain("own", null);
             break;
         }
       }),
