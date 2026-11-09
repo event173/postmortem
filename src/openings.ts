@@ -241,6 +241,9 @@ function setView(v: "train" | "browse") {
     renderList();
     Promise.all([loadProgress(), loadRepertoire()]).then(renderList);
   } else {
+    // The board was hidden (size 0): let chessground measure it again before
+    // drawing, otherwise the first arrow is drawn with zero size and stays invisible.
+    if (active) deps.board.redrawAll();
     renderSidebar();
     render();
   }

@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.1.9" date="2026-11-09">
+      <description>
+        <p>Opening training: the green arrow now shows on the first move too.</p>
+      </description>
+    </release>
     <release version="0.1.8" date="2026-11-09">
       <description>
         <p>Import your own games as PGN, copy PGN/FEN, clock times and errors in time trouble, update notice, collapsible game list for small screens.</p>
