@@ -14,7 +14,7 @@ const DATA: &str = include_str!("../data/openings.tsv");
 /// Openings in the dataset are at most this long; no need to look further.
 const MAX_PLIES: usize = 40;
 
-fn epd(pos: &Chess) -> String {
+pub fn epd(pos: &Chess) -> String {
     Epd::from_position(pos, EnPassantMode::Legal).to_string()
 }
 
@@ -108,6 +108,47 @@ pub fn lines() -> &'static [Line] {
     })
 }
 
+/// Every position on the way of a named line ("theory"), and the theory moves
+/// from each of them.
+pub struct Book {
+    pub positions: std::collections::HashSet<String>,
+    /// EPD -> UCI moves that stay in theory, the move with the most named lines
+    /// behind it (≈ the main line) first.
+    pub next: HashMap<String, Vec<String>>,
+}
+
+pub fn book() -> &'static Book {
+    static BOOK: OnceLock<Book> = OnceLock::new();
+    BOOK.get_or_init(|| {
+        let mut positions = std::collections::HashSet::new();
+        let mut counts: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+        let start = Chess::default();
+        positions.insert(epd(&start));
+        for line in lines() {
+            let mut pos = start.clone();
+            for uci in &line.moves {
+                let Some(m) = uci.parse::<shakmaty::uci::UciMove>().ok().and_then(|u| u.to_move(&pos).ok()) else { break };
+                let moves = counts.entry(epd(&pos)).or_default();
+                match moves.iter_mut().find(|(u, _)| u == uci) {
+                    Some((_, n)) => *n += 1,
+                    None => moves.push((uci.clone(), 1)),
+                }
+                pos.play_unchecked(m);
+                positions.insert(epd(&pos));
+            }
+        }
+        let next = counts
+            .into_iter()
+            .map(|(k, mut moves)| {
+                // Stable: equal counts keep the dataset order.
+                moves.sort_by_key(|m| std::cmp::Reverse(m.1));
+                (k, moves.into_iter().map(|(u, _)| u).collect())
+            })
+            .collect();
+        Book { positions, next }
+    })
+}
+
 /// The deepest named opening position reached in the game.
 pub fn identify(moves: &[String]) -> Option<Opening> {
     let table = table();
@@ -129,6 +170,20 @@ mod tests {
 
     fn moves(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn book_knows_main_lines_and_their_continuations() {
+        let b = book();
+        let start = epd(&Chess::default());
+        // Most theory behind 1. e4 and 1. d4.
+        let first: Vec<&str> = b.next[&start].iter().take(2).map(String::as_str).collect();
+        assert!(first.contains(&"e2e4") && first.contains(&"d2d4"), "{first:?}");
+        let after_e4 = play_san_line(["e4"]).unwrap();
+        assert!(b.positions.contains(&epd(&after_e4)));
+        // Nonsense is not theory.
+        let silly = play_san_line(["h4", "h5", "a4", "a5", "b4", "b5"]).unwrap();
+        assert!(!b.positions.contains(&epd(&silly)));
     }
 
     #[test]

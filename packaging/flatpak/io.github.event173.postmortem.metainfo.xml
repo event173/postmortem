@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.0" date="2026-11-09">
+      <description>
+        <p>English interface (switchable in the settings), rating history and activity, positions in which you leave opening theory, and a hint in the puzzles tab when the puzzle database is missing.</p>
+      </description>
+    </release>
     <release version="0.1.9" date="2026-11-09">
       <description>
         <p>Opening training: the green arrow now shows on the first move too.</p>

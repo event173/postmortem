@@ -292,7 +292,7 @@ fn pick_own(
                     classification: m.classification,
                     opponent: opponent.clone(),
                     created_at: game.created_at,
-                    comment: m.comment.clone(),
+                    comment: m.localized_comment(),
                 }),
             });
         }

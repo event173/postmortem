@@ -218,7 +218,7 @@ pub fn status(db: &Db) -> Result<Status, String> {
     Ok(Status { white: side("white")?, black: side("black")? })
 }
 
-fn my_color(game: &GameInfo, accounts: &[Account]) -> Option<&'static str> {
+pub(crate) fn my_color(game: &GameInfo, accounts: &[Account]) -> Option<&'static str> {
     let me = accounts.iter().find(|a| a.source == game.source)?.username.to_lowercase();
     if game.white.name.to_lowercase() == me {
         Some("white")
@@ -259,7 +259,7 @@ fn own_mistakes(games: &[(GameInfo, GameReview)], accounts: &[Account]) -> Vec<D
                     classification: m.classification,
                     opponent: opponent.clone(),
                     created_at: game.created_at,
-                    comment: m.comment.clone(),
+                    comment: m.localized_comment(),
                 }),
             });
         }

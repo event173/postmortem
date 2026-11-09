@@ -240,6 +240,51 @@ impl PhaseStat {
     }
 }
 
+/// One game, reduced to what the rating history and activity chart need.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameSummary {
+    pub id: String,
+    pub source: crate::lichess::Source,
+    pub created_at: i64,
+    pub speed: String,
+    pub rated: bool,
+    /// Your rating at the start of the game (as the platform reported it).
+    pub rating: Option<u32>,
+    pub opponent: String,
+    pub opponent_rating: Option<u32>,
+    /// "win", "loss" or "draw" from your point of view.
+    pub result: String,
+}
+
+/// Summaries of the games you played (games of others are skipped), as given (newest first).
+pub fn summaries(games: &[crate::db::StoredGame], accounts: &[Account]) -> Vec<GameSummary> {
+    games
+        .iter()
+        .filter_map(|s| {
+            let g = &s.game;
+            let color = crate::repertoire::my_color(g, accounts)?;
+            let (me, opp) = if color == "white" { (&g.white, &g.black) } else { (&g.black, &g.white) };
+            Some(GameSummary {
+                id: g.id.clone(),
+                source: g.source,
+                created_at: g.created_at,
+                speed: g.speed.clone(),
+                rated: g.rated,
+                rating: me.rating,
+                opponent: opp.name.clone(),
+                opponent_rating: opp.rating,
+                result: match g.winner.as_deref() {
+                    None => "draw",
+                    Some(w) if w == color => "win",
+                    Some(_) => "loss",
+                }
+                .into(),
+            })
+        })
+        .collect()
+}
+
 /// Stats over the `last` most recent games (all if `None`), with each theme's
 /// rate over all games as baseline. `games` newest first.
 pub fn compute_window(
@@ -279,6 +324,7 @@ mod tests {
             best_uci: None,
             best_line: None,
             comment: String::new(),
+            comment_en: None,
             theme,
         }
     }

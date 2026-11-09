@@ -166,7 +166,7 @@ pub enum FetchError {
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FetchError::Offline => write!(f, "Keine Internetverbindung."),
+            FetchError::Offline => write!(f, "{}", crate::tr!("Keine Internetverbindung.", "No internet connection.")),
             FetchError::Other(e) => write!(f, "{e}"),
         }
     }
@@ -188,7 +188,7 @@ pub(crate) fn network_error(e: reqwest::Error) -> FetchError {
     if e.is_connect() || e.is_timeout() || e.is_request() {
         FetchError::Offline
     } else {
-        FetchError::Other(format!("Fehler beim Abruf: {e}"))
+        FetchError::Other(crate::tr!("Fehler beim Abruf: {e}", "Download failed: {e}"))
     }
 }
 
@@ -203,9 +203,18 @@ pub(crate) fn client() -> Result<reqwest::Client, String> {
 pub(crate) fn check_status(resp: &reqwest::Response, what: &str) -> Result<(), String> {
     match resp.status().as_u16() {
         200..=299 => Ok(()),
-        404 => Err(format!("{what} nicht gefunden.")),
-        429 => Err("Der Server drosselt gerade die Anfragen. Bitte eine Minute warten.".into()),
-        code => Err(format!("Der Server antwortete mit Fehler {code}.")),
+        404 => {
+            let what = match what {
+                "Spieler" => crate::tr!("Spieler", "Player"),
+                "Partie" => crate::tr!("Partie", "Game"),
+                "Archiv" => crate::tr!("Archiv", "Archive"),
+                "Puzzle-Datenbank" => crate::tr!("Puzzle-Datenbank", "Puzzle database"),
+                w => w.to_string(),
+            };
+            Err(crate::tr!("{what} nicht gefunden.", "{what} not found."))
+        }
+        429 => Err(crate::tr!("Der Server drosselt gerade die Anfragen. Bitte eine Minute warten.", "The server is rate-limiting requests. Please wait a minute.")),
+        code => Err(crate::tr!("Der Server antwortete mit Fehler {code}.", "The server answered with error {code}.")),
     }
 }
 
@@ -229,7 +238,7 @@ pub struct GameQuery {
 pub async fn fetch_user_games(username: &str, q: GameQuery) -> Result<Vec<GameInfo>, FetchError> {
     let username = username.trim();
     if !valid_username(username) {
-        return Err("Ungültiger Benutzername.".into());
+        return Err(crate::tr!("Ungültiger Benutzername.", "Invalid username.").into());
     }
     let mut params: Vec<(&str, String)> = vec![("opening", "true".into()), ("moves", "true".into()), ("clocks", "true".into())];
     if let Some(max) = q.max {
@@ -273,7 +282,7 @@ pub fn parse_game_id(input: &str) -> Option<String> {
 
 /// A single game by URL or id.
 pub async fn fetch_game(input: &str) -> Result<GameInfo, FetchError> {
-    let id = parse_game_id(input).ok_or("Das sieht nicht nach einem Lichess-Partielink aus.")?;
+    let id = parse_game_id(input).ok_or_else(|| crate::tr!("Das sieht nicht nach einem Lichess-Partielink aus.", "That does not look like a Lichess game link."))?;
     let resp = client()?
         .get(format!("{API}/game/export/{id}"))
         .query(&[("opening", "true"), ("moves", "true"), ("clocks", "true")])
@@ -285,9 +294,9 @@ pub async fn fetch_game(input: &str) -> Result<GameInfo, FetchError> {
     let raw: RawGame = resp
         .json()
         .await
-        .map_err(|e| FetchError::Other(format!("Unerwartete Antwort: {e}")))?;
+        .map_err(|e| FetchError::Other(crate::tr!("Unerwartete Antwort: {e}", "Unexpected answer: {e}")))?;
     raw.into_game()
-        .ok_or_else(|| "Nur Standard-Schach ab der Grundstellung wird unterstützt.".into())
+        .ok_or_else(|| crate::tr!("Nur Standard-Schach ab der Grundstellung wird unterstützt.", "Only standard chess from the initial position is supported.").into())
 }
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+#[macro_use]
+mod i18n;
 mod analysis;
 mod bot;
 mod chesscom;
@@ -12,6 +14,7 @@ mod pgn;
 mod puzzles;
 mod repertoire;
 mod stats;
+mod theory;
 mod trainer;
 mod update;
 
@@ -74,6 +77,12 @@ struct Progress {
 struct EngineStatus {
     found: bool,
     path: Option<String>,
+}
+
+/// Language of backend messages and coach comments ("de" or "en").
+#[tauri::command]
+fn set_language(lang: String) {
+    i18n::set(&lang);
 }
 
 #[tauri::command]
@@ -157,9 +166,12 @@ async fn analyse_game(
     db: State<'_, DbState>,
     game: GameInfo,
     depth: Option<u32>,
+    force: Option<bool>,
 ) -> Result<GameReview, String> {
     let depth = depth.unwrap_or(16).clamp(8, 30);
-    if let Some(review) = db.0.lock().unwrap().review(&game.id, depth)? {
+    // `force`: analyse again even if a review exists (e.g. for English coach comments).
+    let cached = if force.unwrap_or(false) { None } else { db.0.lock().unwrap().review(&game.id, depth)? };
+    if let Some(review) = cached {
         return Ok(review);
     }
 
@@ -189,7 +201,7 @@ fn run_analysis(
     threads: usize,
 ) -> Result<GameReview, String> {
     let path = engine::find_stockfish()
-        .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+        .ok_or_else(i18n::no_stockfish)?;
     let (positions, moves) = analysis::replay(&game.moves)?;
 
     // Pass 1: best line only. Pass 2: second-best line where the classification needs it.
@@ -338,12 +350,12 @@ async fn set_engine_settings(
     let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
     if let Some(p) = path.clone() {
         if !p.is_file() {
-            return Err(format!("Datei nicht gefunden: {}", p.display()));
+            return Err({ let p = p.display(); tr!("Datei nicht gefunden: {p}", "File not found: {p}") });
         }
         tauri::async_runtime::spawn_blocking(move || engine::verify(&p))
             .await
             .map_err(|e| e.to_string())?
-            .map_err(|e| format!("Das scheint keine UCI-Engine zu sein: {e}"))?;
+            .map_err(|e| tr!("Das scheint keine UCI-Engine zu sein: {e}", "This does not seem to be a UCI engine: {e}"))?;
     }
     let threads = threads.map(|t| t.clamp(1, engine::cpu_count()));
     let db = app.state::<DbState>();
@@ -387,14 +399,14 @@ fn import_pgn(db: State<DbState>, pgn: String, you: Option<String>) -> Result<Im
             Err(e) => {
                 let who = match (parsed.header("White"), parsed.header("Black")) {
                     (Some(w), Some(b)) => format!("{w} – {b}"),
-                    _ => format!("Partie {}", i + 1),
+                    _ => { let n = i + 1; tr!("Partie {n}", "Game {n}") }
                 };
                 errors.push(format!("{who}: {e}"));
             }
         }
     }
     if games.is_empty() && errors.is_empty() {
-        return Err("Keine Partie gefunden. Bitte PGN einfügen (Züge wie „1. e4 e5 2. Nf3 …“).".into());
+        return Err(tr!("Keine Partie gefunden. Bitte PGN einfügen (Züge wie „1. e4 e5 2. Nf3 …“).", "No game found. Please paste a PGN (moves like “1. e4 e5 2. Nf3 …”)."));
     }
     let added = db.0.lock().unwrap().save_games(&games)?;
     Ok(ImportResult { known: games.len() - added, games, errors })
@@ -433,7 +445,7 @@ async fn puzzle_install(
     {
         let mut running = install.cancel.lock().unwrap();
         if running.is_some() {
-            return Err("Der Download läuft bereits.".into());
+            return Err(tr!("Der Download läuft bereits.", "The download is already running."));
         }
         *running = Some(cancel.clone());
     }
@@ -446,7 +458,7 @@ async fn puzzle_install(
 #[tauri::command]
 fn puzzle_delete(dir: State<DataDir>, install: State<PuzzleInstall>) -> Result<puzzles::PuzzleStatus, String> {
     if install.cancel.lock().unwrap().is_some() {
-        return Err("Erst den laufenden Download abbrechen.".into());
+        return Err(tr!("Erst den laufenden Download abbrechen.", "Cancel the running download first."));
     }
     puzzles::delete(&dir.0)?;
     Ok(puzzles::status(&dir.0))
@@ -487,6 +499,27 @@ fn window(db: &db::Db, accounts: &[Account], last: Option<usize>) -> Result<Vec<
 #[tauri::command]
 async fn opening_report(app: AppHandle, accounts: Vec<Account>, last: Option<usize>) -> Result<Vec<repertoire::OpeningStat>, String> {
     with_db(app, move |db, _| Ok(repertoire::report(&window(db, &accounts, last)?, &accounts))).await
+}
+
+/// Where you leave opening theory, and what it costs you.
+#[tauri::command]
+async fn theory_report(app: AppHandle, accounts: Vec<Account>, last: Option<usize>) -> Result<theory::TheoryReport, String> {
+    with_db(app, move |db, _| {
+        let mut games: Vec<GameInfo> = db.games_of(&accounts, u32::MAX)?.into_iter().map(|g| g.game).collect();
+        if let Some(n) = last {
+            games.truncate(n);
+        }
+        let reviews: std::collections::HashMap<String, GameReview> =
+            db.reviewed_games_of(&accounts)?.into_iter().map(|(g, r)| (g.id, r)).collect();
+        Ok(theory::report(&games, &reviews, &accounts))
+    })
+    .await
+}
+
+/// One small record per stored game (rating, result, speed) for the rating history.
+#[tauri::command]
+async fn game_summaries(app: AppHandle, accounts: Vec<Account>) -> Result<Vec<stats::GameSummary>, String> {
+    with_db(app, move |db, _| Ok(stats::summaries(&db.games_of(&accounts, u32::MAX)?, &accounts))).await
 }
 
 /// All opening families with base line and thumbnail position (computed once).
@@ -824,6 +857,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             engine_status,
+            set_language,
+            theory_report,
+            game_summaries,
             list_games,
             sync_games,
             fetch_game,

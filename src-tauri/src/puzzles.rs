@@ -77,7 +77,7 @@ pub fn delete(dir: &Path) -> Result<(), String> {
         match std::fs::remove_file(dir.join(name)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{name} konnte nicht gelöscht werden: {e}")),
+            Err(e) => return Err(crate::tr!("{name} konnte nicht gelöscht werden: {e}", "{name} could not be deleted: {e}")),
         }
     }
     Ok(())
@@ -112,7 +112,7 @@ async fn download(app: &AppHandle, dir: &Path, cancel: &AtomicBool) -> Result<(P
         .send()
         .await
         .map_err(|e| match network_error(e) {
-            FetchError::Offline => "Keine Internetverbindung.".to_string(),
+            FetchError::Offline => crate::tr!("Keine Internetverbindung.", "No internet connection."),
             FetchError::Other(e) => e,
         })?;
     check_status(&resp, "Puzzle-Datenbank")?;
@@ -122,7 +122,7 @@ async fn download(app: &AppHandle, dir: &Path, cancel: &AtomicBool) -> Result<(P
     let mut file = std::io::BufWriter::new(File::create(&part).map_err(|e| e.to_string())?);
     let mut done = 0u64;
     let mut last_emit = 0u64;
-    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("Download abgebrochen: {e}"))? {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| crate::tr!("Download abgebrochen: {e}", "Download interrupted: {e}"))? {
         if cancel.load(Ordering::Relaxed) {
             drop(file);
             let _ = std::fs::remove_file(&part);
@@ -139,7 +139,7 @@ async fn download(app: &AppHandle, dir: &Path, cancel: &AtomicBool) -> Result<(P
     drop(file);
     if total > 0 && done != total {
         let _ = std::fs::remove_file(&part);
-        return Err("Download unvollständig – bitte nochmal versuchen.".into());
+        return Err(crate::tr!("Download unvollständig – bitte nochmal versuchen.", "Download incomplete – please try again."));
     }
     let finished = dir.join("lichess_db_puzzle.csv.zst");
     std::fs::rename(&part, &finished).map_err(|e| e.to_string())?;
@@ -234,7 +234,7 @@ fn import(
             )
             .map_err(|e| e.to_string())?;
         for (i, line) in reader.lines().enumerate() {
-            let line = line.map_err(|e| format!("Datei beschädigt: {e}"))?;
+            let line = line.map_err(|e| crate::tr!("Datei beschädigt: {e}", "File damaged: {e}"))?;
             if i == 0 && line.starts_with("PuzzleId") {
                 continue;
             }

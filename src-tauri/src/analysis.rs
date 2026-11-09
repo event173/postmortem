@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, EnPassantMode, Move, Position};
 
+use crate::i18n::{self, Lang};
 use crate::coach::{self, MoveContext};
 use crate::engine::{PvLine, Score};
 use crate::lichess::GameInfo;
@@ -40,7 +41,11 @@ pub struct MoveReview {
     pub best_san: Option<String>,
     pub best_uci: Option<String>,
     pub best_line: Option<String>,
+    /// Coach comment in German …
     pub comment: String,
+    /// … and in English (missing in reviews made before 0.2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_en: Option<String>,
     /// Why the move was bad (only for inaccuracies, mistakes, misses and blunders).
     #[serde(default)]
     pub theme: Option<coach::Theme>,
@@ -69,6 +74,16 @@ pub struct GameReview {
     pub accuracy: Accuracy,
 }
 
+impl MoveReview {
+    /// The coach comment in the current UI language (German for old reviews).
+    pub fn localized_comment(&self) -> String {
+        match &self.comment_en {
+            Some(en) if i18n::en() => en.clone(),
+            _ => self.comment.clone(),
+        }
+    }
+}
+
 /// Replay SAN moves from the initial position.
 pub fn replay(moves: &[String]) -> Result<(Vec<Chess>, Vec<Move>), String> {
     let mut pos = Chess::default();
@@ -79,7 +94,7 @@ pub fn replay(moves: &[String]) -> Result<(Vec<Chess>, Vec<Move>), String> {
             .parse::<SanPlus>()
             .ok()
             .and_then(|s| s.san.to_move(&pos).ok())
-            .ok_or_else(|| format!("Ungültiger Zug {} ({san})", i / 2 + 1))?;
+            .ok_or_else(|| { let n = i / 2 + 1; crate::tr!("Ungültiger Zug {n} ({san})", "Invalid move {n} ({san})") })?;
         pos.play_unchecked(m);
         positions.push(pos.clone());
         played.push(m);
@@ -89,9 +104,9 @@ pub fn replay(moves: &[String]) -> Result<(Vec<Chess>, Vec<Move>), String> {
 
 pub fn parse_fen(fen: &str) -> Result<Chess, String> {
     fen.parse::<Fen>()
-        .map_err(|e| format!("Ungültige FEN: {e}"))?
+        .map_err(|e| crate::tr!("Ungültige FEN: {e}", "Invalid FEN: {e}"))?
         .into_position(CastlingMode::Standard)
-        .map_err(|e| format!("Ungültige Stellung: {e}"))
+        .map_err(|e| crate::tr!("Ungültige Stellung: {e}", "Invalid position: {e}"))
 }
 
 pub fn fen(pos: &Chess) -> String {
@@ -294,7 +309,9 @@ pub fn review_move(input: &MoveInput) -> (MoveReview, f64) {
         opponent_blundered,
         opening: input.opening,
     };
-    let (comment, theme) = coach::explain(&ctx);
+    // Both languages, so switching the UI language doesn't need a new analysis.
+    let (comment, theme) = i18n::with(Lang::De, || coach::explain(&ctx));
+    let (comment_en, _) = i18n::with(Lang::En, || coach::explain(&ctx));
 
     let review = MoveReview {
         ply,
@@ -308,6 +325,7 @@ pub fn review_move(input: &MoveInput) -> (MoveReview, f64) {
         best_uci: best.and_then(|l| l.pv.first().cloned()),
         best_line: best.map(|l| coach::san_line(before, &l.pv, 8)),
         comment,
+        comment_en: Some(comment_en),
         theme,
     };
     (review, c.loss)
@@ -423,9 +441,11 @@ mod tests {
         assert_eq!(nf6.san, "Nf6");
         assert_eq!(nf6.classification, Class::Blunder);
         assert!(nf6.comment.contains("Matt in 1"), "{}", nf6.comment);
+        assert_eq!(nf6.comment_en.as_deref(), Some("This allows mate in 1: 4. Qxf7#."));
         assert_eq!(nf6.theme, Some(coach::Theme::AllowedMate));
         assert_eq!(r.moves[0].theme, None);
         assert_eq!(r.moves[6].comment, "Schachmatt!");
+        assert_eq!(r.moves[6].comment_en.as_deref(), Some("Checkmate!"));
         assert_eq!(r.moves[6].classification, Class::Best);
         assert!(r.accuracy.black < r.accuracy.white, "{:?}", r.accuracy);
     }
@@ -446,6 +466,8 @@ mod tests {
         let ba6 = &r.moves[2];
         assert_eq!(ba6.classification, Class::Blunder);
         assert!(ba6.comment.contains("ungedeckt") || ba6.comment.contains("Läufer"), "{}", ba6.comment);
+        let en = ba6.comment_en.as_deref().unwrap();
+        assert!(en.contains("your bishop on a6") && en.contains("Nxa6"), "{en}");
         assert_eq!(ba6.theme, Some(coach::Theme::HangingPiece));
     }
 

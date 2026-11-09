@@ -57,7 +57,7 @@ pub fn play_move(fen: &str, from: &str, to: &str, promotion: Option<&str>) -> Re
         .filter(|(_, u)| u.starts_with(&prefix))
         .find(|(_, u)| u.len() == 4 || *u == wanted)
         .map(|(m, _)| m)
-        .ok_or("Illegaler Zug")?;
+        .ok_or_else(|| crate::tr!("Illegaler Zug", "Illegal move"))?;
     let san = coach::san(&pos, m);
     let mut after = pos.clone();
     after.play_unchecked(m);
@@ -72,12 +72,12 @@ pub fn play_move(fen: &str, from: &str, to: &str, promotion: Option<&str>) -> Re
 /// Analyse the position before and after a move and classify it like a game move.
 pub fn evaluate_move(fen: &str, uci: &str, depth: u32) -> Result<MoveReview, String> {
     let before = analysis::parse_fen(fen)?;
-    let m = coach::parse_uci(&before, uci).ok_or("Illegaler Zug")?;
+    let m = coach::parse_uci(&before, uci).ok_or_else(|| crate::tr!("Illegaler Zug", "Illegal move"))?;
     let mut after = before.clone();
     after.play_unchecked(m);
 
     let path = engine::find_stockfish()
-        .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+        .ok_or_else(crate::i18n::no_stockfish)?;
     let threads = engine::threads(true);
     let mut sf = engine::Engine::start(&path, threads, 64, 2)?;
     let mut eval = |p: &shakmaty::Chess| match analysis::terminal_eval(p) {
@@ -142,7 +142,7 @@ pub fn line_moves(fen: &str, ucis: &[String]) -> Result<Vec<LineMove>, String> {
 /// What happens after a move: the engine's best continuation for both sides.
 pub fn refutation(fen: &str, uci: &str, depth: u32) -> Result<Refutation, String> {
     let before = analysis::parse_fen(fen)?;
-    let m = coach::parse_uci(&before, uci).ok_or("Illegaler Zug")?;
+    let m = coach::parse_uci(&before, uci).ok_or_else(|| crate::tr!("Illegaler Zug", "Illegal move"))?;
     let mut after = before.clone();
     after.play_unchecked(m);
 
@@ -150,7 +150,7 @@ pub fn refutation(fen: &str, uci: &str, depth: u32) -> Result<Refutation, String
         Some(lines) => (vec![], Some(lines[0].score)),
         None => {
             let path = engine::find_stockfish()
-                .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+                .ok_or_else(crate::i18n::no_stockfish)?;
             let mut sf = engine::Engine::start(&path, engine::threads(true), 64, 1)?;
             let lines = sf.analyse(&analysis::fen(&after), depth)?;
             let best = lines.into_iter().next();
@@ -179,9 +179,9 @@ pub fn engine_line(fen: &str, depth: u32, plies: usize) -> Result<Refutation, St
         return Ok(Refutation { moves: vec![], score: Some(score), text: String::new() });
     }
     let path = engine::find_stockfish()
-        .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+        .ok_or_else(crate::i18n::no_stockfish)?;
     let mut sf = engine::Engine::start(&path, engine::threads(true), 64, 1)?;
-    let best = sf.analyse(fen, depth)?.into_iter().next().ok_or("Die Engine hat keinen Zug gefunden.")?;
+    let best = sf.analyse(fen, depth)?.into_iter().next().ok_or_else(|| crate::tr!("Die Engine hat keinen Zug gefunden.", "The engine found no move."))?;
     let pv: Vec<String> = best.pv.into_iter().take(plies).collect();
     let score = if pos.turn() == Color::White { best.score } else { best.score.negate() };
     Ok(Refutation { moves: line_moves(fen, &pv)?, score: Some(score), text: coach::san_line(&pos, &pv, pv.len()) })
@@ -209,22 +209,22 @@ pub fn game_status(fens: &[String]) -> Result<GameStatus, String> {
         reason: Some(reason.to_string()),
     };
     if pos.is_checkmate() {
-        return Ok(end(Some(!pos.turn()), "Schachmatt"));
+        return Ok(end(Some(!pos.turn()), &crate::tr!("Schachmatt", "Checkmate")));
     }
     if pos.is_stalemate() {
-        return Ok(end(None, "Patt"));
+        return Ok(end(None, &crate::tr!("Patt", "Stalemate")));
     }
     if pos.is_insufficient_material() {
-        return Ok(end(None, "Zu wenig Material"));
+        return Ok(end(None, &crate::tr!("Zu wenig Material", "Insufficient material")));
     }
     if pos.halfmoves() >= 100 {
-        return Ok(end(None, "50-Züge-Regel"));
+        return Ok(end(None, &crate::tr!("50-Züge-Regel", "50-move rule")));
     }
     // Threefold repetition: same placement, side to move, castling and en passant.
     let key = |f: &str| f.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
     let k = key(last);
     if fens.iter().filter(|f| key(f) == k).count() >= 3 {
-        return Ok(end(None, "Dreifache Stellungswiederholung"));
+        return Ok(end(None, &crate::tr!("Dreifache Stellungswiederholung", "Threefold repetition")));
     }
     Ok(GameStatus { over: false, winner: None, reason: None })
 }

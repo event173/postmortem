@@ -70,7 +70,7 @@ impl Bot {
         let mut guard = self.engine.lock().unwrap();
         if guard.is_none() {
             let path = engine::find_stockfish()
-                .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+                .ok_or_else(crate::i18n::no_stockfish)?;
             // Strong levels may use more threads; weak ones are limited anyway.
             let threads = if level >= 8 { engine::threads(true) } else { 1 };
             *guard = Some(Engine::start(&path, threads, 64, 1)?);

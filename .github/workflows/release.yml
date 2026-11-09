@@ -64,6 +64,18 @@ jobs:
           cp "$exe" "../src-tauri/binaries/stockfish-${{ matrix.target }}$ext"
           ls -la ../src-tauri/binaries
 
+      # "What's new" from packaging/release-notes/<tag>.md, if there is one.
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          f="packaging/release-notes/${{ github.ref_name }}.md"
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            if [ -f "$f" ]; then cat "$f"; echo; fi
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,6 +83,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: postmortem ${{ github.ref_name }}
           releaseBody: |
+            ${{ steps.notes.outputs.body }}
             **Windows:** Installer (`.exe` oder `.msi`) herunterladen und ausführen. Beim ersten Start
             zeigt Windows evtl. „Unbekannter Herausgeber“ – „Weitere Informationen“ → „Trotzdem ausführen“.
 

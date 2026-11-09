@@ -13,7 +13,8 @@ import type { Key } from "chessground/types";
 
 import { windowLast } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
-import { $, badgeHtml, esc, fig, miniPieces, store } from "./util";
+import { playerName, t, tn } from "./i18n";
+import { $, badgeHtml, commentOf, esc, fig, miniPieces, store } from "./util";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 
 type Color = "white" | "black";
@@ -124,7 +125,9 @@ type Sort = "popular" | "mine" | "learning" | "az";
 type Phase = "loading" | "empty" | "opponent" | "solve" | "checking" | "wrong" | "done";
 
 const ACCEPTED: Class[] = ["brilliant", "great", "best", "excellent"];
-const SIDE: Record<Color, string> = { white: "Weiß", black: "Schwarz" };
+const SIDE: Record<Color, string> = { white: t("Weiß"), black: t("Schwarz") };
+/** The dataset's variation names are English; only "Hauptvariante" (main line) is ours. */
+const varName = (n: string) => (n === "Hauptvariante" ? t("Hauptvariante") : n);
 /** Clean runs in a row needed before a newly learned line counts as consolidated. */
 const CONSOLIDATE_RUNS = 2;
 const CONSOLIDATE_MAX = 5;
@@ -335,7 +338,7 @@ const thumbObserver = new IntersectionObserver(
 /** Two-tone bar: learned (green) and in progress (light green) out of `total`. */
 function progressBar(total: number, started: number, learned: number): string {
   if (!total) return "";
-  return `<span class="learn-bar" title="${learned} sicher, ${started - learned} in Arbeit, ${total - started} neu">
+  return `<span class="learn-bar" title="${t("{l} sicher, {s} in Arbeit, {n} neu", { l: learned, s: started - learned, n: total - started })}">
     <span class="lb-learned" style="width:${(learned / total) * 100}%"></span><span class="lb-started" style="width:${((started - learned) / total) * 100}%"></span></span>`;
 }
 
@@ -353,10 +356,10 @@ function renderList() {
   }
   if (!items.length) {
     const empty: Record<Sort, string> = {
-      popular: "Nichts gefunden.",
-      az: "Nichts gefunden.",
-      mine: "Noch keine analysierten Partien mit erkannter Eröffnung.",
-      learning: "Du lernst noch keine Eröffnung – such dir eine aus und klick auf „lernen“.",
+      popular: t("Nichts gefunden."),
+      az: t("Nichts gefunden."),
+      mine: t("Noch keine analysierten Partien mit erkannter Eröffnung."),
+      learning: t("Du lernst noch keine Eröffnung – such dir eine aus und klick auf „lernen“."),
     };
     grid.innerHTML = `<p class="muted">${empty[sort]}</p>`;
     return;
@@ -366,7 +369,7 @@ function renderList() {
       const p = played[f.name];
       const mineText =
         p && (p.white || p.black)
-          ? `<div class="op-mine">Deine Partien: ${[p.white ? `${p.white}× Weiß` : "", p.black ? `${p.black}× Schwarz` : ""].filter(Boolean).join(", ")}</div>`
+          ? `<div class="op-mine">${t("Deine Partien:")} ${[p.white ? t("{n}× Weiß", { n: p.white }) : "", p.black ? t("{n}× Schwarz", { n: p.black }) : ""].filter(Boolean).join(", ")}</div>`
           : "";
       const side = (color: Color) => {
         const pr = progress[`${color}|${f.name}`];
@@ -374,9 +377,9 @@ function renderList() {
         const inRep = repertoire[color].includes(f.name);
         return `<div class="op-side-row">
           <button class="op-learn ${started ? "primary" : ""}" data-color="${color}" data-family="${esc(f.name)}">
-            <span class="pdot ${color}"></span>${started ? "Weiterlernen" : "Lernen"} als ${SIDE[color]}</button>
-          ${pr ? `${progressBar(pr.lines, pr.started, pr.learned)}<span class="op-progress-text">${pr.learned}/${pr.lines}${pr.due ? ` · <b>${pr.due} fällig</b>` : ""}</span>` : ""}
-          ${inRep ? `<button class="op-remove" data-color="${color}" data-family="${esc(f.name)}" title="Aus dem Repertoire nehmen (Lernstand bleibt)">✕</button>` : ""}
+            <span class="pdot ${color}"></span>${started ? t("Weiterlernen als {side}", { side: SIDE[color] }) : t("Lernen als {side}", { side: SIDE[color] })}</button>
+          ${pr ? `${progressBar(pr.lines, pr.started, pr.learned)}<span class="op-progress-text">${pr.learned}/${pr.lines}${pr.due ? ` · <b>${t("{n} fällig", { n: pr.due })}</b>` : ""}</span>` : ""}
+          ${inRep ? `<button class="op-remove" data-color="${color}" data-family="${esc(f.name)}" title="${t("Aus dem Repertoire nehmen (Lernstand bleibt)")}">✕</button>` : ""}
         </div>`;
       };
       return `<div class="op-card">
@@ -384,7 +387,7 @@ function renderList() {
         <div class="op-card-body">
           <div class="op-title" title="${esc(f.name)}">${esc(f.name)}</div>
           <div class="op-moves">${esc(fig(f.moves))}</div>
-          <div class="muted op-meta">${esc(f.eco)} · ${f.lines} Varianten</div>
+          <div class="muted op-meta">${esc(f.eco)} · ${tn(f.lines, "1 Variante", "{n} Varianten")}</div>
           ${mineText}
           <div class="op-card-actions">${side("white")}${side("black")}</div>
         </div>
@@ -425,8 +428,8 @@ function renderSidebar() {
     const due = (status?.white.due ?? 0) + (status?.black.due ?? 0);
     summaryEl.querySelector(".op-summary-body")!.innerHTML = fams.length
       ? `<div class="op-rep-list">${fams.map((f) => `<span class="op-rep">${f}</span>`).join("")}</div>
-         <div class="muted">${due ? `<b>${due}</b> Varianten fällig` : "Nichts fällig"}</div>`
-      : `<span class="muted">Noch keine Eröffnungen gewählt.</span>`;
+         <div class="muted">${due ? t("<b>{n}</b> Varianten fällig", { n: due }) : t("Nichts fällig")}</div>`
+      : `<span class="muted">${t("Noch keine Eröffnungen gewählt.")}</span>`;
     return;
   }
 
@@ -437,24 +440,24 @@ function renderSidebar() {
   focusEl.innerHTML = `
     <div class="op-focus-top">
       <span class="pdot ${focus.color}"></span>
-      <div class="op-focus-title"><b>${esc(focus.family)}</b> <span class="muted">als ${SIDE[focus.color]}</span>
-        ${sub ? `<div class="op-focus-sub">nur: ${esc(sub)} <button id="op-focus-all" class="link">alle Varianten</button></div>` : ""}</div>
-      <button id="op-focus-x" class="icon" title="Lernen beenden – zurück zum gemischten Training">✕</button>
+      <div class="op-focus-title"><b>${esc(focus.family)}</b> <span class="muted">${t("als {side}", { side: SIDE[focus.color] })}</span>
+        ${sub ? `<div class="op-focus-sub">${t("nur:")} ${esc(varName(sub))} <button id="op-focus-all" class="link">${t("alle Varianten")}</button></div>` : ""}</div>
+      <button id="op-focus-x" class="icon" title="${t("Lernen beenden – zurück zum gemischten Training")}">✕</button>
     </div>
-    ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${p.learned} sicher · ${p.started - p.learned} in Arbeit · ${p.lines - p.started} neu</span></div>` : ""}`;
+    ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${t("{l} sicher · {s} in Arbeit · {n} neu", { l: p.learned, s: p.started - p.learned, n: p.lines - p.started })}</span></div>` : ""}`;
   $("op-focus-x").addEventListener("click", () => setFocus(null));
   document.getElementById("op-focus-all")?.addEventListener("click", () => setFocus({ color: focus!.color, family: focus!.family }));
 
   const current = drill?.kind === "line" ? drill.id : null;
-  varsEl.innerHTML = `<h3>Varianten</h3><p class="panel-sub">Klick auf eine Variante, um nur sie zu lernen. Grün = sicher, hell = in Arbeit.</p>
+  varsEl.innerHTML = `<h3>${t("Varianten")}</h3><p class="panel-sub">${t("Klick auf eine Variante, um nur sie zu lernen. Grün = sicher, hell = in Arbeit.")}</p>
     ${variations
       .map((g) => {
         const open = expanded.has(g.name);
         const selected = focus!.variation === g.name && !focus!.line;
         return `<div class="var-group ${selected ? "selected" : ""}">
           <div class="var-row">
-            <button class="var-toggle" data-group="${esc(g.name)}" title="${open ? "Zuklappen" : "Linien zeigen"}">${open ? "▾" : "▸"}</button>
-            <button class="var-name" data-group="${esc(g.name)}" title="Nur diese Variante lernen">${esc(g.name)}</button>
+            <button class="var-toggle" data-group="${esc(g.name)}" title="${open ? t("Zuklappen") : t("Linien zeigen")}">${open ? "▾" : "▸"}</button>
+            <button class="var-name" data-group="${esc(g.name)}" title="${t("Nur diese Variante lernen")}">${esc(varName(g.name))}</button>
             ${progressBar(g.total, g.started, g.learned)}
             <span class="var-count">${g.learned}/${g.total}${g.due ? ` · <b>${g.due}</b>` : ""}</span>
           </div>
@@ -463,11 +466,11 @@ function renderSidebar() {
               ? `<div class="var-lines">${g.lines
                   .map((l) => {
                     const state = l.boxLevel === 0 ? "new" : l.boxLevel >= 3 ? "learned" : "started";
-                    const label = state === "new" ? "neu" : state === "learned" ? "sicher" : `Stufe ${l.boxLevel}`;
-                    return `<button class="var-line ${l.id === current ? "current" : ""} ${focus!.line === l.id ? "selected" : ""}" data-line="${esc(l.id)}" title="Nur diese Linie lernen">
-                      <span class="line-dot ${state}" title="${label}${l.due ? ", fällig" : ""}"></span>
-                      <span class="line-name">${esc(l.name)}</span>
-                      <span class="muted">${Math.ceil(l.plies / 2)} Z.</span></button>`;
+                    const label = state === "new" ? t("neu") : state === "learned" ? t("sicher") : t("Stufe {n}", { n: l.boxLevel });
+                    return `<button class="var-line ${l.id === current ? "current" : ""} ${focus!.line === l.id ? "selected" : ""}" data-line="${esc(l.id)}" title="${t("Nur diese Linie lernen")}">
+                      <span class="line-dot ${state}" title="${label}${l.due ? t(", fällig") : ""}"></span>
+                      <span class="line-name">${esc(varName(l.name))}</span>
+                      <span class="muted">${t("{n} Z.", { n: Math.ceil(l.plies / 2) })}</span></button>`;
                   })
                   .join("")}</div>`
               : ""
@@ -497,7 +500,7 @@ function renderSidebar() {
 // ---------------------------------------------------------------------------
 // drills
 
-function startDrill(d: Drill | null, t: number) {
+function startDrill(d: Drill | null, tk: number) {
   drill = d;
   failed = false;
   hint = false;
@@ -516,15 +519,15 @@ function startDrill(d: Drill | null, t: number) {
   step = 0;
   setupSound();
   renderSidebar();
-  continueLine(t);
+  continueLine(tk);
 }
 
 async function loadNext() {
-  const t = ++token;
+  const tk = ++token;
   clearTimeout(timer);
   // Consolidation: replay the line just learned until it sits.
   if (consolidate) {
-    return startDrill({ ...consolidate.line, status: "practice" }, t);
+    return startDrill({ ...consolidate.line, status: "practice" }, tk);
   }
   phase = "loading";
   render();
@@ -532,23 +535,23 @@ async function loadNext() {
   try {
     d = await invoke<Drill | null>("opening_next", { accounts: deps.accounts(), last: windowLast(), mode, focus });
   } catch (e) {
-    if (t !== token) return;
+    if (tk !== token) return;
     phase = "empty";
     render(String(e));
     return;
   }
-  if (t !== token) return;
-  startDrill(d, t);
+  if (tk !== token) return;
+  startDrill(d, tk);
 }
 
 /** Play the opponent's moves until it's your turn (or the line is over). */
-function continueLine(t: number) {
+function continueLine(tk: number) {
   const d = drill!;
   if (d.kind === "own") {
     phase = "solve";
     return render();
   }
-  if (step >= d.moves.length) return finish(t);
+  if (step >= d.moves.length) return finish(tk);
   if (sideOf(fen) === d.color) {
     phase = "solve";
     return render();
@@ -557,14 +560,14 @@ function continueLine(t: number) {
   render();
   timer = window.setTimeout(
     async () => {
-      if (t !== token) return;
+      if (tk !== token) return;
       const played = await play(fen, d.moves[step]);
-      if (t !== token) return;
+      if (tk !== token) return;
       fen = played.fen;
       lastMove = played.uci;
       moveSound(played.san);
       step++;
-      continueLine(t);
+      continueLine(tk);
     },
     step === 0 ? 500 : deps.animMs() + 250,
   );
@@ -577,7 +580,7 @@ function play(from: string, uci: string): Promise<PlayedMove> {
 export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   const d = drill;
   if (!d || (phase !== "solve" && phase !== "wrong")) return render();
-  const t = token;
+  const tk = token;
   const expected = d.moves[step];
   const promo = expected && expected.slice(0, 4) === orig + dest ? expected[4] : promotion;
   let played: PlayedMove;
@@ -586,9 +589,9 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   } catch {
     return render();
   }
-  if (t !== token) return;
+  if (tk !== token) return;
 
-  if (played.uci === expected) return correct(played, t);
+  if (played.uci === expected) return correct(played, tk);
   if (d.kind === "own") {
     phase = "checking";
     showTry(played);
@@ -597,8 +600,8 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
     } catch {
       verdict = null;
     }
-    if (t !== token) return;
-    if (verdict && ACCEPTED.includes(verdict.classification)) return correct(played, t);
+    if (tk !== token) return;
+    if (verdict && ACCEPTED.includes(verdict.classification)) return correct(played, tk);
   }
   if (!learning()) failed = true;
   wrongTry = played;
@@ -606,33 +609,33 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   errorSound();
   showTry(played);
   timer = window.setTimeout(() => {
-    if (t === token && phase === "wrong") render();
+    if (tk === token && phase === "wrong") render();
   }, 900);
 }
 
-function correct(played: PlayedMove, t: number) {
+function correct(played: PlayedMove, tk: number) {
   moveSound(played.san);
   fen = played.fen;
   lastMove = played.uci;
   step++;
   wrongTry = null;
   hint = false;
-  if (drill!.kind === "own") return finish(t);
-  continueLine(t);
+  if (drill!.kind === "own") return finish(tk);
+  continueLine(tk);
 }
 
 /** Show the correct move (counts as a mistake) and carry on. */
 async function showMove() {
   const d = drill;
   if (!d || !d.moves[step]) return;
-  const t = token;
+  const tk = token;
   if (!learning()) failed = true;
   const played = await play(fen, d.moves[step]);
-  if (t !== token) return;
-  correct(played, t);
+  if (tk !== token) return;
+  correct(played, tk);
 }
 
-async function finish(t: number) {
+async function finish(tk: number) {
   const d = drill!;
   phase = "done";
   if (!failed) successSound();
@@ -653,7 +656,7 @@ async function finish(t: number) {
       color: d.color,
       success: !failed,
     });
-    if (t !== token) return;
+    if (tk !== token) return;
     resultBox = r.boxLevel;
     resultDue = r.due;
     status = r.status;
@@ -663,7 +666,7 @@ async function finish(t: number) {
   // A line was just taught: consolidate it right away (without arrows).
   if (d.kind === "line" && d.status === "new") consolidate = { line: d, clean: 0, runs: 0 };
   await Promise.all([loadProgress(), loadVariations()]);
-  if (t !== token) return;
+  if (tk !== token) return;
   renderSidebar();
   renderText();
 }
@@ -706,9 +709,9 @@ function render(error?: string) {
     });
     deps.board.setAutoShapes(shapes);
     if (phase === "solve" || phase === "wrong") {
-      const t = token;
+      const tk = token;
       invoke<PositionInfo>("position_info", { fen }).then((info) => {
-        if (t !== token || !active || (phase !== "solve" && phase !== "wrong")) return;
+        if (tk !== token || !active || (phase !== "solve" && phase !== "wrong")) return;
         deps.board.set({ movable: { color: d.color, dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
       });
     }
@@ -718,10 +721,10 @@ function render(error?: string) {
 
 function relDays(due: number): string {
   const minutes = Math.round((due - Date.now()) / 60_000);
-  if (minutes < 60) return minutes <= 1 ? "gleich" : `in ${minutes} Minuten`;
+  if (minutes < 60) return minutes <= 1 ? t("gleich") : t("in {n} Minuten", { n: minutes });
   const days = Math.round(minutes / 1440);
-  if (days <= 1) return "morgen";
-  return `in ${days} Tagen`;
+  if (days <= 1) return t("morgen");
+  return t("in {n} Tagen", { n: days });
 }
 
 /** "Zug 5 von 9" plus a marker where the named theory ends. */
@@ -730,7 +733,10 @@ function lineProgress(d: Drill): string {
   const mine = d.moves.filter((_, i) => (i % 2 === 0) === (d.color === "white")).length;
   const done = d.moves.slice(0, step).filter((_, i) => (i % 2 === 0) === (d.color === "white")).length;
   const engine = step >= d.bookLen && d.moves.length > d.bookLen;
-  return `<span class="muted">Zug ${Math.min(done + 1, mine)} von ${mine}${engine ? " · <span class=\"engine-mark\" title=\"Die benannte Theorie ist zu Ende; ab hier die beste Fortsetzung laut Stockfish\">Engine-Fortsetzung</span>" : ""}</span>`;
+  const mark = engine
+    ? ` · <span class="engine-mark" title="${t("Die benannte Theorie ist zu Ende; ab hier die beste Fortsetzung laut Stockfish")}">${t("Engine-Fortsetzung")}</span>`
+    : "";
+  return `<span class="muted">${t("Zug {i} von {n}", { i: Math.min(done + 1, mine), n: mine })}${mark}</span>`;
 }
 
 function renderText(error?: string) {
@@ -743,97 +749,105 @@ function renderText(error?: string) {
   const d = drill;
 
   if (phase === "loading") {
-    head.innerHTML = `<span class="muted">Bereite die nächste Variante vor …</span>`;
+    head.innerHTML = `<span class="muted">${t("Bereite die nächste Variante vor …")}</span>`;
     text.innerHTML = "";
     actions.innerHTML = "";
     return;
   }
   if (phase === "empty" || !d) {
-    head.innerHTML = `<span class="coach-title">${focus ? "Alles gelernt" : "Nichts zu üben"}</span>`;
+    head.innerHTML = `<span class="coach-title">${focus ? t("Alles gelernt") : t("Nichts zu üben")}</span>`;
     text.innerHTML = error
       ? `<span class="error">${esc(error)}</span>`
       : focus
-        ? `Alle Varianten hier sind gelernt und gerade nichts fällig. Die Wiederholungen kommen zur rechten Zeit – oder wähl rechts eine andere Variante.`
+        ? t("Alle Varianten hier sind gelernt und gerade nichts fällig. Die Wiederholungen kommen zur rechten Zeit – oder wähl rechts eine andere Variante.")
         : mode === "own"
-          ? `Gerade keine Eröffnungsfehler aus deinen Partien fällig – gelöste Stellungen ruhen eine Weile.`
-          : `Such dir unter „Eröffnungen wählen“ aus, was du lernen willst.`;
-    actions.innerHTML = focus ? "" : `<button data-act="browse" class="primary">Eröffnungen wählen</button>`;
+          ? t("Gerade keine Eröffnungsfehler aus deinen Partien fällig – gelöste Stellungen ruhen eine Weile.")
+          : t("Such dir unter „Eröffnungen wählen“ aus, was du lernen willst.");
+    actions.innerHTML = focus ? "" : `<button data-act="browse" class="primary">${t("Eröffnungen wählen")}</button>`;
     bindActions(d);
     return;
   }
 
   const tag =
     d.kind === "own"
-      ? `<span class="pz-tag own">Aus deiner Partie</span>`
+      ? `<span class="pz-tag own">${t("Aus deiner Partie")}</span>`
       : d.status === "new"
-        ? `<span class="pz-tag mixed">Neu lernen</span>`
+        ? `<span class="pz-tag mixed">${t("Neu lernen")}</span>`
         : d.status === "practice"
-          ? `<span class="pz-tag op-practice-tag">Festigen ${(consolidate?.clean ?? 0) + (phase === "done" ? 0 : 1)}/${CONSOLIDATE_RUNS}</span>`
-          : `<span class="pz-tag op-review">Wiederholung</span>`;
-  const shortName = d.name.includes(":") ? d.name.split(":").slice(1).join(":").trim() : d.name;
+          ? `<span class="pz-tag op-practice-tag">${t("Festigen")} ${(consolidate?.clean ?? 0) + (phase === "done" ? 0 : 1)}/${CONSOLIDATE_RUNS}</span>`
+          : `<span class="pz-tag op-review">${t("Wiederholung")}</span>`;
+  const shortName = d.name.includes(":") ? d.name.split(":").slice(1).join(":").trim() : varName(d.name);
   head.innerHTML = `${tag}<span class="op-name" title="${esc(d.name)}">${esc(focus ? shortName : d.name)}</span>`;
 
   const side = SIDE[d.color];
   const expected = d.moves[step];
   switch (phase) {
     case "opponent":
-      text.innerHTML = `<span class="muted">Der Gegner zieht …</span><br>${lineProgress(d)}`;
+      text.innerHTML = `<span class="muted">${t("Der Gegner zieht …")}</span><br>${lineProgress(d)}`;
       break;
     case "solve":
       if (d.kind === "own" && d.own) {
         const num = Math.ceil(d.own.ply / 2) + (d.own.ply % 2 ? "." : "...");
-        text.innerHTML = `Gegen ${esc(d.own.opponent)} hast du hier <b>${num} ${esc(fig(d.own.san))}</b> gespielt – ${CLASSES[d.own.classification].phrase}. Was ist besser?`;
+        text.innerHTML = t("Gegen {name} hast du hier {move} gespielt – {phrase}. Was ist besser?", {
+          name: esc(playerName(d.own.opponent)),
+          move: `<b>${num} ${esc(fig(d.own.san))}</b>`,
+          phrase: CLASSES[d.own.classification].phrase,
+        });
       } else if (learning()) {
-        text.innerHTML = `<b>Spiel den grünen Pfeil nach.</b> Der Gegner antwortet, merk dir die Zugfolge.<br>${lineProgress(d)}`;
+        text.innerHTML = `${t("<b>Spiel den grünen Pfeil nach.</b> Der Gegner antwortet, merk dir die Zugfolge.")}<br>${lineProgress(d)}`;
       } else if (d.status === "practice") {
-        text.innerHTML = `<b>Jetzt ohne Pfeile:</b> spiel die Variante, die du gerade gelernt hast.<br>${lineProgress(d)}`;
+        text.innerHTML = `${t("<b>Jetzt ohne Pfeile:</b> spiel die Variante, die du gerade gelernt hast.")}<br>${lineProgress(d)}`;
       } else {
-        text.innerHTML = `<b>${side} am Zug.</b> Welcher Zug gehört zu deinem Repertoire?${d.status === "early" ? ` <span class="muted">(vorgezogen)</span>` : ""}<br>${lineProgress(d)}`;
+        text.innerHTML = `<b>${t("{side} am Zug.", { side })}</b> ${t("Welcher Zug gehört zu deinem Repertoire?")}${d.status === "early" ? ` <span class="muted">${t("(vorgezogen)")}</span>` : ""}<br>${lineProgress(d)}`;
       }
-      if (hint && expected) text.innerHTML += `<br><span class="hint-text">Tipp: Zieh von ${expected.slice(0, 2)}.</span>`;
+      if (hint && expected) text.innerHTML += `<br><span class="hint-text">${t("Tipp: Zieh von {square}.", { square: expected.slice(0, 2) })}</span>`;
       break;
     case "checking":
-      text.innerHTML = `<span class="muted">Prüfe deinen Zug …</span>`;
+      text.innerHTML = `<span class="muted">${t("Prüfe deinen Zug …")}</span>`;
       break;
     case "wrong":
       if (d.kind === "line" && learning()) {
-        text.innerHTML = `Das ist nicht der markierte Zug – spiel den grünen Pfeil nach.`;
+        text.innerHTML = t("Das ist nicht der markierte Zug – spiel den grünen Pfeil nach.");
       } else if (d.kind === "line") {
-        text.innerHTML = `<b>${esc(fig(wrongTry?.san ?? ""))}</b> gehört nicht zu dieser Variante. Der grüne Pfeil zeigt den richtigen Zug – spiel ihn nach.`;
+        text.innerHTML = t("{move} gehört nicht zu dieser Variante. Der grüne Pfeil zeigt den richtigen Zug – spiel ihn nach.", {
+          move: `<b>${esc(fig(wrongTry?.san ?? ""))}</b>`,
+        });
       } else {
         text.innerHTML = verdict
-          ? `${badgeHtml(verdict.classification)} <b>${esc(fig(verdict.san))}</b> ist ${CLASSES[verdict.classification].phrase}. ${esc(fig(verdict.comment))} <span class="muted">Versuch es nochmal.</span>`
-          : `Das ist nicht besser. <span class="muted">Versuch es nochmal.</span>`;
+          ? `${badgeHtml(verdict.classification)} ${t("{move} ist {phrase}", { move: `<b>${esc(fig(verdict.san))}</b>`, phrase: CLASSES[verdict.classification].phrase })}. ${esc(fig(commentOf(verdict)))} <span class="muted">${t("Versuch es nochmal.")}</span>`
+          : `${t("Das ist nicht besser.")} <span class="muted">${t("Versuch es nochmal.")}</span>`;
       }
       break;
     case "done": {
       if (d.status === "practice") {
         text.innerHTML = consolidate
           ? failed
-            ? `Noch nicht ganz – <b>nochmal</b>. Zweimal fehlerfrei hintereinander, dann sitzt sie.`
-            : `<b class="ok">Fehlerfrei!</b> Noch einmal, dann sitzt sie.`
-          : `<b class="ok">Variante sitzt.</b> Sie kommt zur Wiederholung wieder, bevor du sie vergisst.`;
+            ? t("Noch nicht ganz – <b>nochmal</b>. Zweimal fehlerfrei hintereinander, dann sitzt sie.")
+            : t("<b class=\"ok\">Fehlerfrei!</b> Noch einmal, dann sitzt sie.")
+          : t("<b class=\"ok\">Variante sitzt.</b> Sie kommt zur Wiederholung wieder, bevor du sie vergisst.");
       } else if (d.kind === "line" && d.status === "new") {
-        text.innerHTML = `<b class="ok">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander sitzt.`;
+        text.innerHTML = t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander sitzt.");
       } else {
         const when = resultDue ? relDays(resultDue) : "";
         text.innerHTML = failed
-          ? `<b>Geschafft</b> – mit Fehlern. Kommt <b>${when || "bald"}</b> nochmal.`
-          : `<b class="ok">Richtig!</b> Nächste Wiederholung <b>${when || "…"}</b>${resultBox ? ` <span class="muted">(Stufe ${resultBox}/5)</span>` : ""}.`;
+          ? t("<b>Geschafft</b> – mit Fehlern. Kommt <b>{when}</b> nochmal.", { when: when || t("bald") })
+          : t("<b class=\"ok\">Richtig!</b> Nächste Wiederholung <b>{when}</b>", { when: when || "…" }) +
+            (resultBox ? ` <span class="muted">${t("(Stufe {n}/5)", { n: resultBox })}</span>` : "") +
+            ".";
       }
-      if (d.own) extra.innerHTML = `<span class="muted">In der Partie:</span> ${esc(fig(d.own.comment))}`;
+      if (d.own) extra.innerHTML = `<span class="muted">${t("In der Partie:")}</span> ${esc(fig(d.own.comment))}`;
       break;
     }
   }
 
-  const game = d.own ? `<button data-act="game">Partie öffnen</button>` : "";
+  const game = d.own ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
   actions.innerHTML =
     phase === "done"
-      ? `${game}<button data-act="next" class="primary end">Weiter →</button>`
-      : `${learning() ? "" : `<button data-act="hint" ${hint || phase !== "solve" ? "disabled" : ""}>Tipp</button>`}
-         ${learning() ? "" : `<button data-act="show" ${phase === "solve" || phase === "wrong" ? "" : "disabled"}>${d.kind === "line" ? "Zug zeigen" : "Lösung zeigen"}</button>`}
+      ? `${game}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
+      : `${learning() ? "" : `<button data-act="hint" ${hint || phase !== "solve" ? "disabled" : ""}>${t("Tipp")}</button>`}
+         ${learning() ? "" : `<button data-act="show" ${phase === "solve" || phase === "wrong" ? "" : "disabled"}>${d.kind === "line" ? t("Zug zeigen") : t("Lösung zeigen")}</button>`}
          ${game}
-         <button data-act="skip" class="end">Überspringen</button>`;
+         <button data-act="skip" class="end">${t("Überspringen")}</button>`;
   bindActions(d);
 }
 

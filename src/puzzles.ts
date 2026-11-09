@@ -5,13 +5,15 @@
 // before one of your mistakes; any move the engine rates "Excellent" or better counts.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Api } from "chessground/api";
 import type { DrawShape } from "chessground/draw";
 import type { Key } from "chessground/types";
 
 import { THEMES, gameWindow, setGameWindow, windowLast, type GameWindow } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo, type Theme } from "./types";
-import { $, badgeHtml, esc, fig } from "./util";
+import { locale, playerName, t } from "./i18n";
+import { $, badgeHtml, commentOf, esc, fig } from "./util";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 
 type Kind = "lichess" | "own";
@@ -98,40 +100,40 @@ const ACCEPTED: Class[] = ["brilliant", "great", "best", "excellent"];
 
 /** Names for the Lichess themes shown after solving. */
 const LICHESS_THEMES: Record<string, string> = {
-  fork: "Gabel",
-  pin: "Fesselung",
-  skewer: "Spieß",
-  hangingPiece: "Hängende Figur",
-  trappedPiece: "Gefangene Figur",
-  discoveredAttack: "Abzugsangriff",
-  deflection: "Ablenkung",
-  attraction: "Hinlenkung",
-  intermezzo: "Zwischenzug",
-  quietMove: "Stiller Zug",
-  defensiveMove: "Verteidigung",
-  zugzwang: "Zugzwang",
-  sacrifice: "Opfer",
-  backRankMate: "Grundreihenmatt",
-  mateIn1: "Matt in 1",
-  mateIn2: "Matt in 2",
-  mateIn3: "Matt in 3",
-  mateIn4: "Matt in 4",
-  mateIn5: "Matt in 5",
-  mate: "Matt",
-  crushing: "Entscheidender Vorteil",
-  advantage: "Vorteil",
-  endgame: "Endspiel",
-  middlegame: "Mittelspiel",
-  opening: "Eröffnung",
-  promotion: "Umwandlung",
-  doubleCheck: "Doppelschach",
-  clearance: "Räumung",
-  xRayAttack: "Röntgenangriff",
-  interference: "Unterbrechung",
-  capturingDefender: "Verteidiger schlagen",
-  exposedKing: "Ungeschützter König",
-  kingsideAttack: "Königsangriff",
-  smotheredMate: "Ersticktes Matt",
+  fork: t("Gabel"),
+  pin: t("Fesselung"),
+  skewer: t("Spieß"),
+  hangingPiece: t("Hängende Figur"),
+  trappedPiece: t("Gefangene Figur"),
+  discoveredAttack: t("Abzugsangriff"),
+  deflection: t("Ablenkung"),
+  attraction: t("Hinlenkung"),
+  intermezzo: t("Zwischenzug"),
+  quietMove: t("Stiller Zug"),
+  defensiveMove: t("Verteidigung"),
+  zugzwang: t("Zugzwang"),
+  sacrifice: t("Opfer"),
+  backRankMate: t("Grundreihenmatt"),
+  mateIn1: t("Matt in 1"),
+  mateIn2: t("Matt in 2"),
+  mateIn3: t("Matt in 3"),
+  mateIn4: t("Matt in 4"),
+  mateIn5: t("Matt in 5"),
+  mate: t("Matt"),
+  crushing: t("Entscheidender Vorteil"),
+  advantage: t("Vorteil"),
+  endgame: t("Endspiel"),
+  middlegame: t("Mittelspiel"),
+  opening: t("Eröffnung"),
+  promotion: t("Umwandlung"),
+  doubleCheck: t("Doppelschach"),
+  clearance: t("Räumung"),
+  xRayAttack: t("Röntgenangriff"),
+  interference: t("Unterbrechung"),
+  capturingDefender: t("Verteidiger schlagen"),
+  exposedKing: t("Ungeschützter König"),
+  kingsideAttack: t("Königsangriff"),
+  smotheredMate: t("Ersticktes Matt"),
 };
 
 let deps: PuzzleDeps;
@@ -228,6 +230,29 @@ export function initPuzzles(d: PuzzleDeps) {
     setGameWindow(select.value as GameWindow);
     next = null; // the prefetched puzzle was chosen for the old window
   });
+  $("pz-banner-install").addEventListener("click", () => deps.openSettings());
+  // Deleted (or installed) in the settings while this tab is open.
+  $("settings").addEventListener("close", () => {
+    if (active) checkDatabase();
+  });
+  // Database installed or deleted in the settings: update the banner, and
+  // replace the "no puzzles" screen with a real puzzle.
+  listen<{ phase: string }>("puzzle-progress", (e) => {
+    if (e.payload.phase !== "done") return;
+    next = null;
+    checkDatabase();
+    if (active && phase === "empty") loadNext();
+  });
+}
+
+/** Banner on top of the tab while the Lichess puzzle database is missing. */
+async function checkDatabase() {
+  try {
+    const st = await invoke<{ installed: boolean }>("puzzle_status");
+    $("pz-banner").hidden = st.installed;
+  } catch {
+    $("pz-banner").hidden = true;
+  }
 }
 
 export function isPuzzleMode(): boolean {
@@ -238,6 +263,7 @@ export function enterPuzzles() {
   active = true;
   ($("pz-window") as HTMLSelectElement).value = gameWindow();
   deps.board.setShapes([]);
+  checkDatabase();
   loadProfile();
   if (!puzzle || phase === "empty") loadNext();
   else render();
@@ -275,7 +301,7 @@ function fetchPuzzle(): Promise<Puzzle | null> {
 }
 
 async function loadNext() {
-  const t = ++token;
+  const tk = ++token;
   clearTimeout(timer);
   phase = "loading";
   // Clear the last puzzle's marks right away (no animation is running now, so
@@ -288,13 +314,13 @@ async function loadNext() {
     p = await (next ?? fetchPuzzle());
   } catch (e) {
     next = null;
-    if (t !== token) return;
+    if (tk !== token) return;
     phase = "empty";
     render(String(e));
     return;
   }
   next = null;
-  if (t !== token) return;
+  if (tk !== token) return;
   puzzle = p;
   if (!p) {
     phase = "empty";
@@ -307,11 +333,11 @@ async function loadNext() {
 
   replay = false;
   result = null;
-  beginPuzzle(t);
+  beginPuzzle(tk);
 }
 
 /** (Re)start the current puzzle from its first position. */
-function beginPuzzle(t: number) {
+function beginPuzzle(tk: number) {
   const p = puzzle!;
   fen = p.fen;
   step = 0;
@@ -334,7 +360,7 @@ function beginPuzzle(t: number) {
     // You play the side that is *not* to move: the opponent's move comes first.
     phase = "opponent";
     render();
-    timer = window.setTimeout(() => playOpponent(t), 700);
+    timer = window.setTimeout(() => playOpponent(tk), 700);
   } else {
     phase = "solve";
     render();
@@ -345,11 +371,11 @@ async function playMove(uci: string): Promise<PlayedMove> {
   return invoke<PlayedMove>("play_move", { fen, from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
 }
 
-async function playOpponent(t: number) {
-  if (t !== token || !puzzle) return;
+async function playOpponent(tk: number) {
+  if (tk !== token || !puzzle) return;
   const uci = puzzle.moves[step];
   const played = await playMove(uci);
-  if (t !== token) return;
+  if (tk !== token) return;
   fen = played.fen;
   lastMove = played.uci;
   pushHistory(played.check);
@@ -364,7 +390,7 @@ export async function puzzleMove(orig: Key, dest: Key, promotion?: string) {
   const p = puzzle;
   if (p && finished()) return exploreMove(orig, dest, promotion);
   if (!p || (phase !== "solve" && phase !== "wrong")) return render();
-  const t = token;
+  const tk = token;
   const expected = p.moves[step];
   // Same squares as the solution: use its promotion piece (board promotes to a queen by default).
   const promo = expected && expected.slice(0, 4) === orig + dest ? expected[4] : promotion;
@@ -374,17 +400,17 @@ export async function puzzleMove(orig: Key, dest: Key, promotion?: string) {
   } catch {
     return render();
   }
-  if (t !== token) return;
+  if (tk !== token) return;
 
   if (p.kind === "lichess") {
     const isLast = step === p.moves.length - 1;
     const correct = played.uci === expected || (isLast && (await isMate(played)));
-    if (correct) return advance(played, t);
-    return wrong(played, t);
+    if (correct) return advance(played, tk);
+    return wrong(played, tk);
   }
 
   // Own position: exact best move, or anything the engine rates Excellent or better.
-  if (played.uci === expected) return advance(played, t);
+  if (played.uci === expected) return advance(played, tk);
   phase = "checking";
   showTry(played);
   try {
@@ -392,9 +418,9 @@ export async function puzzleMove(orig: Key, dest: Key, promotion?: string) {
   } catch {
     ownVerdict = null;
   }
-  if (t !== token) return;
-  if (ownVerdict && ACCEPTED.includes(ownVerdict.classification)) return advance(played, t);
-  wrong(played, t);
+  if (tk !== token) return;
+  if (ownVerdict && ACCEPTED.includes(ownVerdict.classification)) return advance(played, tk);
+  wrong(played, tk);
 }
 
 async function isMate(played: PlayedMove): Promise<boolean> {
@@ -413,7 +439,7 @@ function showTry(played: PlayedMove) {
   renderText();
 }
 
-async function advance(played: PlayedMove, t: number) {
+async function advance(played: PlayedMove, tk: number) {
   const p = puzzle!;
   fen = played.fen;
   lastMove = played.uci;
@@ -431,10 +457,10 @@ async function advance(played: PlayedMove, t: number) {
   // Opponent's reply, then your turn again.
   phase = "opponent";
   render();
-  timer = window.setTimeout(() => playOpponent(t), deps.animMs() + 250);
+  timer = window.setTimeout(() => playOpponent(tk), deps.animMs() + 250);
 }
 
-async function wrong(played: PlayedMove, t: number) {
+async function wrong(played: PlayedMove, tk: number) {
   phase = "wrong";
   errorSound();
   lastTry = { fenBefore: fen, played };
@@ -445,7 +471,7 @@ async function wrong(played: PlayedMove, t: number) {
   }
   // Show the wrong move briefly, then go back to the puzzle position.
   timer = window.setTimeout(() => {
-    if (t === token && phase === "wrong") render();
+    if (tk === token && phase === "wrong") render();
   }, 900);
 }
 
@@ -467,7 +493,7 @@ async function record(solved: boolean) {
 // --- free exploration after the puzzle --------------------------------------
 
 async function exploreMove(orig: Key, dest: Key, promotion?: string) {
-  const t = token;
+  const tk = token;
   const before = viewFen();
   branchAtView();
   let played: PlayedMove;
@@ -476,7 +502,7 @@ async function exploreMove(orig: Key, dest: Key, promotion?: string) {
   } catch {
     return render();
   }
-  if (t !== token) return;
+  if (tk !== token) return;
   const m: ExploreMove = { fenBefore: before, fen: played.fen, uci: played.uci, san: played.san, check: played.check, pending: true };
   explore.push(m);
   moveSound(m.san);
@@ -488,36 +514,36 @@ async function exploreMove(orig: Key, dest: Key, promotion?: string) {
     /* no verdict, the move still stands */
   }
   m.pending = false;
-  if (t === token && explore.includes(m)) render();
+  if (tk === token && explore.includes(m)) render();
 }
 
 /** Let Stockfish play the best move for the side to move. */
 async function engineMove() {
-  const t = token;
+  const tk = token;
   const before = viewFen();
   branchAtView();
   engineBusy = true;
   renderText();
   try {
     const line = await invoke<Refutation>("engine_line", { fen: before, plies: 1 });
-    if (t !== token || viewFen() !== before) return;
+    if (tk !== token || viewFen() !== before) return;
     const mv = line.moves[0];
     if (mv) {
       explore.push({ fenBefore: before, ...mv, engine: true });
       moveSound(mv.san);
     }
-    else exploreNote = "Keine Züge mehr – die Partie ist hier zu Ende.";
+    else exploreNote = t("Keine Züge mehr – die Partie ist hier zu Ende.");
   } catch (e) {
     exploreNote = String(e);
   } finally {
     engineBusy = false;
-    if (t === token) render();
+    if (tk === token) render();
   }
 }
 
 function exploreText(): string {
   if (!explore.length) {
-    return `<p class="explore-hint">Zieh jetzt frei weiter – für beide Seiten – oder lass die Engine ziehen, um zu sehen, was passieren würde.</p>`;
+    return `<p class="explore-hint">${t("Zieh jetzt frei weiter – für beide Seiten – oder lass die Engine ziehen, um zu sehen, was passieren würde.")}</p>`;
   }
   const moves = explore
     .map((m) => {
@@ -527,11 +553,11 @@ function exploreText(): string {
     .join(" ");
   const last = explore[explore.length - 1];
   let verdict = "";
-  if (last.engine) verdict = `<b>${esc(fig(last.san))}</b> – bester Zug laut Engine.`;
-  else if (last.pending) verdict = `<span class="muted">Bewerte ${esc(fig(last.san))} …</span>`;
+  if (last.engine) verdict = t("{move} – bester Zug laut Engine.", { move: `<b>${esc(fig(last.san))}</b>` });
+  else if (last.pending) verdict = `<span class="muted">${t("Bewerte {move} …", { move: esc(fig(last.san)) })}</span>`;
   else if (last.review) {
     const r = last.review;
-    verdict = `<b>${esc(fig(r.san))}</b> ist ${CLASSES[r.classification].phrase}. ${esc(fig(r.comment))}`;
+    verdict = `${t("{move} ist {phrase}", { move: `<b>${esc(fig(r.san))}</b>`, phrase: CLASSES[r.classification].phrase })}. ${esc(fig(commentOf(r)))}`;
   }
   return `<div class="explore-line">${moves}</div><div class="explore-verdict">${verdict}</div>`;
 }
@@ -540,7 +566,7 @@ function exploreText(): string {
 async function showWhy() {
   const tryNow = lastTry;
   if (!tryNow) return;
-  const t = token;
+  const tk = token;
   clearTimeout(timer);
   phase = "showing";
   if (!refute || refute.uci !== tryNow.played.uci) {
@@ -550,12 +576,12 @@ async function showWhy() {
       const r = await invoke<Refutation>("refutation", { fen: tryNow.fenBefore, uci: tryNow.played.uci });
       refute = { ...r, uci: tryNow.played.uci, shown: 0 };
     } catch (e) {
-      if (t !== token) return;
+      if (tk !== token) return;
       phase = "wrong";
       render(String(e));
       return;
     }
-    if (t !== token || phase !== "showing") return;
+    if (tk !== token || phase !== "showing") return;
   }
   const line = refute.moves;
   refute.shown = 0;
@@ -569,7 +595,7 @@ async function showWhy() {
   deps.board.setAutoShapes([]);
   renderText();
   const stepOnce = () => {
-    if (t !== token || phase !== "showing" || !refute) return;
+    if (tk !== token || phase !== "showing" || !refute) return;
     const m = line[refute.shown];
     if (!m) return renderText();
     deps.board.set({ fen: m.fen, lastMove: [sq(m.uci, true), sq(m.uci, false)], check: m.check });
@@ -591,7 +617,7 @@ function backToPuzzle() {
 async function showSolution() {
   const p = puzzle;
   if (!p) return;
-  const t = token;
+  const tk = token;
   clearTimeout(timer);
   if (!failed) {
     failed = true;
@@ -600,9 +626,9 @@ async function showSolution() {
   phase = "failed";
   // Play the remaining solution moves one after another.
   const playRest = async () => {
-    if (t !== token || step >= p.moves.length) return render();
+    if (tk !== token || step >= p.moves.length) return render();
     const played = await playMove(p.moves[step]);
-    if (t !== token) return;
+    if (tk !== token) return;
     fen = played.fen;
     lastMove = played.uci;
     pushHistory(played.check);
@@ -652,16 +678,16 @@ function render(error?: string) {
     board.setAutoShapes(shapes);
     if (finished()) {
       // Both sides may move: always the side to move.
-      const t = token;
+      const tk = token;
       invoke<PositionInfo>("position_info", { fen: shownFen }).then((info) => {
-        if (t !== token || !active || !finished() || viewFen() !== shownFen) return;
+        if (tk !== token || !active || !finished() || viewFen() !== shownFen) return;
         board.set({ movable: { color: sideOf(shownFen), dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
       });
     }
     if (phase === "solve" || phase === "wrong") {
-      const t = token;
+      const tk = token;
       invoke<PositionInfo>("position_info", { fen }).then((info) => {
-        if (t !== token || !active || (phase !== "solve" && phase !== "wrong")) return;
+        if (tk !== token || !active || (phase !== "solve" && phase !== "wrong")) return;
         board.set({ movable: { color: me, dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
       });
     }
@@ -675,12 +701,12 @@ function badgeSvg(color: string, symbol: string): string {
 }
 
 const PIECE_NAMES: Record<string, string> = {
-  p: "dem Bauern",
-  n: "dem Springer",
-  b: "dem Läufer",
-  r: "dem Turm",
-  q: "der Dame",
-  k: "dem König",
+  p: t("dem Bauern"),
+  n: t("dem Springer"),
+  b: t("dem Läufer"),
+  r: t("dem Turm"),
+  q: t("der Dame"),
+  k: t("dem König"),
 };
 
 /** Piece letter on a square of a FEN position ("e4" -> "N"), or null. */
@@ -700,22 +726,27 @@ function hintText(p: Puzzle): string {
   const move = p.moves[step];
   if (!move) return "";
   const piece = pieceAt(fen, move.slice(0, 2));
-  const name = piece ? PIECE_NAMES[piece.toLowerCase()] : "der markierten Figur";
-  return `<span class="hint-text">Tipp: Zieh mit ${name} von ${move.slice(0, 2)}.</span>`;
+  const name = piece ? PIECE_NAMES[piece.toLowerCase()] : t("der markierten Figur");
+  return `<span class="hint-text">${t("Tipp: Zieh mit {piece} von {square}.", { piece: name, square: move.slice(0, 2) })}</span>`;
 }
 
 function categoryTag(p: Puzzle): string {
   if (p.category === "own" && p.own) {
-    const d = new Date(p.own.createdAt).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
-    return `<span class="pz-tag own">Aus deiner Partie</span><span class="muted">vs ${esc(p.own.opponent)} · ${d}</span>`;
+    const d = new Date(p.own.createdAt).toLocaleDateString(locale, { day: "2-digit", month: "2-digit", year: "2-digit" });
+    return `<span class="pz-tag own">${t("Aus deiner Partie")}</span><span class="muted">${t("vs {name}", { name: esc(playerName(p.own.opponent)) })} · ${d}</span>`;
   }
   if (p.category === "weakness" && p.theme) {
-    const rate = p.themePerGame != null ? p.themePerGame.toLocaleString("de-DE", { maximumFractionDigits: 1 }) : null;
-    const scope = windowLast() ? `deinen letzten ${windowLast()} Partien` : "deinen Partien";
-    return `<span class="pz-tag weakness">Schwäche: ${esc(THEMES[p.theme].label)}</span>
-      <span class="pz-why">${rate ? `Kommt in ${scope} ${rate}× pro Partie vor.` : "Kommt in deinen Partien oft vor."}</span>`;
+    const rate = p.themePerGame != null ? p.themePerGame.toLocaleString(locale, { maximumFractionDigits: 1 }) : null;
+    const last = windowLast();
+    const why = !rate
+      ? t("Kommt in deinen Partien oft vor.")
+      : last
+        ? t("Kommt in deinen letzten {n} Partien {rate}× pro Partie vor.", { n: last, rate })
+        : t("Kommt in deinen Partien {rate}× pro Partie vor.", { rate });
+    return `<span class="pz-tag weakness">${t("Schwäche: {theme}", { theme: esc(THEMES[p.theme].label) })}</span>
+      <span class="pz-why">${why}</span>`;
   }
-  return `<span class="pz-tag mixed" title="Ein beliebiges Thema auf deinem Niveau – damit das Training nicht einseitig wird">Gemischt</span>`;
+  return `<span class="pz-tag mixed" title="${t("Ein beliebiges Thema auf deinem Niveau – damit das Training nicht einseitig wird")}">${t("Gemischt")}</span>`;
 }
 
 function renderText(error?: string) {
@@ -728,54 +759,58 @@ function renderText(error?: string) {
   extra.innerHTML = "";
 
   if (phase === "loading") {
-    head.innerHTML = `<span class="muted">Suche ein passendes Puzzle …</span>`;
+    head.innerHTML = `<span class="muted">${t("Suche ein passendes Puzzle …")}</span>`;
     text.innerHTML = "";
     actions.innerHTML = "";
     return;
   }
   if (phase === "empty" || !p) {
-    head.innerHTML = `<span class="coach-title">Keine Puzzles</span>`;
+    head.innerHTML = `<span class="coach-title">${t("Keine Puzzles")}</span>`;
     text.innerHTML = error
       ? `<span class="error">${esc(error)}</span>`
-      : `Für Lichess-Puzzles brauchst du die Puzzle-Datenbank. Ohne sie gibt es nur Stellungen aus deinen eigenen Fehlern – und dafür müssen erst Partien analysiert sein.`;
-    actions.innerHTML = `<button data-act="settings" class="primary">Puzzle-Datenbank laden</button><button data-act="retry">Nochmal versuchen</button>`;
+      : t("Für Lichess-Puzzles brauchst du die Puzzle-Datenbank. Ohne sie gibt es nur Stellungen aus deinen eigenen Fehlern – und dafür müssen erst Partien analysiert sein.");
+    actions.innerHTML = `<button data-act="settings" class="primary">${t("Puzzle-Datenbank laden")}</button><button data-act="retry">${t("Nochmal versuchen")}</button>`;
     bindActions();
     return;
   }
 
   const me: Color = p.kind === "lichess" ? other(sideOf(p.fen)) : sideOf(p.fen);
-  const side = me === "white" ? "Weiß" : "Schwarz";
+  const side = me === "white" ? t("Weiß") : t("Schwarz");
   head.innerHTML =
     categoryTag(p) +
-    (replay ? `<span class="pz-tag mixed" title="Wiederholungen zählen nicht für die Wertung">Wiederholung</span>` : "") +
-    (p.rating ? `<span class="pz-puzzle-rating" title="Puzzle-Wertung">${p.rating}</span>` : "");
+    (replay ? `<span class="pz-tag mixed" title="${t("Wiederholungen zählen nicht für die Wertung")}">${t("Wiederholt")}</span>` : "") +
+    (p.rating ? `<span class="pz-puzzle-rating" title="${t("Puzzle-Wertung")}">${p.rating}</span>` : "");
 
   const delta = result ? `<span class="pz-delta ${result.delta >= 0 ? "up" : "down"}">${result.delta >= 0 ? "+" : ""}${Math.round(result.delta)}</span>` : "";
   switch (phase) {
     case "opponent":
-      text.innerHTML = `<span class="muted">Der Gegner zieht …</span>`;
+      text.innerHTML = `<span class="muted">${t("Der Gegner zieht …")}</span>`;
       break;
     case "solve":
       text.innerHTML =
         p.kind === "own" && p.own
-          ? `In der Partie hast du hier <b>${esc(fig(p.own.san))}</b> gespielt – ${CLASSES[p.own.classification].phrase}. Finde einen besseren Zug für ${side}.`
-          : `<b>${side} am Zug.</b> ${step > 1 ? "Richtig – weiter!" : "Finde den besten Zug."}`;
+          ? t("In der Partie hast du hier {move} gespielt – {phrase}. Finde einen besseren Zug für {side}.", {
+              move: `<b>${esc(fig(p.own.san))}</b>`,
+              phrase: CLASSES[p.own.classification].phrase,
+              side,
+            })
+          : `<b>${t("{side} am Zug.", { side })}</b> ${step > 1 ? t("Richtig – weiter!") : t("Finde den besten Zug.")}`;
       if (hint) text.innerHTML += `<br>${hintText(p)}`;
       break;
     case "checking":
-      text.innerHTML = `<span class="muted">Prüfe deinen Zug …</span>`;
+      text.innerHTML = `<span class="muted">${t("Prüfe deinen Zug …")}</span>`;
       break;
     case "wrong":
       text.innerHTML =
         ownVerdict
-          ? `${badgeHtml(ownVerdict.classification)} <b>${esc(fig(ownVerdict.san))}</b> ist ${CLASSES[ownVerdict.classification].phrase}. ${esc(fig(ownVerdict.comment))}`
-          : `<b>Das ist nicht die Lösung.</b>`;
-      text.innerHTML += ` <span class="muted">Versuch es nochmal.</span> ${delta}`;
+          ? `${badgeHtml(ownVerdict.classification)} ${t("{move} ist {phrase}", { move: `<b>${esc(fig(ownVerdict.san))}</b>`, phrase: CLASSES[ownVerdict.classification].phrase })}. ${esc(fig(commentOf(ownVerdict)))}`
+          : `<b>${t("Das ist nicht die Lösung.")}</b>`;
+      text.innerHTML += ` <span class="muted">${t("Versuch es nochmal.")}</span> ${delta}`;
       if (hint) text.innerHTML += `<br>${hintText(p)}`;
       break;
     case "showing":
       if (!refute) {
-        text.innerHTML = `<span class="muted">Berechne, wie der Gegner antwortet …</span>`;
+        text.innerHTML = `<span class="muted">${t("Berechne, wie der Gegner antwortet …")}</span>`;
       } else {
         const done = refute.shown >= refute.moves.length;
         // Highlight the moves shown so far.
@@ -789,54 +824,56 @@ function renderText(error?: string) {
             return `<span class="${cls}">${esc(fig(tok))}</span>`;
           })
           .join(" ");
-        text.innerHTML = `<b>So geht es nach deinem Zug weiter:</b><br><span class="ref-line">${shownText}</span>`;
-        if (done && refute.moves.length === 1) text.innerHTML += `<br><span class="muted">Danach ist die Partie zu Ende.</span>`;
+        text.innerHTML = `<b>${t("So geht es nach deinem Zug weiter:")}</b><br><span class="ref-line">${shownText}</span>`;
+        if (done && refute.moves.length === 1) text.innerHTML += `<br><span class="muted">${t("Danach ist die Partie zu Ende.")}</span>`;
       }
       break;
     case "solved":
       text.innerHTML = failed
-        ? `<b>Gelöst</b> – im zweiten Anlauf. ${delta}`
-        : `<b class="ok">Richtig!</b> ${p.kind === "own" ? "Diesmal hast du's gefunden." : ""} ${delta}`;
+        ? `${t("<b>Gelöst</b> – im zweiten Anlauf.")} ${delta}`
+        : `<b class="ok">${t("Richtig!")}</b> ${p.kind === "own" ? t("Diesmal hast du's gefunden.") : ""} ${delta}`;
       break;
     case "failed":
-      text.innerHTML = `Die Lösung wird gezeigt. ${delta}`;
+      text.innerHTML = `${t("Die Lösung wird gezeigt.")} ${delta}`;
       break;
   }
 
   if (phase === "solved" || phase === "failed") {
-    const themes = p.themes.map((t) => LICHESS_THEMES[t]).filter(Boolean);
+    const themes = p.themes.map((tk) => LICHESS_THEMES[tk]).filter(Boolean);
     const parts: string[] = [];
-    if (themes.length) parts.push(`<span class="muted">Themen:</span> ${themes.join(", ")}`);
-    if (p.own) parts.push(`<span class="muted">In der Partie:</span> ${esc(fig(p.own.comment))}`);
-    if (p.gameUrl && p.kind === "lichess") parts.push(`<span class="muted">Ursprung:</span> <span class="pz-url">${esc(p.gameUrl)}</span>`);
+    if (themes.length) parts.push(`<span class="muted">${t("Themen:")}</span> ${themes.join(", ")}`);
+    if (p.own) parts.push(`<span class="muted">${t("In der Partie:")}</span> ${esc(fig(p.own.comment))}`);
+    if (p.gameUrl && p.kind === "lichess") parts.push(`<span class="muted">${t("Ursprung:")}</span> <span class="pz-url">${esc(p.gameUrl)}</span>`);
     extra.innerHTML = (finished() ? exploreText() : "") + parts.join("<br>") + (exploreNote ? `<br><span class="muted">${esc(exploreNote)}</span>` : "");
-    const gameBtn = p.own ? `<button data-act="game">Partie öffnen</button>` : "";
+    const gameBtn = p.own ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
     const n = positions().length;
     const i = curIndex();
     actions.innerHTML = finished()
       ? `<span class="pz-nav">
-           <button data-act="first" title="Zur Ausgangsstellung" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><rect x="2.5" y="3" width="2" height="10" rx="0.5"/><path d="M13.5 3.6v8.8a.6.6 0 0 1-.9.5L6.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
-           <button data-act="back" title="Zug zurück (←)" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M11.5 3.6v8.8a.6.6 0 0 1-.9.5L4.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
-           <button data-act="fwd" title="Zug vor (→)" ${i >= n - 1 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M4.5 3.6v8.8a.6.6 0 0 0 .9.5l6.3-4.4a.6.6 0 0 0 0-1L5.4 3.1a.6.6 0 0 0-.9.5Z"/></svg></button>
+           <button data-act="first" title="${t("Zur Ausgangsstellung")}" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><rect x="2.5" y="3" width="2" height="10" rx="0.5"/><path d="M13.5 3.6v8.8a.6.6 0 0 1-.9.5L6.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
+           <button data-act="back" title="${t("Zug zurück (←)")}" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M11.5 3.6v8.8a.6.6 0 0 1-.9.5L4.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
+           <button data-act="fwd" title="${t("Zug vor (→)")}" ${i >= n - 1 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M4.5 3.6v8.8a.6.6 0 0 0 .9.5l6.3-4.4a.6.6 0 0 0 0-1L5.4 3.1a.6.6 0 0 0-.9.5Z"/></svg></button>
          </span>
-         <button data-act="engine" ${engineBusy ? "disabled" : ""}>${engineBusy ? "Engine rechnet …" : "Engine zieht"}</button>
-         <button data-act="replay" title="Nochmal von vorn – zählt nicht für die Wertung">Puzzle wiederholen</button>
+         <button data-act="engine" ${engineBusy ? "disabled" : ""}>${engineBusy ? t("Engine rechnet …") : t("Engine zieht")}</button>
+         <button data-act="replay" title="${t("Nochmal von vorn – zählt nicht für die Wertung")}">${t("Puzzle wiederholen")}</button>
          ${gameBtn}
-         <button data-act="next" class="primary end">Nächstes Puzzle →</button>`
-      : `${gameBtn}<button data-act="next" class="primary end">Nächstes Puzzle →</button>`;
+         <button data-act="next" class="primary end">${t("Nächstes Puzzle")} →</button>`
+      : `${gameBtn}<button data-act="next" class="primary end">${t("Nächstes Puzzle")} →</button>`;
   } else if (phase === "showing") {
     const done = !!refute && refute.shown >= refute.moves.length;
     actions.innerHTML = `
-      <button data-act="why" ${done ? "" : "disabled"}>Nochmal abspielen</button>
-      <button data-act="back" class="primary">Zurück zur Aufgabe</button>`;
+      <button data-act="why" ${done ? "" : "disabled"}>${t("Nochmal abspielen")}</button>
+      <button data-act="back" class="primary">${t("Zurück zur Aufgabe")}</button>`;
   } else {
     const busy = phase === "opponent" || phase === "checking";
-    const why = phase === "wrong" && lastTry ? `<button data-act="why" class="primary">Zeig mir, was passiert</button>` : "";
-    const game = p.own ? `<button data-act="game" title="Die Partie in der Review öffnen (das Puzzle wird abgebrochen)">Partie öffnen</button>` : "";
+    const why = phase === "wrong" && lastTry ? `<button data-act="why" class="primary">${t("Zeig mir, was passiert")}</button>` : "";
+    const game = p.own
+      ? `<button data-act="game" title="${t("Die Partie in der Review öffnen (das Puzzle wird abgebrochen)")}">${t("Partie öffnen")}</button>`
+      : "";
     actions.innerHTML = `${why}${game}
-      <button data-act="hint" ${hint || busy ? "disabled" : ""}>Tipp</button>
-      <button data-act="solution" ${busy ? "disabled" : ""}>Lösung zeigen</button>
-      <button data-act="skip" class="end">Überspringen</button>`;
+      <button data-act="hint" ${hint || busy ? "disabled" : ""}>${t("Tipp")}</button>
+      <button data-act="solution" ${busy ? "disabled" : ""}>${t("Lösung zeigen")}</button>
+      <button data-act="skip" class="end">${t("Überspringen")}</button>`;
   }
   bindActions();
 }
@@ -902,15 +939,15 @@ function renderProfile() {
   if (!p) return;
   $("pz-my-rating").textContent = String(Math.round(p.rating));
   $("pz-today").textContent = p.todayAttempts
-    ? `Heute: ${p.todaySolved} von ${p.todayAttempts} gelöst`
+    ? t("Heute: {s} von {n} gelöst", { s: p.todaySolved, n: p.todayAttempts })
     : p.attempts
-      ? `Insgesamt ${p.solved} von ${p.attempts} gelöst`
-      : "Noch keine Puzzles gelöst";
+      ? t("Insgesamt {s} von {n} gelöst", { s: p.solved, n: p.attempts })
+      : t("Noch keine Puzzles gelöst");
   const rows = [...p.mastery]
     .sort((a, b) => b.attempts - a.attempts)
     .map((m) => {
       const pct = m.attempts ? Math.round((m.solved / m.attempts) * 100) : 0;
-      return `<div class="mastery-row" title="Letzte ${m.attempts} Puzzles zu diesem Thema">
+      return `<div class="mastery-row" title="${t("Letzte {n} Puzzles zu diesem Thema", { n: m.attempts })}">
         <span class="theme-label">${esc(THEMES[m.theme].label)}</span>
         <span class="bar-track"><span class="bar" style="width:${pct}%"></span></span>
         <span class="theme-count"><b>${pct} %</b> <span class="muted">· ${m.solved}/${m.attempts}</span></span>
@@ -918,6 +955,6 @@ function renderProfile() {
     })
     .join("");
   $("pz-mastery").innerHTML = rows
-    ? `<h3>Lösungsquote nach Schwäche</h3><p class="panel-sub">Was du sicher löst, kommt seltener dran.</p>${rows}`
+    ? `<h3>${t("Lösungsquote nach Schwäche")}</h3><p class="panel-sub">${t("Was du sicher löst, kommt seltener dran.")}</p>${rows}`
     : "";
 }

@@ -6,7 +6,7 @@
 
 <p align="center">
   Analysiere deine Schachpartien von <b>Lichess</b> und <b>chess.com</b> – lokal, offline, mit Stockfish.<br>
-  <sub>Review your Lichess and chess.com games locally with Stockfish – a free, offline game review (UI in German).</sub>
+  <sub>Review your Lichess and chess.com games locally with Stockfish – a free, offline game review (German and English UI).</sub>
 </p>
 
 ---
@@ -20,6 +20,8 @@ trainierst sie gezielt mit Puzzles und Eröffnungsübungen.
 
 Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 
+Die Oberfläche gibt es auf Deutsch und Englisch (Zahnrad → *Sprache · Language*).
+
 ## Funktionen
 
 **Partie-Review**
@@ -30,7 +32,7 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
 - Bedenkzeit: Restzeit an den Spielern und Zeit pro Zug (wenn Lichess / chess.com / die PGN sie enthält)
 - Bewertung jedes Zugs: Brillant, Stark, Bester Zug, Ausgezeichnet, Gut, Theorie,
   Ungenauigkeit, Fehler, Verpasste Chance, Patzer – plus Genauigkeit pro Spieler
-- Coach-Kommentare auf Deutsch, Bewertungsbalken, Bewertungsverlauf, bester Zug als Pfeil
+- Coach-Kommentare auf Deutsch oder Englisch, Bewertungsbalken, Bewertungsverlauf, bester Zug als Pfeil
 - **Zeig mir, was passiert:** spielt die Widerlegung eines Fehlers auf dem Brett vor
 - Frei weiterziehen: eigene Varianten, jeder Zug wird bewertet; Live-Engine mit den 3 besten Zügen
 - **Aus Fehlern lernen:** deine Fehler einer Partie als Übungsaufgaben
@@ -42,6 +44,10 @@ Alles läuft auf deinem Rechner. Kein Konto, kein Abo, keine Limits.
   mit Beispielen und Trainingstipps, Fehler nach Spielphase und nach Bedenkzeit (Zeitnot),
   Genauigkeitsverlauf
 - Zeitraum wählbar (letzte 10 / 20 / 50 / alle Partien) mit Trend gegenüber deinem Schnitt
+- **Wertung und Aktivität:** deine Wertung nach jeder gewerteten Partie (pro Plattform und
+  Bedenkzeit, 3 Monate / 1 Jahr / alles) und deine Partien pro Woche bzw. Monat mit S/R/N
+- **Hier verlässt du die Theorie:** Stellungen, in denen du immer wieder als Erster die bekannten
+  Eröffnungslinien verlässt – mit den bekannten Fortsetzungen und ob dich die Abweichung etwas kostet
 - Deine Eröffnungen: Ergebnis und wie oft du in der Eröffnung patzt
 - „Partien analysieren“ läuft im Hintergrund
 
@@ -204,11 +210,13 @@ Stockfish und legt einen Release-Entwurf an.
 | Pfad | Inhalt |
 | --- | --- |
 | `src/` | Oberfläche (TypeScript, [chessground](https://github.com/lichess-org/chessground)) |
+| `src/i18n.ts`, `src/i18n-en.ts` | Sprachen: der deutsche Text ist der Schlüssel, `i18n-en.ts` die englische Übersetzung (`npm run i18n:check` findet fehlende) |
 | `src-tauri/src/analysis.rs` | Klassifizierung der Züge, Genauigkeit |
 | `src-tauri/src/coach.rs` | Coach: Muster erkennen, Erklärungen formulieren |
 | `src-tauri/src/engine.rs`, `live.rs` | Stockfish-Anbindung (UCI) |
 | `src-tauri/src/lichess.rs`, `chesscom.rs` | Partien abrufen |
-| `src-tauri/src/stats.rs`, `trainer.rs`, `repertoire.rs` | Statistik, Puzzles, Eröffnungstraining |
+| `src-tauri/src/stats.rs`, `theory.rs`, `trainer.rs`, `repertoire.rs` | Statistik, Theorie-Abweichungen, Puzzles, Eröffnungstraining |
+| `src-tauri/src/i18n.rs` | Sprache der Meldungen und Coach-Kommentare (`tr!("Deutsch", "English")`) |
 | `src-tauri/src/db.rs` | lokale SQLite-Datenbank |
 | `packaging/flatpak/` | Flatpak-Manifest, Desktop-Datei, AppStream-Metadaten |
 

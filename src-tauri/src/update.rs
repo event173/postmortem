@@ -72,7 +72,7 @@ pub fn open_releases_page() -> Result<(), String> {
         c.arg(RELEASES_PAGE);
         c
     };
-    cmd.spawn().map(|_| ()).map_err(|e| format!("Browser konnte nicht geöffnet werden: {e}"))
+    cmd.spawn().map(|_| ()).map_err(|e| crate::tr!("Browser konnte nicht geöffnet werden: {e}", "Could not open the browser: {e}"))
 }
 
 #[cfg(test)]

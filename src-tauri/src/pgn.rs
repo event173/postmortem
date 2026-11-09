@@ -220,16 +220,16 @@ fn fnv(s: &str) -> u64 {
 pub fn to_game(p: &Parsed, you: Option<&str>, now_ms: i64) -> Result<GameInfo, String> {
     if let Some(v) = p.header("Variant") {
         if !matches!(v.to_ascii_lowercase().as_str(), "standard" | "chess" | "normal") {
-            return Err(format!("Variante „{v}“ wird nicht unterstützt."));
+            return Err(crate::tr!("Variante „{v}“ wird nicht unterstützt.", "Variant “{v}” is not supported."));
         }
     }
     if let Some(fen) = p.header("FEN") {
         if fen.trim() != START_FEN {
-            return Err("Nur Partien ab der Grundstellung werden unterstützt.".into());
+            return Err(crate::tr!("Nur Partien ab der Grundstellung werden unterstützt.", "Only games from the initial position are supported."));
         }
     }
     if p.moves.is_empty() {
-        return Err("Keine Züge gefunden.".into());
+        return Err(crate::tr!("Keine Züge gefunden.", "No moves found."));
     }
     // Validate and normalise ("0-0" -> "O-O", missing "+" …).
     let mut pos = Chess::default();
@@ -241,7 +241,7 @@ pub fn to_game(p: &Parsed, you: Option<&str>, now_ms: i64) -> Result<GameInfo, S
             .parse::<SanPlus>()
             .ok()
             .and_then(|s| s.san.to_move(&pos).ok())
-            .ok_or_else(|| format!("Ungültiger Zug {}{} {san}", i / 2 + 1, if i % 2 == 0 { "." } else { "..." }))?;
+            .ok_or_else(|| { let n = format!("{}{}", i / 2 + 1, if i % 2 == 0 { "." } else { "..." }); crate::tr!("Ungültiger Zug {n} {san}", "Invalid move {n} {san}") })?;
         moves.push(SanPlus::from_move_and_play_unchecked(&mut pos, m).to_string());
     }
 

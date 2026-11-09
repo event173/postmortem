@@ -7,6 +7,7 @@ import type { Key } from "chessground/types";
 
 import { moveSound, setupSound } from "./sound";
 import type { GameInfo, PlayedMove, PositionInfo } from "./types";
+import { t } from "./i18n";
 import { $, esc, fig, store } from "./util";
 
 type Color = "white" | "black";
@@ -49,7 +50,7 @@ export interface PlayDeps {
 }
 
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-const SIDE: Record<Color, string> = { white: "Weiß", black: "Schwarz" };
+const SIDE: Record<Color, string> = { white: t("Weiß"), black: t("Schwarz") };
 const TIME_CONTROLS: { label: string; base: number; inc: number }[] = [
   { label: "3+2", base: 3, inc: 2 },
   { label: "5+3", base: 5, inc: 3 },
@@ -104,7 +105,7 @@ export function leavePlay() {
 
 function newGame() {
   const you: Color = colorChoice === "random" ? (Math.random() < 0.5 ? "white" : "black") : colorChoice;
-  const tc = TIME_CONTROLS.find((t) => t.label === tcChoice);
+  const tc = TIME_CONTROLS.find((tk) => tk.label === tcChoice);
   token++;
   game = {
     you,
@@ -135,7 +136,7 @@ function startClock() {
     const mover = sideOf(fen());
     if (g.clocks[mover] - (Date.now() - g.turnStart) <= 0) {
       g.clocks[mover] = 0;
-      finish({ over: true, winner: other(mover), reason: "Zeit abgelaufen" });
+      finish({ over: true, winner: other(mover), reason: t("Zeit abgelaufen") });
     } else {
       renderClocks();
     }
@@ -168,21 +169,21 @@ async function applyMove(played: PlayedMove) {
 export async function playMove(orig: Key, dest: Key, promotion?: string) {
   const g = game;
   if (!g || g.result || g.thinking || sideOf(fen()) !== g.you) return render();
-  const t = token;
+  const tk = token;
   let played: PlayedMove;
   try {
     played = await invoke<PlayedMove>("play_move", { fen: fen(), from: orig, to: dest, promotion });
   } catch {
     return render();
   }
-  if (t !== token) return;
+  if (tk !== token) return;
   const over = await applyMove(played);
-  if (!over && t === token) botTurn();
+  if (!over && tk === token) botTurn();
 }
 
 async function botTurn() {
   const g = game!;
-  const t = token;
+  const tk = token;
   g.thinking = true;
   render();
   const started = Date.now();
@@ -190,7 +191,7 @@ async function botTurn() {
   try {
     uci = await invoke<string | null>("bot_move", { fen: fen(), level: g.level });
   } catch (e) {
-    if (t !== token) return;
+    if (tk !== token) return;
     g.thinking = false;
     renderPanel(String(e));
     return;
@@ -198,7 +199,7 @@ async function botTurn() {
   // Weak levels answer instantly; a short pause feels more natural.
   const wait = Math.max(0, 350 - (Date.now() - started));
   await new Promise((r) => setTimeout(r, wait));
-  if (t !== token || game !== g || g.result) return;
+  if (tk !== token || game !== g || g.result) return;
   g.thinking = false;
   if (!uci) return render();
   const played = await invoke<PlayedMove>("play_move", {
@@ -207,7 +208,7 @@ async function botTurn() {
     to: uci.slice(2, 4),
     promotion: uci[4],
   });
-  if (t !== token) return;
+  if (tk !== token) return;
   await applyMove(played);
 }
 
@@ -232,7 +233,7 @@ function resign() {
   const g = game;
   if (!g || g.result) return;
   token++;
-  finish({ over: true, winner: other(g.you), reason: "Aufgabe" });
+  finish({ over: true, winner: other(g.you), reason: t("Aufgabe") });
 }
 
 async function finish(status: GameStatus) {
@@ -281,9 +282,9 @@ function render(error?: string) {
       movable: { color: undefined, dests: new Map() },
     });
     if (!g.result && !g.thinking && sideOf(f) === g.you) {
-      const t = token;
+      const tk = token;
       invoke<PositionInfo>("position_info", { fen: f }).then((info) => {
-        if (t !== token || !active || game !== g || g.result || fen() !== f) return;
+        if (tk !== token || !active || game !== g || g.result || fen() !== f) return;
         board.set({ movable: { color: g.you, dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
       });
     }
@@ -329,7 +330,7 @@ function renderPanel(error?: string) {
   const bot = levelInfo(g.level);
   const row = (c: Color) => {
     const isBot = c !== g.you;
-    const name = isBot ? `Stockfish · Stufe ${bot.level} <span class="muted">(~${bot.elo})</span>` : "Du";
+    const name = isBot ? `${t("Stockfish · Stufe {n}", { n: bot.level })} <span class="muted">(~${bot.elo})</span>` : t("Du");
     const thinking = isBot && g.thinking ? `<span class="pending"></span>` : "";
     const clock = g.tc ? `<span id="clock-${c}" class="clock"></span>` : "";
     return `<div class="play-player"><span class="pdot ${c}"></span><span class="pp-name">${name}</span>${thinking}${clock}</div>`;
@@ -345,25 +346,25 @@ function renderPanel(error?: string) {
   let status: string;
   if (g.result) {
     const r = g.result;
-    const outcome = r.winner === null ? "Remis" : r.winner === g.you ? "Gewonnen!" : "Verloren";
+    const outcome = r.winner === null ? t("Remis") : r.winner === g.you ? t("Gewonnen!") : t("Verloren");
     status = `<div class="play-result ${r.winner === null ? "draw" : r.winner === g.you ? "win" : "loss"}"><b>${outcome}</b> <span class="muted">· ${esc(r.reason ?? "")}</span></div>`;
   } else if (g.thinking) {
-    status = `<span class="muted">Stockfish denkt …</span>`;
+    status = `<span class="muted">${t("Stockfish denkt …")}</span>`;
   } else {
-    status = sideOf(fen()) === g.you ? `<b>Du bist am Zug</b> <span class="muted">(${SIDE[g.you]})</span>` : "";
+    status = sideOf(fen()) === g.you ? `<b>${t("Du bist am Zug")}</b> <span class="muted">(${SIDE[g.you]})</span>` : "";
   }
 
   const actions = g.result
-    ? `<button data-act="review" class="primary" ${g.saved ? "" : "disabled"}>Partie analysieren</button>
-       <button data-act="rematch">Revanche</button>
-       <button data-act="setup" class="end">Neue Partie</button>`
-    : `<button data-act="takeback" ${g.thinking || !g.sans.length ? "disabled" : ""}>Zug zurück</button>
-       <button data-act="resign">Aufgeben</button>`;
+    ? `<button data-act="review" class="primary" ${g.saved ? "" : "disabled"}>${t("Partie analysieren")}</button>
+       <button data-act="rematch">${t("Revanche")}</button>
+       <button data-act="setup" class="end">${t("Neue Partie")}</button>`
+    : `<button data-act="takeback" ${g.thinking || !g.sans.length ? "disabled" : ""}>${t("Zug zurück")}</button>
+       <button data-act="resign">${t("Aufgeben")}</button>`;
 
   el.innerHTML = `
     <div class="panel play-game">
       ${top}
-      <div class="play-moves">${moves || `<span class="muted">Noch keine Züge.</span>`}</div>
+      <div class="play-moves">${moves || `<span class="muted">${t("Noch keine Züge.")}</span>`}</div>
       ${bottom}
       <div class="play-status">${status}${error ? `<br><span class="error">${esc(error)}</span>` : ""}</div>
       <div class="training-actions">${actions}</div>
@@ -400,7 +401,7 @@ function setupHtml(): string {
   const lvButtons = (levels.length ? levels : [{ level: 3, elo: 1200, label: "" } as Level])
     .map(
       (l) => `<button class="lv ${l.level === level ? "active" : ""}" data-level="${l.level}">
-        <b>${l.level}</b><span>~${l.elo}</span><small>${esc(l.label)}</small></button>`,
+        <b>${l.level}</b><span>~${l.elo}</span><small>${esc(t(l.label))}</small></button>`,
     )
     .join("");
   const seg = (name: string, options: [string, string][], current: string) =>
@@ -409,12 +410,12 @@ function setupHtml(): string {
       .join("")}</div>`;
   return `
     <div class="panel play-setup">
-      <h3>Gegen den Computer spielen</h3>
-      <p class="panel-sub">Wähle die Spielstärke – nach der Partie kannst du sie direkt analysieren.</p>
+      <h3>${t("Gegen den Computer spielen")}</h3>
+      <p class="panel-sub">${t("Wähle die Spielstärke – nach der Partie kannst du sie direkt analysieren.")}</p>
       <div class="levels">${lvButtons}</div>
-      <div class="setup-row"><span>Farbe</span>${seg("color", [["white", "Weiß"], ["random", "Zufall"], ["black", "Schwarz"]], colorChoice)}</div>
-      <div class="setup-row"><span>Bedenkzeit</span>${seg("tc", [["none", "Ohne"], ...TIME_CONTROLS.map((t) => [t.label, t.label] as [string, string])], tcChoice)}</div>
-      <button id="play-start" class="primary play-start">Partie starten</button>
+      <div class="setup-row"><span>${t("Farbe")}</span>${seg("color", [["white", t("Weiß")], ["random", t("Zufall")], ["black", t("Schwarz")]], colorChoice)}</div>
+      <div class="setup-row"><span>${t("Bedenkzeit")}</span>${seg("tc", [["none", t("Ohne")], ...TIME_CONTROLS.map((tc) => [tc.label, tc.label] as [string, string])], tcChoice)}</div>
+      <button id="play-start" class="primary play-start">${t("Partie starten")}</button>
     </div>`;
 }
 

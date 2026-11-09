@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { lang, locale, setLang, t, type Lang } from "./i18n";
 import { $, esc, miniPieces, store } from "./util";
 import { moveSound, soundOn, volume } from "./sound";
 
@@ -56,10 +57,10 @@ let puzzle: PuzzleStatus | null = null;
 let update: UpdateCheck | null = null;
 let installing = false;
 
-const mb = (bytes: number) => `${Math.round(bytes / 1_000_000).toLocaleString("de-DE")} MB`;
+const mb = (bytes: number) => `${Math.round(bytes / 1_000_000).toLocaleString(locale)} MB`;
 const versionDate = (v: string | null) => {
   const d = v ? new Date(v) : null;
-  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" }) : "unbekannt";
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" }) : t("unbekannt");
 };
 
 /** Board colours and piece set: applied via <body data-board / data-pieces>. */
@@ -94,6 +95,10 @@ export function initSettings(d: SettingsDeps) {
   dialog.addEventListener("click", (e) => {
     if (e.target === dialog) dialog.close();
   });
+
+  const language = $("pref-lang") as HTMLSelectElement;
+  language.value = lang;
+  language.addEventListener("change", () => setLang(language.value as Lang));
 
   const depth = $("depth") as HTMLSelectElement;
   depth.value = store.get("depth") ?? "16";
@@ -176,8 +181,8 @@ async function refresh() {
   puzzle = st;
   renderPuzzle();
   $("data-info").innerHTML =
-    `${info.games.toLocaleString("de-DE")} Partien gespeichert, davon ${info.reviews.toLocaleString("de-DE")} analysiert.<br>` +
-    `<span class="muted">Speicherort: ${esc(info.dataDir)}</span>`;
+    t("{g} Partien gespeichert, davon {r} analysiert.", { g: info.games.toLocaleString(locale), r: info.reviews.toLocaleString(locale) }) +
+    `<br><span class="muted">${t("Speicherort: {dir}", { dir: esc(info.dataDir) })}</span>`;
   if (!installing) {
     update = await invoke<UpdateCheck>("puzzle_check_update");
     $("settings-dot").hidden = !(puzzle.installed && update.available);
@@ -186,15 +191,17 @@ async function refresh() {
 }
 
 function renderEngine(info: SettingsInfo) {
-  $("engine-detected").textContent = info.detectedPath ? `Automatisch gefunden: ${info.detectedPath}` : "Nicht automatisch gefunden";
+  $("engine-detected").textContent = info.detectedPath
+    ? t("Automatisch gefunden: {path}", { path: info.detectedPath })
+    : t("Nicht automatisch gefunden");
   ($("engine-path") as HTMLInputElement).value = info.stockfishPath ?? "";
   const threads = $("engine-threads") as HTMLSelectElement;
   const auto = Math.max(1, info.cpuCount - 1);
   threads.innerHTML =
-    `<option value="">Automatisch (${auto})</option>` +
+    `<option value="">${t("Automatisch ({n})", { n: auto })}</option>` +
     Array.from({ length: info.cpuCount }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
   threads.value = info.threads ? String(info.threads) : "";
-  $("threads-hint").textContent = `Dein Rechner hat ${info.cpuCount}. Hintergrund-Analysen nutzen die Hälfte.`;
+  $("threads-hint").textContent = t("Dein Rechner hat {n}. Hintergrund-Analysen nutzen die Hälfte.", { n: info.cpuCount });
   $("engine-msg").textContent = "";
 }
 
@@ -203,7 +210,7 @@ async function applyEngine() {
   const path = ($("engine-path") as HTMLInputElement).value.trim();
   const threadsValue = ($("engine-threads") as HTMLSelectElement).value;
   msg.className = "msg muted";
-  msg.textContent = "Prüfe …";
+  msg.textContent = t("Prüfe …");
   try {
     const info = await invoke<SettingsInfo>("set_engine_settings", {
       path: path || null,
@@ -211,7 +218,7 @@ async function applyEngine() {
     });
     renderEngine(info);
     msg.className = "msg ok";
-    msg.textContent = "Gespeichert ✓";
+    msg.textContent = t("Gespeichert ✓");
     deps.onEngineChanged();
   } catch (e) {
     msg.className = "msg error";
@@ -226,7 +233,7 @@ async function deletePuzzles() {
   const btn = $("puzzle-delete") as HTMLButtonElement;
   if (!confirmDelete) {
     confirmDelete = true;
-    btn.textContent = `Wirklich löschen? (${puzzle ? mb(puzzle.sizeBytes) : ""} frei)`;
+    btn.textContent = t("Wirklich löschen? ({size} frei)", { size: puzzle ? mb(puzzle.sizeBytes) : "" });
     window.setTimeout(() => {
       confirmDelete = false;
       renderPuzzle();
@@ -254,7 +261,7 @@ function renderPuzzle() {
   const action = $("puzzle-action") as HTMLButtonElement;
   const del = $("puzzle-delete") as HTMLButtonElement;
   del.hidden = installing || !puzzle?.installed;
-  if (!confirmDelete) del.textContent = "Löschen";
+  if (!confirmDelete) del.textContent = t("Löschen");
   if (installing) {
     action.hidden = true;
     return;
@@ -262,18 +269,18 @@ function renderPuzzle() {
   const p = puzzle;
   const u = update;
   if (!p || !p.installed) {
-    status.innerHTML = `Nicht installiert${u?.offline ? ` <span class="muted">· offline</span>` : ""}`;
+    status.innerHTML = `${t("Nicht installiert")}${u?.offline ? ` <span class="muted">· ${t("offline")}</span>` : ""}`;
     action.hidden = !!u?.offline;
-    action.textContent = u?.remoteSize ? `Herunterladen (${mb(u.remoteSize)})` : "Herunterladen";
+    action.textContent = u?.remoteSize ? t("Herunterladen ({size})", { size: mb(u.remoteSize) }) : t("Herunterladen");
     return;
   }
-  const base = `${p.count.toLocaleString("de-DE")} Puzzles · Stand ${versionDate(p.version)} · ${mb(p.sizeBytes)}`;
+  const base = t("{n} Puzzles · Stand {date} · {size}", { n: p.count.toLocaleString(locale), date: versionDate(p.version), size: mb(p.sizeBytes) });
   if (u?.available) {
-    status.innerHTML = `${base}<br><span class="update">Neue Version vom ${versionDate(u.remoteVersion)} verfügbar</span>`;
+    status.innerHTML = `${base}<br><span class="update">${t("Neue Version vom {date} verfügbar", { date: versionDate(u.remoteVersion) })}</span>`;
     action.hidden = false;
-    action.textContent = "Aktualisieren";
+    action.textContent = t("Aktualisieren");
   } else {
-    status.innerHTML = `${base}<br><span class="muted">${u?.offline ? "Offline – Update-Prüfung nicht möglich" : u ? "Aktuell ✓" : "Prüfe auf Updates …"}</span>`;
+    status.innerHTML = `${base}<br><span class="muted">${u?.offline ? t("Offline – Update-Prüfung nicht möglich") : u ? t("Aktuell ✓") : t("Prüfe auf Updates …")}</span>`;
     action.hidden = true;
   }
 }
@@ -306,26 +313,28 @@ function renderProgress(p: PuzzleProgress) {
   switch (p.phase) {
     case "download":
       fill.style.width = `${pct * 0.5}%`;
-      text.textContent = `Lade herunter … ${mb(p.done)}${p.total ? ` von ${mb(p.total)}` : ""}`;
+      text.textContent = p.total
+        ? t("Lade herunter … {done} von {total}", { done: mb(p.done), total: mb(p.total) })
+        : t("Lade herunter … {done}", { done: mb(p.done) });
       break;
     case "import":
       fill.style.width = `${50 + pct * 0.45}%`;
-      text.textContent = `Importiere Puzzles … ${Math.round(pct)} %`;
+      text.textContent = t("Importiere Puzzles … {p} %", { p: Math.round(pct) });
       break;
     case "index":
       fill.style.width = "96%";
-      text.textContent = "Lege Suchindex an …";
+      text.textContent = t("Lege Suchindex an …");
       break;
     case "done":
       fill.style.width = "100%";
-      text.textContent = `Fertig – ${p.done.toLocaleString("de-DE")} Puzzles installiert.`;
+      text.textContent = t("Fertig – {n} Puzzles installiert.", { n: p.done.toLocaleString(locale) });
       break;
     case "cancelled":
       box.hidden = true;
       break;
     case "error":
       fill.style.width = "0";
-      text.innerHTML = `<span class="error">${esc(p.message ?? "Fehler")}</span>`;
+      text.innerHTML = `<span class="error">${esc(p.message ?? t("Unbekannter Fehler"))}</span>`;
       break;
   }
 }

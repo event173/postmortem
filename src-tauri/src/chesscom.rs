@@ -141,7 +141,7 @@ async fn get<T: serde::de::DeserializeOwned>(url: &str, what: &str) -> Result<T,
     check_status(&resp, what)?;
     resp.json::<T>()
         .await
-        .map_err(|e| FetchError::Other(format!("Unerwartete Antwort von chess.com: {e}")))
+        .map_err(|e| FetchError::Other(crate::tr!("Unerwartete Antwort von chess.com: {e}", "Unexpected answer from chess.com: {e}")))
 }
 
 /// Standard games of a user, newest first. chess.com serves games per month,
@@ -149,7 +149,7 @@ async fn get<T: serde::de::DeserializeOwned>(url: &str, what: &str) -> Result<T,
 pub async fn fetch_user_games(username: &str, q: GameQuery) -> Result<Vec<GameInfo>, FetchError> {
     let username = username.trim().to_lowercase();
     if !valid_username(&username) {
-        return Err("Ungültiger Benutzername.".into());
+        return Err(crate::tr!("Ungültiger Benutzername.", "Invalid username.").into());
     }
     let archives: Archives = get(&format!("{API}/player/{username}/games/archives"), "Spieler").await?;
     let since_month = q.since.map(year_month);

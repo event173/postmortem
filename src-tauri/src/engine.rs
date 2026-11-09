@@ -159,7 +159,7 @@ pub fn spawn_stockfish(path: &Path) -> Result<Child, String> {
     }
     let child = cmd
         .spawn()
-        .map_err(|e| format!("Stockfish konnte nicht gestartet werden ({}): {e}", path.display()))?;
+        .map_err(|e| { let p = path.display(); crate::tr!("Stockfish konnte nicht gestartet werden ({p}): {e}", "Stockfish could not be started ({p}): {e}") })?;
     #[cfg(unix)]
     // SAFETY: plain syscall on the child's pid; failure only means normal priority.
     unsafe {
@@ -198,7 +198,7 @@ impl Engine {
             .read_line(&mut line)
             .map_err(|e| format!("Stockfish-Pipe: {e}"))?;
         if n == 0 {
-            return Err("Stockfish wurde unerwartet beendet".into());
+            return Err(crate::tr!("Stockfish wurde unerwartet beendet", "Stockfish quit unexpectedly"));
         }
         Ok(line.trim_end().to_string())
     }

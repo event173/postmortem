@@ -9,7 +9,8 @@ import "chessground/assets/chessground.brown.css";
 import "chessground/assets/chessground.cburnett.css";
 import "./styles.css";
 import "./pieces.css";
-import { $, badgeHtml, esc, fig, store } from "./util";
+import { lang, locale, playerName, t, tn } from "./i18n";
+import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedLabel, store } from "./util";
 import { initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
@@ -113,6 +114,9 @@ function formatScore(s: Score): string {
   }
 }
 
+/** English UI, but the review predates English coach comments. */
+const germanOnly = (r: GameReview) => lang === "en" && r.moves.some((m) => !m.commentEn);
+
 function badgeSvg(cls: Class): string {
   const c = CLASSES[cls];
   const size = c.symbol.length > 1 ? 44 : 56;
@@ -124,15 +128,6 @@ function badgeSvg(cls: Class): string {
 }
 
 
-const SPEEDS: Record<string, string> = {
-  ultraBullet: "UltraBullet",
-  bullet: "Bullet",
-  blitz: "Blitz",
-  rapid: "Schnellschach",
-  classical: "Klassisch",
-  correspondence: "Fernschach",
-  import: "Eingespielt",
-};
 
 // ---------------------------------------------------------------------------
 // engine status
@@ -143,11 +138,11 @@ async function checkEngine() {
     const s = await invoke<{ found: boolean; path: string | null }>("engine_status");
     if (s.found) {
       el.className = "engine-status ok";
-      el.textContent = "Stockfish bereit";
+      el.textContent = t("Stockfish bereit");
       el.title = s.path ?? "";
     } else {
       el.className = "engine-status warn";
-      el.textContent = "Stockfish fehlt: sudo apt install stockfish";
+      el.textContent = t("Stockfish fehlt: sudo apt install stockfish");
     }
   } catch (e) {
     el.className = "engine-status warn";
@@ -158,14 +153,13 @@ async function checkEngine() {
 // ---------------------------------------------------------------------------
 // loading games
 
-const PLATFORM_LABEL: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com", local: "Eigene" };
 
 async function load(input: string) {
   input = input.trim();
   if (!input || state.view === "all") return;
   const list = $("games-list");
   if (input.includes("/") || input.includes(".org") || input.includes(".com")) {
-    list.innerHTML = `<p class="empty">Lade Partie …</p>`;
+    list.innerHTML = `<p class="empty">${t("Lade Partie …")}</p>`;
     try {
       const game = await invoke<GameInfo>("fetch_game", { url: input });
       state.games = [game];
@@ -193,11 +187,11 @@ function setView(view: Platform | "all") {
   if (view === "all" || view === "local") {
     input.value = "";
     input.disabled = submit.disabled = true;
-    input.placeholder = view === "local" ? "Partien gegen den Computer und eingespielte" : "Namen unter „Lichess“ und „chess.com“ festlegen";
+    input.placeholder = view === "local" ? t("Partien gegen den Computer und eingespielte") : t("Namen unter „Lichess“ und „chess.com“ festlegen");
   } else {
     input.disabled = submit.disabled = false;
     input.value = state.names[view];
-    input.placeholder = view === "lichess" ? "Lichess-Name oder Partielink" : "chess.com-Name";
+    input.placeholder = view === "lichess" ? t("Lichess-Name oder Partielink") : t("chess.com-Name");
   }
   setSyncStatus("ok", "");
   showStoredGames();
@@ -221,8 +215,8 @@ async function showStoredGames() {
     renderGames();
     $("games-list").innerHTML =
       state.view === "all"
-        ? `<p class="empty">Lege unter „Lichess“ und/oder „chess.com“ deinen Namen fest.</p>`
-        : `<p class="empty">Gib deinen ${PLATFORM_LABEL[state.view]}-Namen ein, um deine Partien zu laden.</p>`;
+        ? `<p class="empty">${t("Lege unter „Lichess“ und/oder „chess.com“ deinen Namen fest.")}</p>`
+        : `<p class="empty">${t("Gib deinen {platform}-Namen ein, um deine Partien zu laden.", { platform: platformLabel(state.view) })}</p>`;
     return;
   }
   try {
@@ -251,8 +245,8 @@ async function syncGames(older = false) {
   const accs = accounts();
   if (!accs.length || syncing) return;
   syncing = true;
-  setSyncStatus("busy", older ? "Lade ältere …" : "Synchronisiere …");
-  if (!state.games.length) $("games-list").innerHTML = `<p class="empty">Lade Partien …</p>`;
+  setSyncStatus("busy", older ? t("Lade ältere …") : t("Synchronisiere …"));
+  if (!state.games.length) $("games-list").innerHTML = `<p class="empty">${t("Lade Partien …")}</p>`;
   let added = 0;
   let offline = false;
   const errors: string[] = [];
@@ -262,28 +256,28 @@ async function syncGames(older = false) {
       added += res.added;
       offline ||= res.offline;
     } catch (e) {
-      errors.push(`${PLATFORM_LABEL[account.source]}: ${e}`);
+      errors.push(`${platformLabel(account.source)}: ${e}`);
     }
   }
   syncing = false;
   if (key !== accountsKey()) return;
   if (added) await showStoredGames();
   if (errors.length) {
-    setSyncStatus("error", "Fehler");
+    setSyncStatus("error", t("Fehlgeschlagen"));
     $("sync-status").title = errors.join("\n");
   } else if (offline) {
-    setSyncStatus("offline", "Offline");
+    setSyncStatus("offline", t("Offline"));
   } else {
-    setSyncStatus("ok", added ? `${added} neu` : older ? "Keine älteren" : "Aktuell");
+    setSyncStatus("ok", added ? t("{n} neu", { n: added }) : older ? t("Keine älteren") : t("Aktuell"));
   }
   if (!state.games.length) {
     $("games-list").innerHTML = errors.length
       ? `<p class="empty error">${esc(errors.join(" · "))}</p>`
       : offline
-        ? `<p class="empty">Offline – und für diesen Namen sind noch keine Partien gespeichert.</p>`
+        ? `<p class="empty">${t("Offline – und für diesen Namen sind noch keine Partien gespeichert.")}</p>`
         : state.view === "local"
-          ? `<p class="empty">Noch keine eigenen Partien – spiele im Reiter „Spielen“ gegen den Computer oder spiel eine Partie mit <b>+</b> oben ein.</p>`
-          : `<p class="empty">Keine Standard-Partien gefunden.</p>`;
+          ? `<p class="empty">${t("Noch keine eigenen Partien – spiele im Reiter „Spielen“ gegen den Computer oder spiel eine Partie mit <b>+</b> oben ein.")}</p>`
+          : `<p class="empty">${t("Keine Standard-Partien gefunden.")}</p>`;
   }
 }
 
@@ -371,30 +365,30 @@ function renderGames() {
       result = "½";
       resultClass = "draw";
     } else if (me) {
-      result = g.winner === me ? "S" : "N";
+      result = g.winner === me ? t("S") : t("N");
       resultClass = g.winner === me ? "win" : "loss";
     } else {
       result = g.winner === "white" ? "1–0" : "0–1";
       resultClass = "neutral";
     }
     const title = opp
-      ? `${me === "white" ? "♙" : "♟"} vs ${esc(opp.name)}${opp.rating ? ` <span class="muted">(${opp.rating})</span>` : ""}`
-      : `${esc(g.white.name)} – ${esc(g.black.name)}`;
-    const date = new Date(g.createdAt).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
-    const speed = [SPEEDS[g.speed] ?? g.speed, g.timeControl].filter(Boolean).join(" ");
+      ? `${me === "white" ? "♙" : "♟"} ${t("vs {name}", { name: esc(playerName(opp.name)) })}${opp.rating ? ` <span class="muted">(${opp.rating})</span>` : ""}`
+      : `${esc(playerName(g.white.name))} – ${esc(playerName(g.black.name))}`;
+    const date = new Date(g.createdAt).toLocaleDateString(locale, { day: "2-digit", month: "2-digit", year: "2-digit" });
+    const speed = [speedLabel(g.speed), g.timeControl].filter(Boolean).join(" ");
 
     const btn = document.createElement("button");
     btn.className = "game" + (state.game?.id === g.id ? " active" : "");
     btn.dataset.id = g.id;
     btn.innerHTML = `
       <span class="result ${resultClass}">${result}</span>
-      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${PLATFORM_LABEL[g.source ?? "lichess"]}">${g.source === "chesscom" ? "C" : g.source === "local" ? "E" : "L"}</span>` : ""}
+      ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${platformLabel(g.source ?? "lichess")}">${g.source === "chesscom" ? "C" : g.source === "local" ? t("E") : "L"}</span>` : ""}
       <span class="game-main">
         <span class="game-title">${title}</span>
-        <span class="game-sub">${esc(g.opening?.name ?? "Unbekannte Eröffnung")}</span>
-        <span class="game-sub">${speed} · ${date} · ${Math.ceil(g.moves.length / 2)} Züge</span>
+        <span class="game-sub">${esc(g.opening?.name ?? t("Unbekannte Eröffnung"))}</span>
+        <span class="game-sub">${speed} · ${date} · ${tn(Math.ceil(g.moves.length / 2), "1 Zug", "{n} Züge")}</span>
       </span>
-      ${state.cached.has(g.id) ? `<span class="analysed" title="Bereits analysiert">●</span>` : ""}`;
+      ${state.cached.has(g.id) ? `<span class="analysed" title="${t("Bereits analysiert")}">●</span>` : ""}`;
     btn.addEventListener("click", () => {
       showTab("review");
       selectGame(g);
@@ -404,7 +398,7 @@ function renderGames() {
   if (accounts().length && state.games.length && state.view !== "local") {
     const more = document.createElement("button");
     more.className = "load-older";
-    more.textContent = "Ältere Partien von Lichess laden";
+    more.textContent = state.view === "chesscom" ? t("Ältere Partien von chess.com laden") : t("Ältere Partien laden");
     more.addEventListener("click", () => syncGames(true));
     list.appendChild(more);
   }
@@ -474,13 +468,15 @@ async function selectGame(game: GameInfo, startPly = 0) {
       const pref = refinePref();
       if (pref === "always") refine(game, depth, token);
       else if (pref === "ask") askRefine(game, depth, token);
+    } else if (germanOnly(first)) {
+      askRefine(game, first.depth, token, true);
     }
   } catch (e) {
     if (token !== analysisToken) return;
     $("review-progress").hidden = true;
     const empty = $("review-empty");
     empty.hidden = false;
-    empty.innerHTML = String(e) === "cancelled" ? "Analyse abgebrochen." : `<span class="error">${esc(String(e))}</span>`;
+    empty.innerHTML = String(e) === "cancelled" ? t("Analyse abgebrochen.") : `<span class="error">${esc(String(e))}</span>`;
   }
 }
 
@@ -488,13 +484,16 @@ async function selectGame(game: GameInfo, startPly = 0) {
 const PREVIEW_DEPTH = 10;
 
 /** After the quick preview: offer the full-depth analysis instead of starting it unasked. */
-function askRefine(game: GameInfo, depth: number, token: number) {
+function askRefine(game: GameInfo, depth: number, token: number, language = false) {
   $("refine").hidden = false;
   $("refine-spin").hidden = true;
   $("refine-ask").hidden = false;
-  $("refine-text").textContent = `Schnellanalyse (Tiefe ${state.review?.depth}). Tiefe Analyse (Tiefe ${depth}) starten?`;
+  $("refine-text").textContent = language
+    ? t("Die Coach-Kommentare dieser älteren Analyse gibt es nur auf Deutsch.")
+    : t("Schnellanalyse (Tiefe {d}). Tiefe Analyse (Tiefe {depth}) starten?", { d: state.review?.depth ?? "", depth });
+  $("refine-yes").textContent = language ? t("Neu analysieren") : t("Tief analysieren");
   ($("refine-yes") as HTMLButtonElement).onclick = () => {
-    if (token === analysisToken) refine(game, depth, token);
+    if (token === analysisToken) refine(game, depth, token, language);
   };
   ($("refine-no") as HTMLButtonElement).onclick = () => {
     $("refine").hidden = true;
@@ -502,14 +501,14 @@ function askRefine(game: GameInfo, depth: number, token: number) {
 }
 
 /** Analyse at the full depth in the background and swap it in quietly. */
-async function refine(game: GameInfo, depth: number, token: number) {
+async function refine(game: GameInfo, depth: number, token: number, force = false) {
   $("refine").hidden = false;
   $("refine-spin").hidden = false;
   $("refine-ask").hidden = true;
-  $("refine-text").textContent = "Verfeinere Analyse …";
+  $("refine-text").textContent = t("Verfeinere Analyse …");
   let review: GameReview;
   try {
-    review = await invoke<GameReview>("analyse_game", { game, depth });
+    review = await invoke<GameReview>("analyse_game", { game, depth, force });
   } catch {
     // cancelled (another game was opened) or failed: the preview stays
     if (token === analysisToken) $("refine").hidden = true;
@@ -537,8 +536,8 @@ listen<Progress>("analysis-progress", (e) => {
   const p = e.payload;
   if (p.gameId !== state.game?.id) return;
   if (!state.review) setProgress(p.done, p.total);
-  else if (p.depth > state.review.depth && !$("refine").hidden && $("refine-ask").hidden) {
-    $("refine-text").textContent = `Verfeinere Analyse (Tiefe ${p.depth}) … ${Math.round((p.done / p.total) * 100)} %`;
+  else if (p.depth >= state.review.depth && !$("refine").hidden && $("refine-ask").hidden) {
+    $("refine-text").textContent = t("Verfeinere Analyse (Tiefe {d}) … {p} %", { d: p.depth, p: Math.round((p.done / p.total) * 100) });
   }
 });
 
@@ -658,7 +657,7 @@ async function showConsequence() {
   const btn = document.getElementById("btn-why") as HTMLButtonElement | null;
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "Rechne …";
+    btn.textContent = t("Rechne …");
   }
   const where = { inVar: state.inVar, ply: state.ply, varIndex: state.varIndex, variation: state.variation };
   let refutation: Refutation;
@@ -672,7 +671,7 @@ async function showConsequence() {
   if (where.inVar !== state.inVar || where.ply !== state.ply || where.varIndex !== state.varIndex || where.variation !== state.variation) return;
   const continuation = refutation.moves.slice(1);
   if (!continuation.length) {
-    if (btn) btn.textContent = "Danach ist die Partie vorbei.";
+    if (btn) btn.textContent = t("Danach ist die Partie vorbei.");
     return;
   }
   if (!state.inVar) {
@@ -896,21 +895,21 @@ function renderLive() {
   const depthEl = $("live-depth");
   const linesEl = $("live-lines");
   if (!state.liveEnabled) {
-    depthEl.textContent = "aus";
+    depthEl.textContent = t("aus");
     linesEl.innerHTML = "";
     return;
   }
   if (!live) {
-    depthEl.textContent = "rechnet …";
+    depthEl.textContent = t("rechnet …");
     linesEl.innerHTML = "";
     return;
   }
-  depthEl.textContent = live.depth ? `Tiefe ${live.depth}${live.done ? "" : " …"}` : "";
+  depthEl.textContent = live.depth ? t("Tiefe {d}", { d: live.depth }) + (live.done ? "" : " …") : "";
   linesEl.innerHTML = live.lines
     .map((l) => {
       const white = l.winWhite >= 50;
       const score = `<span class="live-score ${white ? "w" : "b"}">${formatScore(l.score)}</span>`;
-      if (!l.uci) return `<div class="live-line">${score}<span class="live-pv muted">Partie beendet</span></div>`;
+      if (!l.uci) return `<div class="live-line">${score}<span class="live-pv muted">${t("Partie beendet")}</span></div>`;
       return `<button class="live-line" data-uci="${l.uci}">${score}<span class="live-pv">${esc(fig(l.line))}</span></button>`;
     })
     .join("");
@@ -939,7 +938,7 @@ $("live-toggle").addEventListener("change", (e) => {
 
 /** "4:59", "1:02:03", or "9,5" under ten seconds – from centiseconds. */
 function fmtClock(cs: number): string {
-  if (cs < 1000) return (cs / 100).toFixed(1).replace(".", ",");
+  if (cs < 1000) return (cs / 100).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const s = Math.floor(cs / 100);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -985,8 +984,8 @@ function renderPlayers() {
     const acc = r ? `<span class="acc">${r.accuracy[c].toFixed(1)}</span>` : "";
     const clock = r ? clockOf(g, c, ply) : null;
     const clockHtml =
-      clock === null ? "" : `<span class="pclock${turn === c ? " running" : ""}" title="Restzeit">${fmtClock(clock)}</span>`;
-    return `<span class="pdot ${c}"></span><span class="pname">${esc(p.name)}</span>${p.rating ? `<span class="muted">${p.rating}</span>` : ""}${acc}${clockHtml}`;
+      clock === null ? "" : `<span class="pclock${turn === c ? " running" : ""}" title="${t("Restzeit")}">${fmtClock(clock)}</span>`;
+    return `<span class="pdot ${c}"></span><span class="pname">${esc(playerName(p.name))}</span>${p.rating ? `<span class="muted">${p.rating}</span>` : ""}${acc}${clockHtml}`;
   };
   const bottom = state.orientation;
   const top: Color = bottom === "white" ? "black" : "white";
@@ -1027,18 +1026,18 @@ function renderCoach() {
   const best = $("coach-best");
   const r = state.review!;
   const node = currentVarNode();
-  const tag = state.inVar ? `<span class="var-tag">Variante</span>` : "";
+  const tag = state.inVar ? `<span class="var-tag">${t("Variante")}</span>` : "";
   if (node?.engine) {
-    head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span><span class="var-tag engine">Engine-Fortsetzung</span>`;
+    head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span><span class="var-tag engine">${t("Engine-Fortsetzung")}</span>`;
     head.style.setProperty("--c", "#5b8dd6");
-    text.innerHTML = `So würde es nach dem Fehler weitergehen – die besten Züge laut Stockfish.`;
-    best.innerHTML = `<span class="muted">Mit Esc oder „↩ Zur Partie“ geht es zurück. Du kannst von hier aus auch selbst weiterziehen.</span>`;
+    text.innerHTML = t("So würde es nach dem Fehler weitergehen – die besten Züge laut Stockfish.");
+    best.innerHTML = `<span class="muted">${t("Mit Esc oder „↩ Zur Partie“ geht es zurück. Du kannst von hier aus auch selbst weiterziehen.")}</span>`;
     return;
   }
   if (node && !node.review) {
     head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span>${tag}`;
     head.style.setProperty("--c", "var(--border)");
-    text.innerHTML = node.error ? `<span class="error">${esc(node.error)}</span>` : `<span class="muted">Bewerte deinen Zug …</span>`;
+    text.innerHTML = node.error ? `<span class="error">${esc(node.error)}</span>` : `<span class="muted">${t("Bewerte deinen Zug …")}</span>`;
     best.innerHTML = "";
     return;
   }
@@ -1046,26 +1045,25 @@ function renderCoach() {
   if (!move) {
     head.style.setProperty("--c", "var(--border)");
     const g = state.game!;
-    head.innerHTML = `<span class="coach-title">Partie-Review</span>`;
-    text.textContent = g.opening
-      ? `${g.opening.name} (${g.opening.eco}). Mit → gehst du Zug für Zug durch die Partie, mit N springst du zu deinem nächsten Fehler.`
-      : "Mit → gehst du Zug für Zug durch die Partie, mit N springst du zu deinem nächsten Fehler.";
-    best.innerHTML = `<span class="muted">Analysiert mit Stockfish, Tiefe ${r.depth}</span>`;
+    head.innerHTML = `<span class="coach-title">${t("Partie-Review")}</span>`;
+    const howTo = t("Mit → gehst du Zug für Zug durch die Partie, mit N springst du zu deinem nächsten Fehler.");
+    text.textContent = g.opening ? `${g.opening.name} (${g.opening.eco}). ${howTo}` : howTo;
+    best.innerHTML = `<span class="muted">${t("Analysiert mit Stockfish, Tiefe {d}", { d: r.depth })}</span>`;
     return;
   }
   const info = CLASSES[move.classification];
   const num = Math.ceil(move.ply / 2) + (move.color === "white" ? "." : "...");
   const think = node ? null : thinkTime(state.game!, move.ply);
-  const thinkHtml = think === null ? "" : `<span class="think" title="Bedenkzeit für diesen Zug">⏱ ${fmtClock(think)}</span>`;
-  head.innerHTML = `${badgeHtml(move.classification)}<span class="coach-title"><b>${num} ${esc(fig(move.san))}</b> ist ${info.phrase}</span>${tag}${thinkHtml}`;
+  const thinkHtml = think === null ? "" : `<span class="think" title="${t("Bedenkzeit für diesen Zug")}">⏱ ${fmtClock(think)}</span>`;
+  head.innerHTML = `${badgeHtml(move.classification)}<span class="coach-title">${t("{move} ist {phrase}", { move: `<b>${num} ${esc(fig(move.san))}</b>`, phrase: info.phrase })}</span>${tag}${thinkHtml}`;
   head.style.setProperty("--c", info.color);
-  text.innerHTML = esc(fig(move.comment));
+  text.innerHTML = esc(fig(commentOf(move)));
   const showBest = move.bestSan && move.bestUci !== move.uci && !NOT_BAD.includes(move.classification);
   best.innerHTML = showBest
-    ? `<span class="best-label">Bester Zug</span> <b>${esc(fig(move.bestSan!))}</b>${move.bestLine ? `<div class="best-line">${esc(fig(move.bestLine))}</div>` : ""}`
+    ? `<span class="best-label">${t("Bester Zug")}</span> <b>${esc(fig(move.bestSan!))}</b>${move.bestLine ? `<div class="best-line">${esc(fig(move.bestLine))}</div>` : ""}`
     : "";
   if (BAD.includes(move.classification)) {
-    best.innerHTML += `<button id="btn-why" class="why-btn">Zeig mir, was passiert</button>`;
+    best.innerHTML += `<button id="btn-why" class="why-btn">${t("Zeig mir, was passiert")}</button>`;
     $("btn-why").addEventListener("click", showConsequence);
   }
 }
@@ -1086,8 +1084,8 @@ function renderSummary() {
     </tr>`;
   }).join("");
   $("summary-table").innerHTML = `
-    <tr class="names"><th>${esc(g.white.name)}</th><th></th><th>${esc(g.black.name)}</th></tr>
-    <tr class="accuracy"><td>${r.accuracy.white.toFixed(1)}</td><td class="cls">Genauigkeit</td><td>${r.accuracy.black.toFixed(1)}</td></tr>
+    <tr class="names"><th>${esc(playerName(g.white.name))}</th><th></th><th>${esc(playerName(g.black.name))}</th></tr>
+    <tr class="accuracy"><td>${r.accuracy.white.toFixed(1)}</td><td class="cls">${t("Genauigkeit")}</td><td>${r.accuracy.black.toFixed(1)}</td></tr>
     ${rows}`;
 }
 
@@ -1105,7 +1103,7 @@ function renderVariation(): string {
     const mark = n.review ? badgeIfNotable(n.review.classification) : n.error || n.engine ? "" : `<span class="pending"></span>`;
     return `<button class="vmv${n.engine ? " engine" : ""}" data-var="${i + 1}">${num}${mark}<span>${esc(fig(n.san))}</span></button>`;
   });
-  return `<div class="variation">${parts.join("")}<button class="var-close" title="Variante löschen">✕</button></div>`;
+  return `<div class="variation">${parts.join("")}<button class="var-close" title="${t("Variante löschen")}">✕</button></div>`;
 }
 
 function renderMoveList() {
@@ -1237,7 +1235,7 @@ function updateTrainButton() {
   const btn = $("btn-train") as HTMLButtonElement;
   btn.hidden = !state.review || !!training;
   btn.disabled = n === 0;
-  btn.title = n ? `${n} eigene Fehler als Übung durchgehen (T)` : "Keine eigenen Fehler in dieser Partie";
+  btn.title = n ? t("{n} eigene Fehler als Übung durchgehen (T)", { n }) : t("Keine eigenen Fehler in dieser Partie");
 }
 
 function startTraining() {
@@ -1274,26 +1272,26 @@ function exitTraining() {
 }
 
 function trainingGoto(index: number) {
-  const t = training!;
+  const tr = training!;
   clearTimeout(trainTimer);
-  t.index = index;
-  t.hint = false;
-  t.attempt = null;
-  t.showAttempt = false;
-  t.phase = index >= t.items.length ? "done" : "solve";
+  tr.index = index;
+  tr.hint = false;
+  tr.attempt = null;
+  tr.showAttempt = false;
+  tr.phase = index >= tr.items.length ? "done" : "solve";
   renderTraining();
 }
 
 function finishItem(result: TrainResult) {
-  const t = training!;
-  t.results[t.index] = t.results[t.index] ?? result;
+  const tr = training!;
+  tr.results[tr.index] = tr.results[tr.index] ?? result;
 }
 
 async function onTrainingMove(orig: Key, dest: Key, promotion?: string) {
-  const t = training!;
+  const tr = training!;
   const r = state.review!;
-  if (t.phase !== "solve" && t.phase !== "wrong") return;
-  const item = t.items[t.index];
+  if (tr.phase !== "solve" && tr.phase !== "wrong") return;
+  const item = tr.items[tr.index];
   const fen = r.fens[item.ply - 1];
   let played: PlayedMove;
   try {
@@ -1302,20 +1300,20 @@ async function onTrainingMove(orig: Key, dest: Key, promotion?: string) {
     renderTraining();
     return;
   }
-  const step = t.index;
+  const step = tr.index;
   clearTimeout(trainTimer);
-  t.attempt = { played };
-  t.showAttempt = true;
+  tr.attempt = { played };
+  tr.showAttempt = true;
 
   moveSound(played.san);
   if (played.uci === item.bestUci) {
-    t.phase = "solved";
-    finishItem(t.hint ? "hint" : "solved");
+    tr.phase = "solved";
+    finishItem(tr.hint ? "hint" : "solved");
     successSound();
     renderTraining();
     return;
   }
-  t.phase = "checking";
+  tr.phase = "checking";
   renderTraining();
   let review: MoveReview | undefined;
   try {
@@ -1323,31 +1321,31 @@ async function onTrainingMove(orig: Key, dest: Key, promotion?: string) {
   } catch (e) {
     console.error(e);
   }
-  if (training !== t || t.index !== step || t.attempt?.played !== played) return;
-  t.attempt.review = review;
+  if (training !== tr || tr.index !== step || tr.attempt?.played !== played) return;
+  tr.attempt.review = review;
   if (review && ACCEPTED.includes(review.classification)) {
-    t.phase = "solved";
-    finishItem(t.hint ? "hint" : "solved");
+    tr.phase = "solved";
+    finishItem(tr.hint ? "hint" : "solved");
     successSound();
     renderTraining();
     return;
   }
-  t.phase = "wrong";
+  tr.phase = "wrong";
   errorSound();
   renderTraining();
   // Let the user see the refuted try for a moment, then reset the position.
   trainTimer = window.setTimeout(() => {
-    if (training === t && t.index === step && t.phase === "wrong") {
-      t.showAttempt = false;
+    if (training === tr && tr.index === step && tr.phase === "wrong") {
+      tr.showAttempt = false;
       renderTraining();
     }
   }, 1400);
 }
 
 async function showSolution() {
-  const t = training!;
+  const tr = training!;
   const r = state.review!;
-  const item = t.items[t.index];
+  const item = tr.items[tr.index];
   if (!item.bestUci) return;
   clearTimeout(trainTimer);
   const played = await invoke<PlayedMove>("play_move", {
@@ -1356,25 +1354,25 @@ async function showSolution() {
     to: item.bestUci.slice(2, 4),
     promotion: item.bestUci[4],
   });
-  if (training !== t) return;
+  if (training !== tr) return;
   finishItem("shown");
-  t.attempt = { played };
-  t.showAttempt = true;
-  t.phase = "solved";
+  tr.attempt = { played };
+  tr.showAttempt = true;
+  tr.phase = "solved";
   renderTraining();
 }
 
 function trainingDots(): string {
-  const t = training!;
-  return `<span class="train-dots">${t.items
-    .map((_, i) => `<span class="train-dot ${t.results[i] ?? ""} ${i === t.index && t.phase !== "done" ? "current" : ""}"></span>`)
+  const tr = training!;
+  return `<span class="train-dots">${tr.items
+    .map((_, i) => `<span class="train-dot ${tr.results[i] ?? ""} ${i === tr.index && tr.phase !== "done" ? "current" : ""}"></span>`)
     .join("")}</span>`;
 }
 
 function renderTraining() {
-  const t = training;
+  const tr = training;
   const r = state.review;
-  if (!t || !r) return;
+  if (!tr || !r) return;
   const head = $("coach-head");
   const text = $("coach-text");
   const best = $("coach-best");
@@ -1382,30 +1380,33 @@ function renderTraining() {
   actions.hidden = false;
   best.innerHTML = "";
 
-  if (t.phase === "done") {
-    const count = (k: TrainResult) => t.results.filter((x) => x === k).length;
-    head.innerHTML = `<span class="coach-title">Geschafft!</span>${trainingDots()}`;
+  if (tr.phase === "done") {
+    const count = (k: TrainResult) => tr.results.filter((x) => x === k).length;
+    head.innerHTML = `<span class="coach-title">${t("Geschafft!")}</span>${trainingDots()}`;
     head.style.setProperty("--c", "var(--accent)");
-    text.innerHTML = `Du hast <b>${count("solved")}</b> von ${t.items.length} Fehlern selbst gelöst${
-      count("hint") ? `, <b>${count("hint")}</b> mit Tipp` : ""
-    }.${count("shown") + count("skipped") ? ` ${count("shown") + count("skipped")} offen – die lohnt es sich nochmal anzuschauen.` : ""}`;
-    actions.innerHTML = `<button data-act="restart">Nochmal von vorn</button><button data-act="exit" class="primary">Zurück zur Review</button>`;
+    const open = count("shown") + count("skipped");
+    text.innerHTML =
+      t("Du hast <b>{s}</b> von {n} Fehlern selbst gelöst", { s: count("solved"), n: tr.items.length }) +
+      (count("hint") ? t(", <b>{h}</b> mit Tipp", { h: count("hint") }) : "") +
+      "." +
+      (open ? " " + t("{o} offen – die lohnt es sich nochmal anzuschauen.", { o: open }) : "");
+    actions.innerHTML = `<button data-act="restart">${t("Nochmal von vorn")}</button><button data-act="exit" class="primary">${t("Zurück zur Review")}</button>`;
     bindTrainingActions();
     board.set({ movable: { color: undefined, dests: new Map() } });
     board.setAutoShapes([]);
     return;
   }
 
-  if (t.phase === "showing") {
-    renderTrainingShowing(t);
+  if (tr.phase === "showing") {
+    renderTrainingShowing(tr);
     return;
   }
 
-  const item = t.items[t.index];
+  const item = tr.items[tr.index];
   const fen = r.fens[item.ply - 1];
   const prevMove = r.moves[item.ply - 2];
-  const side = item.color === "white" ? "Weiß" : "Schwarz";
-  const attempt = t.showAttempt ? t.attempt : null;
+  const side = item.color === "white" ? t("Weiß") : t("Schwarz");
+  const attempt = tr.showAttempt ? tr.attempt : null;
   state.ply = item.ply - 1;
   state.orientation = item.color;
   renderPlayers();
@@ -1413,9 +1414,9 @@ function renderTraining() {
   // Board: either the puzzle position or the user's try on top of it.
   const shapes: DrawShape[] = [];
   if (attempt) {
-    const cls: Class | undefined = t.phase === "solved" ? (attempt.review?.classification ?? "best") : attempt.review?.classification;
+    const cls: Class | undefined = tr.phase === "solved" ? (attempt.review?.classification ?? "best") : attempt.review?.classification;
     if (cls) shapes.push({ orig: attempt.played.uci.slice(2, 4) as Key, customSvg: { html: badgeSvg(cls) } });
-  } else if (t.hint && item.bestUci) {
+  } else if (tr.hint && item.bestUci) {
     shapes.push({ orig: item.bestUci.slice(0, 2) as Key, brush: "green" });
   }
   const lastUci = attempt ? attempt.played.uci : prevMove?.uci;
@@ -1434,91 +1435,95 @@ function renderTraining() {
   renderEvalBar();
   updateGraphCursor();
 
-  const canMove = !attempt && (t.phase === "solve" || t.phase === "wrong");
+  const canMove = !attempt && (tr.phase === "solve" || tr.phase === "wrong");
   if (canMove) {
     const token = ++positionToken;
     invoke<PositionInfo>("position_info", { fen }).then((info) => {
-      if (token !== positionToken || training !== t) return;
+      if (token !== positionToken || training !== tr) return;
       board.set({ movable: { color: item.color, dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
     });
   }
 
-  head.innerHTML = `<span class="coach-title">Aufgabe ${t.index + 1} von ${t.items.length}</span>${trainingDots()}`;
+  head.innerHTML = `<span class="coach-title">${t("Aufgabe {i} von {n}", { i: tr.index + 1, n: tr.items.length })}</span>${trainingDots()}`;
   const info = CLASSES[item.classification];
   const num = Math.ceil(item.ply / 2) + (item.color === "white" ? "." : "...");
-  const task = `In der Partie hast du hier <b>${num} ${esc(fig(item.san))}</b> gespielt – ${info.phrase}. Finde einen besseren Zug für ${side}.`;
+  const task = t("In der Partie hast du hier {move} gespielt – {phrase}. Finde einen besseren Zug für {side}.", {
+    move: `<b>${num} ${esc(fig(item.san))}</b>`,
+    phrase: info.phrase,
+    side,
+  });
 
-  switch (t.phase) {
+  switch (tr.phase) {
     case "solve":
       head.style.setProperty("--c", info.color);
-      text.innerHTML = task + (t.hint && item.bestUci ? ` <span class="muted">Tipp: Zieh mit der markierten Figur.</span>` : "");
+      text.innerHTML = task + (tr.hint && item.bestUci ? ` <span class="muted">${t("Tipp: Zieh mit der markierten Figur.")}</span>` : "");
       break;
     case "checking":
       head.style.setProperty("--c", "var(--border)");
-      text.innerHTML = `<span class="muted">Prüfe ${esc(fig(t.attempt!.played.san))} …</span>`;
+      text.innerHTML = `<span class="muted">${t("Prüfe {move} …", { move: esc(fig(tr.attempt!.played.san)) })}</span>`;
       break;
     case "wrong": {
-      const rv = t.attempt?.review;
+      const rv = tr.attempt?.review;
       head.style.setProperty("--c", rv ? CLASSES[rv.classification].color : "var(--danger)");
       text.innerHTML = rv
-        ? `${badgeHtml(rv.classification)} <b>${esc(fig(rv.san))}</b> ist ${CLASSES[rv.classification].phrase}. ${esc(fig(rv.comment))}<br><span class="muted">Versuch es nochmal.</span>`
-        : `<b>${esc(fig(t.attempt!.played.san))}</b> ist nicht besser. <span class="muted">Versuch es nochmal.</span>`;
-      if (t.hint && item.bestUci) text.innerHTML += `<br><span class="hint-text">Tipp: Zieh mit der markierten Figur.</span>`;
+        ? `${badgeHtml(rv.classification)} ${t("{move} ist {phrase}", { move: `<b>${esc(fig(rv.san))}</b>`, phrase: CLASSES[rv.classification].phrase })}. ${esc(fig(commentOf(rv)))}<br><span class="muted">${t("Versuch es nochmal.")}</span>`
+        : `${t("{move} ist nicht besser.", { move: `<b>${esc(fig(tr.attempt!.played.san))}</b>` })} <span class="muted">${t("Versuch es nochmal.")}</span>`;
+      if (tr.hint && item.bestUci) text.innerHTML += `<br><span class="hint-text">${t("Tipp: Zieh mit der markierten Figur.")}</span>`;
       break;
     }
     case "solved": {
-      const shown = t.results[t.index] === "shown";
-      const rv = t.attempt?.review;
+      const shown = tr.results[tr.index] === "shown";
+      const rv = tr.attempt?.review;
       head.style.setProperty("--c", shown ? "var(--muted)" : "var(--accent)");
-      const san = esc(fig(t.attempt!.played.san));
+      const san = esc(fig(tr.attempt!.played.san));
       text.innerHTML = shown
-        ? `Die Lösung war <b>${san}</b>.`
+        ? t("Die Lösung war {move}.", { move: `<b>${san}</b>` })
         : rv && rv.bestUci !== rv.uci
-          ? `<b>Gut!</b> ${san} funktioniert auch – ${CLASSES[rv.classification].phrase}.`
-          : `<b>Richtig!</b> ${san} ist der beste Zug.`;
-      if (item.bestLine) best.innerHTML = `<span class="best-label">Engine-Variante</span><div class="best-line">${esc(fig(item.bestLine))}</div>`;
+          ? t("<b>Gut!</b> {move} funktioniert auch – {phrase}.", { move: san, phrase: CLASSES[rv.classification].phrase })
+          : t("<b>Richtig!</b> {move} ist der beste Zug.", { move: san });
+      if (item.bestLine) best.innerHTML = `<span class="best-label">${t("Engine-Variante")}</span><div class="best-line">${esc(fig(item.bestLine))}</div>`;
       break;
     }
   }
 
-  const last = t.index === t.items.length - 1;
+  const last = tr.index === tr.items.length - 1;
   actions.innerHTML =
-    t.phase === "solved"
-      ? `<button data-act="exit">Beenden</button><button data-act="next" class="primary">${last ? "Ergebnis" : "Weiter"} →</button>`
-      : `${t.phase === "wrong" && t.attempt ? `<button data-act="why" class="primary">Zeig mir, was passiert</button>` : ""}
-         <button data-act="hint" ${t.hint || t.phase === "checking" ? "disabled" : ""}>Tipp</button>
-         <button data-act="solution" ${t.phase === "checking" ? "disabled" : ""}>Lösung zeigen</button>
-         <button data-act="skip">Überspringen</button>
-         <button data-act="exit" class="end">Beenden</button>`;
+    tr.phase === "solved"
+      ? `<button data-act="exit">${t("Beenden")}</button><button data-act="next" class="primary">${last ? t("Ergebnis") : t("Weiter")} →</button>`
+      : `${tr.phase === "wrong" && tr.attempt ? `<button data-act="why" class="primary">${t("Zeig mir, was passiert")}</button>` : ""}
+         <button data-act="hint" ${tr.hint || tr.phase === "checking" ? "disabled" : ""}>${t("Tipp")}</button>
+         <button data-act="solution" ${tr.phase === "checking" ? "disabled" : ""}>${t("Lösung zeigen")}</button>
+         <button data-act="skip">${t("Überspringen")}</button>
+         <button data-act="exit" class="end">${t("Beenden")}</button>`;
   bindTrainingActions();
 }
 
 /** Play the wrong try and the engine's answer on the board. */
 async function showTrainingWhy() {
-  const t = training;
+  const tr = training;
   const r = state.review;
-  if (!t || !r || !t.attempt) return;
+  if (!tr || !r || !tr.attempt) return;
   clearTimeout(trainTimer);
-  const item = t.items[t.index];
+  const item = tr.items[tr.index];
   const fenBefore = r.fens[item.ply - 1];
-  const uci = t.attempt.played.uci;
-  t.phase = "showing";
-  if (!t.refute || t.refute.uci !== uci) {
-    t.refute = undefined;
+  const uci = tr.attempt.played.uci;
+  tr.phase = "showing";
+  if (!tr.refute || tr.refute.uci !== uci) {
+    tr.refute = undefined;
     renderTraining();
     try {
       const ref = await invoke<Refutation>("refutation", { fen: fenBefore, uci });
-      t.refute = { ...ref, uci, shown: 0 };
+      tr.refute = { ...ref, uci, shown: 0 };
     } catch (e) {
-      if (training !== t) return;
-      t.phase = "wrong";
+      if (training !== tr) return;
+      tr.phase = "wrong";
       renderTraining();
       $("coach-text").innerHTML += `<br><span class="error">${esc(String(e))}</span>`;
       return;
     }
-    if (training !== t || t.phase !== "showing") return;
+    if (training !== tr || tr.phase !== "showing") return;
   }
-  const ref = t.refute!;
+  const ref = tr.refute!;
   ref.shown = 0;
   const prev = r.moves[item.ply - 2];
   board.set({
@@ -1530,7 +1535,7 @@ async function showTrainingWhy() {
   board.setAutoShapes([]);
   renderTraining();
   const stepOnce = () => {
-    if (training !== t || t.phase !== "showing") return;
+    if (training !== tr || tr.phase !== "showing") return;
     const m = ref.moves[ref.shown];
     if (!m) return renderTraining();
     board.set({ fen: m.fen, lastMove: [m.uci.slice(0, 2) as Key, m.uci.slice(2, 4) as Key], check: m.check });
@@ -1542,16 +1547,16 @@ async function showTrainingWhy() {
   trainTimer = window.setTimeout(stepOnce, 350);
 }
 
-function renderTrainingShowing(t: Training) {
+function renderTrainingShowing(tr: Training) {
   const head = $("coach-head");
   const text = $("coach-text");
   const actions = $("training-actions");
-  head.innerHTML = `<span class="coach-title">Aufgabe ${t.index + 1} von ${t.items.length}</span>${trainingDots()}`;
+  head.innerHTML = `<span class="coach-title">${t("Aufgabe {i} von {n}", { i: tr.index + 1, n: tr.items.length })}</span>${trainingDots()}`;
   head.style.setProperty("--c", "var(--danger)");
-  const ref = t.refute;
+  const ref = tr.refute;
   if (!ref) {
-    text.innerHTML = `<span class="muted">Berechne, wie der Gegner antwortet …</span>`;
-    actions.innerHTML = `<button data-act="back">Zurück zur Aufgabe</button>`;
+    text.innerHTML = `<span class="muted">${t("Berechne, wie der Gegner antwortet …")}</span>`;
+    actions.innerHTML = `<button data-act="back">${t("Zurück zur Aufgabe")}</button>`;
   } else {
     let i = 0;
     const line = ref.text
@@ -1563,10 +1568,10 @@ function renderTrainingShowing(t: Training) {
         return `<span class="${cls}">${esc(fig(tok))}</span>`;
       })
       .join(" ");
-    text.innerHTML = `<b>So geht es nach deinem Zug weiter:</b><br><span class="ref-line">${line}</span>`;
+    text.innerHTML = `<b>${t("So geht es nach deinem Zug weiter:")}</b><br><span class="ref-line">${line}</span>`;
     const done = ref.shown >= ref.moves.length;
-    actions.innerHTML = `<button data-act="why" ${done ? "" : "disabled"}>Nochmal abspielen</button>
-      <button data-act="back" class="primary">Zurück zur Aufgabe</button>`;
+    actions.innerHTML = `<button data-act="why" ${done ? "" : "disabled"}>${t("Nochmal abspielen")}</button>
+      <button data-act="back" class="primary">${t("Zurück zur Aufgabe")}</button>`;
   }
   bindTrainingActions();
 }
@@ -1576,11 +1581,11 @@ function bindTrainingActions() {
     .querySelectorAll<HTMLButtonElement>("button[data-act]")
     .forEach((b) =>
       b.addEventListener("click", () => {
-        const t = training;
-        if (!t) return;
+        const tr = training;
+        if (!tr) return;
         switch (b.dataset.act) {
           case "hint":
-            t.hint = true;
+            tr.hint = true;
             renderTraining();
             break;
           case "why":
@@ -1588,8 +1593,8 @@ function bindTrainingActions() {
             break;
           case "back":
             clearTimeout(trainTimer);
-            t.phase = "wrong";
-            t.showAttempt = false;
+            tr.phase = "wrong";
+            tr.showAttempt = false;
             renderTraining();
             break;
           case "solution":
@@ -1597,13 +1602,13 @@ function bindTrainingActions() {
             break;
           case "skip":
             finishItem("skipped");
-            trainingGoto(t.index + 1);
+            trainingGoto(tr.index + 1);
             break;
           case "next":
-            trainingGoto(t.index + 1);
+            trainingGoto(tr.index + 1);
             break;
           case "restart":
-            t.results = t.items.map(() => null);
+            tr.results = tr.items.map(() => null);
             trainingGoto(0);
             break;
           case "exit":
@@ -1764,7 +1769,7 @@ invoke<{ current: string; latest: string | null; available: boolean }>("app_upda
   .then((u) => {
     if (!u.available || !u.latest) return;
     const btn = $("app-update");
-    btn.textContent = `Update ${u.latest} verfügbar`;
+    btn.textContent = t("Update {v} verfügbar", { v: u.latest });
     btn.hidden = false;
     btn.addEventListener("click", () => invoke("open_releases_page").catch((e) => alert(String(e))));
   })
@@ -1775,7 +1780,7 @@ function setGamesCollapsed(on: boolean) {
   document.querySelector(".layout")!.classList.toggle("games-collapsed", on);
   const btn = $("games-toggle");
   btn.textContent = on ? "›" : "‹";
-  btn.title = on ? "Partieliste ausklappen" : "Partieliste einklappen";
+  btn.title = on ? t("Partieliste ausklappen") : t("Partieliste einklappen");
   store.set("games-collapsed", on ? "1" : "0");
   // the board changed size
   requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
@@ -1820,7 +1825,7 @@ $("import-go").addEventListener("click", async () => {
   store.set("import-side", you ?? "");
   const msg = $("import-msg");
   msg.className = "msg";
-  msg.textContent = "Lese Partien …";
+  msg.textContent = t("Lese Partien …");
   let r: ImportResult;
   try {
     r = await invoke<ImportResult>("import_pgn", { pgn: text, you });
@@ -1834,12 +1839,12 @@ $("import-go").addEventListener("click", async () => {
     msg.textContent = r.errors.join("\n");
     return;
   }
-  const parts = [`${r.games.length === 1 ? "1 Partie" : `${r.games.length} Partien`} eingespielt`];
-  if (r.known) parts.push(`davon ${r.known} schon vorhanden`);
+  const parts = [tn(r.games.length, "1 Partie eingespielt", "{n} Partien eingespielt")];
+  if (r.known) parts.push(t("davon {n} schon vorhanden", { n: r.known }));
   if (r.errors.length) {
     // keep the dialog open so the problems can be read
     msg.className = "msg error";
-    msg.textContent = `${parts.join(", ")}.\nNicht lesbar:\n${r.errors.join("\n")}`;
+    msg.textContent = `${parts.join(", ")}.\n${t("Nicht lesbar:")}\n${r.errors.join("\n")}`;
   } else {
     importDialog.close();
     ($("import-text") as HTMLTextAreaElement).value = "";
@@ -1878,7 +1883,7 @@ async function copyText(text: string): Promise<boolean> {
 let copyTimer = 0;
 function copied(ok: boolean, what: string) {
   const el = $("copy-msg");
-  el.textContent = ok ? `${what} kopiert ✓` : "Kopieren nicht möglich";
+  el.textContent = ok ? t("{what} kopiert ✓", { what }) : t("Kopieren nicht möglich");
   clearTimeout(copyTimer);
   copyTimer = window.setTimeout(() => (el.textContent = ""), 2000);
 }

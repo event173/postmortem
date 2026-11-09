@@ -1,4 +1,5 @@
-import { CLASSES, type Class } from "./types";
+import { lang, t } from "./i18n";
+import { CLASSES, type Class, type MoveReview, type Platform } from "./types";
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -42,8 +43,9 @@ export const store = {
 const ROLES: Record<string, string> = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
 
 /** Pieces of a FEN as chessground <piece> elements (inside a .cg-wrap, so the
- *  board's piece images apply – including the chosen piece set). */
-export function miniPieces(fen: string): string {
+ *  board's piece images apply – including the chosen piece set).
+ *  `flip`: Black at the bottom. */
+export function miniPieces(fen: string, flip = false): string {
   let html = "";
   fen
     .split(" ")[0]
@@ -56,9 +58,33 @@ export function miniPieces(fen: string): string {
           continue;
         }
         const color = ch === ch.toUpperCase() ? "white" : "black";
-        html += `<piece class="${ROLES[ch.toLowerCase()]} ${color}" style="transform:translate(${f * 100}%,${r * 100}%)"></piece>`;
+        const [x, y] = flip ? [7 - f, 7 - r] : [f, r];
+        html += `<piece class="${ROLES[ch.toLowerCase()]} ${color}" style="transform:translate(${x * 100}%,${y * 100}%)"></piece>`;
         f++;
       }
     });
   return html;
+}
+
+const SPEEDS: Record<string, string> = {
+  ultraBullet: "UltraBullet",
+  bullet: "Bullet",
+  blitz: "Blitz",
+  rapid: t("Schnellschach"),
+  classical: t("Klassisch"),
+  correspondence: t("Fernschach"),
+  daily: t("Fernschach"),
+  import: t("Eingespielt"),
+  bot: t("Computer"),
+};
+
+export const speedLabel = (speed: string) => SPEEDS[speed] ?? speed;
+
+const PLATFORMS: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com", local: t("Eigene") };
+
+export const platformLabel = (p: Platform) => PLATFORMS[p] ?? p;
+
+/** Coach comment in the UI language (reviews from before 0.2.0 only have German). */
+export function commentOf(m: Pick<MoveReview, "comment" | "commentEn">): string {
+  return lang === "en" && m.commentEn ? m.commentEn : m.comment;
 }

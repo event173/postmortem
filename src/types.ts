@@ -1,5 +1,7 @@
 // Mirrors the serde types in src-tauri/src/{lichess,analysis,engine}.rs
 
+import { t } from "./i18n";
+
 export interface Player {
   name: string;
   rating: number | null;
@@ -66,7 +68,10 @@ export interface MoveReview {
   bestSan: string | null;
   bestUci: string | null;
   bestLine: string | null;
+  /** Coach comment in German … */
   comment: string;
+  /** … and English (missing in reviews from before 0.2.0). */
+  commentEn?: string | null;
   /** Why the move was bad (bad moves only). */
   theme?: Theme | null;
 }
@@ -91,24 +96,24 @@ export interface Progress {
 
 export interface ClassInfo {
   label: string;
-  /** "Nf6 ist …" */
+  /** "Nf6 ist …" / "Nf6 is …" */
   phrase: string;
   symbol: string;
   color: string;
 }
 
 export const CLASSES: Record<Class, ClassInfo> = {
-  brilliant: { label: "Brillant", phrase: "brillant", symbol: "!!", color: "#1fb8a0" },
-  great: { label: "Stark", phrase: "ein starker Zug", symbol: "!", color: "#5b8dd6" },
-  best: { label: "Bester Zug", phrase: "der beste Zug", symbol: "★", color: "#7cad3f" },
-  excellent: { label: "Ausgezeichnet", phrase: "ausgezeichnet", symbol: "✓", color: "#97b850" },
-  good: { label: "Gut", phrase: "gut", symbol: "✓", color: "#8aa585" },
-  book: { label: "Theorie", phrase: "ein Theoriezug", symbol: "≡", color: "#a8896a" },
-  forced: { label: "Erzwungen", phrase: "erzwungen", symbol: "□", color: "#8d8d8d" },
-  inaccuracy: { label: "Ungenauigkeit", phrase: "eine Ungenauigkeit", symbol: "?!", color: "#e3b341" },
-  mistake: { label: "Fehler", phrase: "ein Fehler", symbol: "?", color: "#e5862a" },
-  miss: { label: "Verpasst", phrase: "eine verpasste Chance", symbol: "✕", color: "#e0614f" },
-  blunder: { label: "Patzer", phrase: "ein Patzer", symbol: "??", color: "#d23a3a" },
+  brilliant: { label: t("Brillant"), phrase: t("brillant"), symbol: "!!", color: "#1fb8a0" },
+  great: { label: t("Stark"), phrase: t("ein starker Zug"), symbol: "!", color: "#5b8dd6" },
+  best: { label: t("Bester Zug"), phrase: t("der beste Zug"), symbol: "★", color: "#7cad3f" },
+  excellent: { label: t("Ausgezeichnet"), phrase: t("ausgezeichnet"), symbol: "✓", color: "#97b850" },
+  good: { label: t("Gut"), phrase: t("gut"), symbol: "✓", color: "#8aa585" },
+  book: { label: t("Theorie"), phrase: t("ein Theoriezug"), symbol: "≡", color: "#a8896a" },
+  forced: { label: t("Erzwungen"), phrase: t("erzwungen"), symbol: "□", color: "#8d8d8d" },
+  inaccuracy: { label: t("Ungenauigkeit"), phrase: t("eine Ungenauigkeit"), symbol: "?!", color: "#e3b341" },
+  mistake: { label: t("Fehler"), phrase: t("ein Fehler"), symbol: "?", color: "#e5862a" },
+  miss: { label: t("Verpasst"), phrase: t("eine verpasste Chance"), symbol: "✕", color: "#e0614f" },
+  blunder: { label: t("Patzer"), phrase: t("ein Patzer"), symbol: "??", color: "#d23a3a" },
 };
 
 /** Order used in the summary table. */

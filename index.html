@@ -96,6 +96,13 @@
       </section>
 
       <section id="puzzles" class="puzzles" hidden>
+        <div id="pz-banner" class="pz-banner" hidden>
+          <div>
+            <b>Puzzle-Datenbank fehlt</b>
+            <span>Ohne sie gibt es nur Stellungen aus deinen eigenen Fehlern. Der Download ist ca. 300 MB groß und danach auch offline nutzbar.</span>
+          </div>
+          <button id="pz-banner-install" class="primary">Installieren</button>
+        </div>
         <div class="panel coach pz-card">
           <div id="pz-head" class="pz-head"></div>
           <p id="pz-text" class="coach-text"></p>
@@ -256,6 +263,16 @@
       </form>
 
       <section>
+        <label class="row">
+          <span>Sprache · Language</span>
+          <select id="pref-lang">
+            <option value="de">Deutsch</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+      </section>
+
+      <section>
         <h3>Analyse</h3>
         <label class="row">
           <span>Tiefe<small>Höher = genauer, aber langsamer. Gilt für neue Analysen.</small></span>
@@ -361,7 +378,7 @@
 
       <section>
         <h3>Puzzle-Datenbank</h3>
-        <p class="hint">Alle Puzzles von Lichess (gemeinfrei) für das Training, offline nutzbar. Download ca. 300&nbsp;MB, lokal ca. 1&nbsp;GB.</p>
+        <p class="hint">Alle Puzzles von Lichess (gemeinfrei) für das Training, offline nutzbar. Download ca. 300 MB, lokal ca. 1 GB.</p>
         <div class="row">
           <span id="puzzle-status">…</span>
           <span class="btn-group">

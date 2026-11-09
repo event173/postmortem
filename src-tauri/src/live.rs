@@ -100,7 +100,7 @@ fn to_live_lines(pos: &Chess, lines: &[PvLine]) -> Vec<LiveLine> {
 
 fn spawn(app: &AppHandle) -> Result<Process, String> {
     let path = engine::find_stockfish()
-        .ok_or("Stockfish wurde nicht gefunden. Installiere es z. B. mit: sudo apt install stockfish")?;
+        .ok_or_else(crate::i18n::no_stockfish)?;
     let mut child = engine::spawn_stockfish(&path)?;
     let mut stdin = child.stdin.take().ok_or("kein stdin")?;
     let stdout = BufReader::new(child.stdout.take().ok_or("kein stdout")?);
