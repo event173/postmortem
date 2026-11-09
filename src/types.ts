@@ -194,6 +194,8 @@ export interface Refutation {
 /** A game from the local store. */
 export interface StoredGame extends GameInfo {
   analysed: boolean;
+  /** Accuracy of both sides from the deepest current review. */
+  accuracy?: { white: number; black: number };
 }
 
 export interface SyncResult {

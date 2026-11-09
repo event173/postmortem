@@ -59,7 +59,21 @@ const state = {
   inVar: false,
   varIndex: 0,
   liveEnabled: true,
+  /** Accuracy of both sides per analysed game (shown in the list). */
+  accuracy: new Map<string, { white: number; black: number }>(),
+  /** Favourite games (ids). */
+  favorites: new Set<string>(),
+  /** Your mistakes + misses + blunders per analysed game (for the filter). */
+  errors: new Map<string, number>(),
+  /** All stored games of the shown accounts, loaded when a filter is used (the list shows the newest 500). */
+  allGames: null as GameInfo[] | null,
 };
+
+/** Game list filter. */
+const filter = { q: "", fav: false, result: "", color: "", speed: "", analysis: "" };
+const filterActive = () => !!(filter.q || filter.fav || filter.result || filter.color || filter.speed || filter.analysis);
+/** At most this many games are listed at once (the rest via the filter). */
+const LIST_MAX = 300;
 
 /** Piece animation length (setting); playback steps are a bit longer so moves never overlap. */
 let animMs = displayPrefs().animMs;
@@ -78,6 +92,15 @@ const board: Api = Chessground($("board"), {
   drawable: { enabled: true, visible: true, eraseOnClick: true, defaultSnapToValidMove: true },
   premovable: { enabled: false },
   movable: { free: false, color: undefined, showDests: true, events: { after: (orig, dest) => onUserMove(orig, dest) } },
+});
+
+// After a window size change (fullscreen on/off, maximise) measure the board
+// again once the layout has settled; chessground's own observer can see an
+// intermediate size during the transition.
+let resizeTimer: number | undefined;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => board.redrawAll(), 150);
 });
 
 // ---------------------------------------------------------------------------
@@ -229,7 +252,10 @@ async function showStoredGames() {
     if (key !== accountsKey()) return;
     state.games = stored;
     state.cached = new Set(stored.filter((g) => g.analysed).map((g) => g.id));
+    for (const g of stored) if (g.accuracy) state.accuracy.set(g.id, g.accuracy);
+    state.allGames = null;
     renderGames();
+    if (filterActive()) loadFilterData();
   } catch (e) {
     $("games-list").innerHTML = `<p class="empty error">${esc(String(e))}</p>`;
   }
@@ -368,11 +394,136 @@ initStats({
   },
 });
 
+type Outcome = "win" | "draw" | "loss" | "neutral";
+
+function outcome(g: GameInfo): Outcome {
+  const me = userColor(g);
+  if (!g.winner) return "draw";
+  if (!me) return "neutral";
+  return g.winner === me ? "win" : "loss";
+}
+
+function matchesFilter(g: GameInfo): boolean {
+  if (filter.fav && !state.favorites.has(g.id)) return false;
+  if (filter.result && outcome(g) !== filter.result) return false;
+  if (filter.color && userColor(g) !== filter.color) return false;
+  if (filter.speed && !(filter.speed === "correspondence" ? ["correspondence", "daily"].includes(g.speed) : g.speed === filter.speed)) return false;
+  if (filter.analysis === "errors" && !((state.errors.get(g.id) ?? 0) > 0)) return false;
+  if (filter.analysis === "pending" && state.cached.has(g.id)) return false;
+  if (filter.q) {
+    const hay = `${g.white.name} ${g.black.name} ${g.opening?.name ?? ""}`.toLowerCase();
+    if (!filter.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
+  }
+  return true;
+}
+
+/** With a filter: all stored games and the error counts (once per account set). */
+async function loadFilterData() {
+  const key = accountsKey();
+  const accs = accounts();
+  if (!accs.length) return;
+  if (!state.allGames) {
+    try {
+      const all = await invoke<StoredGame[]>("list_games", { accounts: accs, limit: 1_000_000 });
+      if (key !== accountsKey()) return;
+      state.allGames = all;
+      for (const g of all) {
+        if (g.analysed) state.cached.add(g.id);
+        if (g.accuracy) state.accuracy.set(g.id, g.accuracy);
+      }
+    } catch {
+      state.allGames = state.games;
+    }
+  }
+  if (filter.analysis === "errors") {
+    state.errors = new Map(Object.entries(await invoke<Record<string, number>>("game_errors", { accounts: accs }).catch(() => ({}))));
+  }
+  if (key === accountsKey()) renderGames();
+}
+
+function onFilterChange() {
+  $("gf-reset").hidden = !filterActive();
+  ($("gf-more-btn") as HTMLElement).classList.toggle("on", !!(filter.result || filter.color || filter.speed || filter.analysis));
+  $("gf-fav").classList.toggle("on", filter.fav);
+  $("gf-fav-icon").textContent = filter.fav ? "★" : "☆";
+  if (filterActive() && (!state.allGames || (filter.analysis === "errors" && !state.errors.size))) loadFilterData();
+  renderGames();
+}
+
+function initGameFilter() {
+  const search = $("gf-search") as HTMLInputElement;
+  search.addEventListener("input", () => {
+    filter.q = search.value.trim();
+    onFilterChange();
+  });
+  $("gf-fav").addEventListener("click", () => {
+    filter.fav = !filter.fav;
+    onFilterChange();
+  });
+  $("gf-more-btn").addEventListener("click", () => {
+    $("gf-more").hidden = !$("gf-more").hidden;
+    $("gf-more-arrow").textContent = $("gf-more").hidden ? "▾" : "▴";
+  });
+  for (const key of ["result", "color", "speed", "analysis"] as const) {
+    $(`gf-${key}`).addEventListener("change", (e) => {
+      filter[key] = (e.target as HTMLSelectElement).value;
+      onFilterChange();
+    });
+  }
+  $("gf-reset").addEventListener("click", () => {
+    Object.assign(filter, { q: "", fav: false, result: "", color: "", speed: "", analysis: "" });
+    search.value = "";
+    for (const key of ["result", "color", "speed", "analysis"]) ($(`gf-${key}`) as HTMLSelectElement).value = "";
+    onFilterChange();
+  });
+  invoke<string[]>("favorites")
+    .then((ids) => {
+      state.favorites = new Set(ids);
+      renderGames();
+    })
+    .catch(() => {});
+}
+
+async function toggleFavorite(id: string) {
+  const on = !state.favorites.has(id);
+  if (on) state.favorites.add(id);
+  else state.favorites.delete(id);
+  renderGames();
+  await invoke("favorite_set", { gameId: id, on }).catch(() => {});
+}
+
+/**
+ * Your accuracy in an analysed game as a thin bar under the entry: as long as
+ * the accuracy, green from 85 %, yellow from 70 %, red below; the number on hover.
+ */
+function accuracyBar(g: GameInfo): string {
+  const acc = state.accuracy.get(g.id);
+  if (!acc || !state.cached.has(g.id)) return "";
+  const me = userColor(g);
+  const value = me ? acc[me] : (acc.white + acc.black) / 2;
+  const level = value >= 85 ? "good" : value >= 70 ? "ok" : "weak";
+  const title = me
+    ? t("Deine Genauigkeit: {n} %", { n: Math.round(value) })
+    : t("Genauigkeit Weiß {w} %, Schwarz {b} %", { w: Math.round(acc.white), b: Math.round(acc.black) });
+  return `<span class="acc-bar ${level}" title="${title}"><i style="width:${Math.max(3, Math.min(100, value))}%"></i></span>`;
+}
+
 function renderGames() {
   const list = $("games-list");
-  $("games-count").textContent = state.games.length ? String(state.games.length) : "";
+  const source = filterActive() ? (state.allGames ?? state.games) : state.games;
+  const shown = filterActive() ? source.filter(matchesFilter) : source;
+  $("games-count").textContent = state.games.length ? String(filterActive() ? shown.length : state.games.length) : "";
+  const tally = { win: 0, draw: 0, loss: 0, neutral: 0 };
+  for (const g of shown) tally[outcome(g)]++;
+  $("gf-summary").innerHTML = shown.length
+    ? `${filterActive() ? `${tn(shown.length, "1 Partie", "{n} Partien")} · ` : ""}<span class="win">${tally.win} ${t("S")}</span> / <span class="draw">${tally.draw} ${t("R")}</span> / <span class="loss">${tally.loss} ${t("N")}</span>`
+    : "";
   list.innerHTML = "";
-  for (const g of state.games) {
+  if (filterActive() && !shown.length) {
+    list.innerHTML = `<p class="empty">${state.allGames ? t("Keine Partie passt zu diesem Filter.") : t("Lade Partien …")}</p>`;
+    return;
+  }
+  for (const g of shown.slice(0, LIST_MAX)) {
     const me = userColor(g);
     const opp = me === "white" ? g.black : me === "black" ? g.white : null;
     let result: string;
@@ -403,15 +554,26 @@ function renderGames() {
         <span class="game-title">${title}</span>
         <span class="game-sub">${esc(g.opening?.name ?? t("Unbekannte Eröffnung"))}</span>
         <span class="game-sub">${speed} · ${date} · ${tn(Math.ceil(g.moves.length / 2), "1 Zug", "{n} Züge")}</span>
+        ${accuracyBar(g)}
       </span>
-      ${state.cached.has(g.id) ? `<span class="analysed" title="${t("Bereits analysiert")}">●</span>` : ""}`;
-    btn.addEventListener("click", () => {
+      <span class="game-side">
+        <span class="fav ${state.favorites.has(g.id) ? "on" : ""}" role="button" tabindex="0" title="${state.favorites.has(g.id) ? t("Aus den Favoriten nehmen") : t("Als Favorit markieren")}">${state.favorites.has(g.id) ? "★" : "☆"}</span>
+      </span>`;
+    btn.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".fav")) {
+        e.stopPropagation();
+        toggleFavorite(g.id);
+        return;
+      }
       showTab("review");
       selectGame(g);
     });
     list.appendChild(btn);
   }
-  if (accounts().length && state.games.length && state.view !== "local") {
+  if (shown.length > LIST_MAX) {
+    list.insertAdjacentHTML("beforeend", `<p class="empty">${t("… und {n} weitere – stell den Filter genauer.", { n: shown.length - LIST_MAX })}</p>`);
+  }
+  if (!filterActive() && accounts().length && state.games.length && state.view !== "local") {
     const more = document.createElement("button");
     more.className = "load-older";
     more.textContent = state.view === "chesscom" ? t("Ältere Partien von chess.com laden") : t("Ältere Partien laden");
@@ -472,6 +634,7 @@ async function selectGame(game: GameInfo, startPly = 0) {
     if (token !== analysisToken) return;
     state.review = first;
     state.cached.add(game.id);
+    state.accuracy.set(game.id, first.accuracy);
     renderGames();
     $("review-progress").hidden = true;
     $("review-content").hidden = false;
@@ -540,6 +703,8 @@ async function refine(game: GameInfo, depth: number, token: number, force = fals
   // Exercises are built from the review; don't pull it away mid-exercise.
   if (training) return;
   state.review = review;
+  state.accuracy.set(game.id, review.accuracy);
+  renderGames();
   renderSummary();
   renderMoveList();
   renderGraph();
@@ -1798,6 +1963,7 @@ state.liveEnabled = store.get("live") !== "0";
 state.names.lichess = store.get("name-lichess") ?? store.get("username") ?? "";
 state.names.chesscom = store.get("name-chesscom") ?? "";
 const savedView = store.get("view");
+initGameFilter();
 setView(savedView === "chesscom" || savedView === "all" || savedView === "local" ? savedView : "lichess");
 checkEngine();
 preloadSounds();

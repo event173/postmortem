@@ -52,6 +52,46 @@
           <button data-src="local" title="Deine Partien gegen den Computer und eingespielte Partien">Eigene</button>
           <button data-src="all">Alle</button>
         </div>
+        <div class="game-filter">
+          <input id="gf-search" type="search" placeholder="Gegner oder Eröffnung suchen …" autocomplete="off" spellcheck="false" />
+          <div class="game-filter-buttons">
+            <button id="gf-fav" title="Nur Favoriten zeigen"><span id="gf-fav-icon">☆</span> Favoriten</button>
+            <button id="gf-more-btn" title="Nach Ergebnis, Farbe, Bedenkzeit filtern">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M1.5 3h13l-5 6v4.5l-3 1.5V9z"/></svg>
+              Filter <span id="gf-more-arrow">▾</span>
+            </button>
+          </div>
+        </div>
+        <div id="gf-more" class="game-filter-more" hidden>
+          <select id="gf-result">
+            <option value="">Alle Ergebnisse</option>
+            <option value="win">Siege</option>
+            <option value="draw">Remis</option>
+            <option value="loss">Niederlagen</option>
+          </select>
+          <select id="gf-color">
+            <option value="">Beide Farben</option>
+            <option value="white">Als Weiß</option>
+            <option value="black">Als Schwarz</option>
+          </select>
+          <select id="gf-speed">
+            <option value="">Alle Bedenkzeiten</option>
+            <option value="bullet">Bullet</option>
+            <option value="blitz">Blitz</option>
+            <option value="rapid">Schnellschach</option>
+            <option value="classical">Klassisch</option>
+            <option value="correspondence">Fernschach</option>
+          </select>
+          <select id="gf-analysis">
+            <option value="">Analysiert oder nicht</option>
+            <option value="errors">Mit eigenen Fehlern</option>
+            <option value="pending">Noch nicht analysiert</option>
+          </select>
+        </div>
+        <div class="game-filter-foot">
+          <span id="gf-summary" class="muted"></span>
+          <button id="gf-reset" class="link" hidden>Filter zurücksetzen</button>
+        </div>
         <div id="games-list" class="games-list">
           <p class="empty">Gib deinen Lichess-Namen ein, um deine letzten Partien zu laden.</p>
         </div>
@@ -418,6 +458,14 @@
       <section>
         <h3>Daten</h3>
         <p id="data-info" class="hint"></p>
+        <div class="row">
+          <span>Sicherung<small>Partien, Analysen, Lernstand und Einstellungen in einer Datei – z. B. für einen neuen Rechner. Ohne Lichess-Schlüssel und ohne Puzzle-Datenbank.</small></span>
+          <span class="backup-buttons">
+            <button id="backup-create">Sicherung erstellen …</button>
+            <button id="backup-restore">Einspielen …</button>
+          </span>
+        </div>
+        <p id="backup-msg" class="hint"></p>
       </section>
 
       <section>

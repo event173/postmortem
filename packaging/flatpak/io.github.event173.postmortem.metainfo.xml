@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.8" date="2026-11-10">
+      <description>
+        <p>Search and filter the game list (opponent, opening, result, colour, time control, own mistakes), favourite games, your accuracy as a coloured bar in the list, backup and restore of all your data, and a board that stays square after leaving fullscreen.</p>
+      </description>
+    </release>
     <release version="0.2.7" date="2026-11-09">
       <description>
         <p>Free play gets start, back, forward and end under the board; the board buttons and player rows no longer shift while reviewing a game.</p>

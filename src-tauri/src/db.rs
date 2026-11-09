@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::analysis::{GameReview, REVIEW_VERSION};
+use crate::analysis::{Accuracy, GameReview, REVIEW_VERSION};
 use crate::lichess::{GameInfo, Source};
 
 /// Bump together with a new entry in `MIGRATIONS`.
@@ -56,6 +56,8 @@ const MIGRATIONS: &[&str] = &[
      );",
     // 6: engine continuation of opening lines (computed once)
     "CREATE TABLE line_extension (line_id TEXT PRIMARY KEY, moves TEXT NOT NULL);",
+    // 7: games marked as favourites in the game list
+    "CREATE TABLE favorites (game_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);",
 ];
 
 /// Spaced-repetition state of one opening line for one colour.
@@ -94,6 +96,9 @@ pub struct StoredGame {
     pub game: GameInfo,
     /// A review with the current classification logic exists (any depth).
     pub analysed: bool,
+    /// Accuracy of White and Black from the deepest current review (for the game list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accuracy: Option<Accuracy>,
 }
 
 /// A player account on one platform.
@@ -138,6 +143,41 @@ impl Db {
     pub fn open(path: &Path) -> Result<Db, String> {
         let conn = Connection::open(path).map_err(sql_err)?;
         Self::init(conn)
+    }
+
+    /// An empty database in memory (stands in while the real file is swapped).
+    pub fn placeholder() -> Db {
+        Db { conn: Connection::open_in_memory().expect("in-memory SQLite") }
+    }
+
+    /// Write a compact, consistent copy of the whole database to `path`
+    /// (which must not exist yet).
+    pub fn copy_to(&self, path: &Path) -> Result<(), String> {
+        self.conn.execute("VACUUM INTO ?1", [path.to_string_lossy()]).map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Ids of the favourite games.
+    pub fn favorites(&self) -> Result<Vec<String>, String> {
+        let mut stmt = self.conn.prepare("SELECT game_id FROM favorites").map_err(sql_err)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    pub fn set_favorite(&self, game_id: &str, on: bool, now_ms: i64) -> Result<(), String> {
+        if on {
+            self.conn
+                .execute("INSERT OR IGNORE INTO favorites (game_id, created_at) VALUES (?1, ?2)", params![game_id, now_ms])
+                .map_err(sql_err)?;
+        } else {
+            self.conn.execute("DELETE FROM favorites WHERE game_id = ?1", [game_id]).map_err(sql_err)?;
+        }
+        Ok(())
+    }
+
+    /// Schema version of this app's databases.
+    pub fn schema_version() -> usize {
+        MIGRATIONS.len()
     }
 
     #[cfg(test)]
@@ -186,19 +226,29 @@ impl Db {
         let (filter, mut args) = account_filter(accounts, 2);
         args.insert(0, REVIEW_VERSION.to_string());
         let sql = format!(
-            "SELECT g.data, EXISTS(SELECT 1 FROM reviews r WHERE r.game_id = g.id AND r.version = ?1)
-             FROM games g WHERE {filter}
+            "SELECT g.data, a.white, a.black FROM games g
+             LEFT JOIN (
+                 SELECT game_id,
+                        json_extract(data, '$.accuracy.white') AS white,
+                        json_extract(data, '$.accuracy.black') AS black,
+                        ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY depth DESC) AS n
+                 FROM reviews WHERE version = ?1
+             ) a ON a.game_id = g.id AND a.n = 1
+             WHERE {filter}
              ORDER BY g.created_at DESC LIMIT {limit}"
         );
         let mut stmt = self.conn.prepare(&sql).map_err(sql_err)?;
         let rows = stmt
-            .query_map(params_from_iter(args.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
+            .query_map(params_from_iter(args.iter()), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<f64>>(1)?, r.get::<_, Option<f64>>(2)?))
+            })
             .map_err(sql_err)?;
         let mut out = Vec::new();
         for row in rows {
-            let (json, analysed) = row.map_err(sql_err)?;
+            let (json, white, black) = row.map_err(sql_err)?;
             if let Ok(game) = serde_json::from_str(&json) {
-                out.push(StoredGame { game, analysed });
+                let accuracy = white.zip(black).map(|(white, black)| Accuracy { white, black });
+                out.push(StoredGame { game, analysed: accuracy.is_some(), accuracy });
             }
         }
         Ok(out)
@@ -433,6 +483,21 @@ impl Db {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn favorites_on_and_off() {
+        let db = Db::in_memory();
+        assert!(db.favorites().unwrap().is_empty());
+        db.set_favorite("abc", true, 1).unwrap();
+        db.set_favorite("abc", true, 2).unwrap();
+        db.set_favorite("xyz", true, 3).unwrap();
+        let mut f = db.favorites().unwrap();
+        f.sort();
+        assert_eq!(f, ["abc", "xyz"]);
+        db.set_favorite("abc", false, 4).unwrap();
+        assert_eq!(db.favorites().unwrap(), ["xyz"]);
+    }
+
     use super::*;
     use crate::analysis::Accuracy;
     use crate::lichess::Player;

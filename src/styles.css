@@ -249,6 +249,7 @@ p.empty {
 
 .game-main {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
@@ -332,13 +333,16 @@ p.empty {
 
 .board-wrap {
   flex: 1;
-  aspect-ratio: 1;
   min-width: 0;
 }
 
+/* Square from its own width. (aspect-ratio on the flex item with a 100 % high
+   board wasn't recomputed by WebKitGTK when the window got lower again, e.g.
+   after leaving fullscreen – the board stayed tall and got squeezed.) */
 #board {
   width: 100%;
-  height: 100%;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 .evalbar {
@@ -1620,6 +1624,12 @@ button.icon {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
+}
+
+.backup-buttons {
+  display: flex;
+  flex: none;
+  gap: 6px;
 }
 
 .token-steps {
@@ -3437,4 +3447,151 @@ body[data-board] cg-board {
 
 .ex-name {
   font-size: 12px;
+}
+
+/* --- game list filter ------------------------------------------------------- */
+.game-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.game-filter input[type="search"],
+.game-filter-more select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.game-filter-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.game-filter-buttons button {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+#gf-fav.on {
+  color: #f0c94a;
+  border-color: #8a7330;
+  background: rgba(240, 201, 74, 0.08);
+}
+
+#gf-more-btn.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(124, 173, 63, 0.08);
+}
+
+.game-filter-more {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.game-filter-more select {
+  padding: 0 6px;
+  font-size: 13px;
+}
+
+.game-filter-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: 12px;
+  padding: 4px 2px 2px;
+}
+
+.game-filter-foot .win {
+  color: var(--accent);
+}
+
+.game-filter-foot .loss {
+  color: var(--danger);
+}
+
+.game-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.game .fav {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0.45;
+}
+
+.game:hover .fav,
+.game .fav.on {
+  opacity: 1;
+}
+
+.game .fav.on {
+  color: #f0c94a;
+}
+
+.game .fav:hover {
+  background: var(--panel-2);
+}
+
+.game-side {
+  margin-left: auto;
+}
+
+.game-side .analysed {
+  position: static;
+}
+
+/* Your accuracy in an analysed game: a thin bar under the entry. */
+.acc-bar {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: #34332f;
+  overflow: hidden;
+}
+
+.acc-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.acc-bar.good i {
+  background: var(--accent);
+}
+
+.acc-bar.ok i {
+  background: #e3b341;
+}
+
+.acc-bar.weak i {
+  background: var(--danger);
 }

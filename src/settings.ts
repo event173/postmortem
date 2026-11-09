@@ -1,6 +1,7 @@
 // Settings dialog (gear icon): analysis depth, engine, display, puzzle database.
 
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 
 import { lang, locale, setLang, t, type Lang } from "./i18n";
@@ -176,6 +177,8 @@ export function initSettings(d: SettingsDeps) {
   ]
     .map((s) => `<li>${s}</li>`)
     .join("");
+  $("backup-create").addEventListener("click", createBackup);
+  $("backup-restore").addEventListener("click", restoreBackup);
   $("lichess-token-create").addEventListener("click", () => invoke("open_lichess_token_page").catch((e) => alert(String(e))));
   $("lichess-token-save").addEventListener("click", () => saveToken(($("lichess-token") as HTMLInputElement).value));
   $("lichess-token-remove").addEventListener("click", () => saveToken(null));
@@ -225,6 +228,41 @@ async function runSoundDiagnosis() {
       )
       .join("");
   out.querySelectorAll<HTMLElement>(".diag-play").forEach((b) => b.addEventListener("click", () => testSound(b.dataset.sound!)));
+}
+
+const BACKUP_FILTER = [{ name: "postmortem-Sicherung", extensions: ["sqlite", "db"] }];
+
+async function createBackup() {
+  const msg = $("backup-msg");
+  const day = new Date().toISOString().slice(0, 10);
+  const path = await saveDialog({ defaultPath: `postmortem-sicherung-${day}.sqlite`, filters: BACKUP_FILTER }).catch(() => null);
+  if (!path) return;
+  msg.textContent = t("Sichere …");
+  try {
+    const bytes = await invoke<number>("backup_create", { path });
+    msg.textContent = t("Gesichert: {path} ({size})", { path, size: `${(bytes / 1e6).toFixed(1)} MB` });
+  } catch (e) {
+    msg.textContent = String(e);
+  }
+}
+
+async function restoreBackup() {
+  const msg = $("backup-msg");
+  const path = await openDialog({ multiple: false, directory: false, filters: BACKUP_FILTER }).catch(() => null);
+  if (!path || Array.isArray(path)) return;
+  try {
+    const games = await invoke<number>("backup_check", { path });
+    const ok = confirm(
+      t("Sicherung mit {n} Partien einspielen? Deine jetzigen Daten werden dadurch ersetzt (eine Kopie bleibt im Datenordner als „postmortem-vor-wiederherstellung.db“).", { n: games.toLocaleString(locale) }),
+    );
+    if (!ok) return;
+    msg.textContent = t("Spiele ein …");
+    await invoke("backup_restore", { path });
+    // Everything on screen came from the old data: start fresh.
+    location.reload();
+  } catch (e) {
+    msg.textContent = String(e);
+  }
 }
 
 interface TokenStatus {

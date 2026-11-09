@@ -2,6 +2,7 @@
 mod i18n;
 mod analysis;
 mod audio;
+mod backup;
 mod bot;
 mod chesscom;
 mod coach;
@@ -564,6 +565,73 @@ async fn opening_next(
     with_db(app, move |db, _| repertoire::next(db, &accounts, &window(db, &accounts, last)?, mode, focus.as_ref())).await
 }
 
+/// Ids of the favourite games.
+#[tauri::command]
+fn favorites(db: State<DbState>) -> Result<Vec<String>, String> {
+    db.0.lock().unwrap().favorites()
+}
+
+/// Mark or unmark a game as favourite.
+#[tauri::command]
+fn favorite_set(db: State<DbState>, game_id: String, on: bool) -> Result<(), String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    db.0.lock().unwrap().set_favorite(&game_id, on, now)
+}
+
+/// Your mistakes, misses and blunders per analysed game (for the game list filter).
+#[tauri::command]
+async fn game_errors(app: AppHandle, accounts: Vec<Account>) -> Result<std::collections::HashMap<String, u32>, String> {
+    with_db(app, move |db, _| {
+        let games = window(db, &accounts, None)?;
+        Ok(games
+            .iter()
+            .filter_map(|(game, review)| {
+                let me = repertoire::my_color(game, &accounts)?;
+                let n = review
+                    .moves
+                    .iter()
+                    .filter(|m| m.color == me && matches!(m.classification, analysis::Class::Mistake | analysis::Class::Miss | analysis::Class::Blunder))
+                    .count();
+                Some((game.id.clone(), n as u32))
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Write a backup of the local database to `path`; returns its size in bytes.
+#[tauri::command]
+async fn backup_create(app: AppHandle, path: String) -> Result<u64, String> {
+    with_db(app, move |db, _| backup::create(db, std::path::Path::new(&path))).await
+}
+
+/// Check a backup before restoring it; returns the number of games in it.
+#[tauri::command]
+async fn backup_check(path: String) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || backup::check(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Replace the local database with a backup (the frontend reloads afterwards).
+#[tauri::command]
+async fn backup_restore(app: AppHandle, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = app.state::<DataDir>().0.clone();
+        let state = app.state::<DbState>();
+        let mut db = state.0.lock().unwrap();
+        backup::restore(&mut db, &dir, std::path::Path::new(&path))?;
+        // Engine settings come with the backup.
+        engine::configure(engine::EngineConfig {
+            path: db.setting("stockfish_path")?.map(std::path::PathBuf::from),
+            threads: db.setting("threads")?.and_then(|t| t.parse().ok()),
+        });
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Index your games for "Frei spielen" (returns the number of games).
 #[tauri::command]
 async fn explorer_prepare(app: AppHandle, accounts: Vec<Account>) -> Result<usize, String> {
@@ -923,6 +991,7 @@ mod migration_tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AnalysisState::default())
         .manage(BatchState::default())
         .manage(PuzzleInstall::default())
@@ -991,6 +1060,12 @@ pub fn run() {
             opening_status,
             opening_next,
             opening_own_count,
+            favorites,
+            favorite_set,
+            game_errors,
+            backup_create,
+            backup_check,
+            backup_restore,
             explorer_prepare,
             explorer_moves,
             explorer_lichess,
