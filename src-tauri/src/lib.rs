@@ -7,6 +7,7 @@ mod chesscom;
 mod coach;
 mod db;
 mod engine;
+mod explorer;
 mod explore;
 mod lichess;
 mod live;
@@ -563,6 +564,52 @@ async fn opening_next(
     with_db(app, move |db, _| repertoire::next(db, &accounts, &window(db, &accounts, last)?, mode, focus.as_ref())).await
 }
 
+/// Index your games for "Frei spielen" (returns the number of games).
+#[tauri::command]
+async fn explorer_prepare(app: AppHandle, accounts: Vec<Account>) -> Result<usize, String> {
+    let handle = app.clone();
+    with_db(app, move |db, _| handle.state::<explorer::Explorer>().prepare(db, &accounts)).await
+}
+
+/// Candidate moves from your games and the theory.
+#[tauri::command]
+fn explorer_moves(explorer: State<explorer::Explorer>, fen: String) -> Result<explorer::Moves, String> {
+    explorer.moves(&fen)
+}
+
+/// How often the moves are played on Lichess at your level (None without a token).
+#[tauri::command]
+async fn explorer_lichess(app: AppHandle, fen: String, accounts: Vec<Account>) -> Result<Option<explorer::LichessData>, String> {
+    let (token, rating) = with_db(app.clone(), move |db, _| Ok((explorer::token(db), explorer::my_rating(db, &accounts)))).await?;
+    app.state::<explorer::Explorer>().lichess(&fen, token, rating).await
+}
+
+/// Open Lichess' page for creating a personal token (with a description filled in).
+#[tauri::command]
+fn open_lichess_token_page() -> Result<(), String> {
+    update::open_in_browser("https://lichess.org/account/oauth/token/create?description=postmortem")
+}
+
+#[tauri::command]
+fn lichess_token_status(db: State<DbState>) -> explorer::TokenStatus {
+    explorer::token_status(&db.0.lock().unwrap())
+}
+
+/// Store (after checking it with Lichess) or remove the personal Lichess token.
+#[tauri::command]
+async fn lichess_token_set(app: AppHandle, token: Option<String>) -> Result<explorer::TokenStatus, String> {
+    let token = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let user = match &token {
+        Some(t) => Some(explorer::check_token(t).await?),
+        None => None,
+    };
+    with_db(app, move |db, _| {
+        explorer::store_token(db, token.as_deref().zip(user.as_deref()))?;
+        Ok(explorer::token_status(db))
+    })
+    .await
+}
+
 /// Opening mistakes from your own games that are due for practice.
 #[tauri::command]
 async fn opening_own_count(app: AppHandle, accounts: Vec<Account>, last: Option<usize>) -> Result<usize, String> {
@@ -882,6 +929,7 @@ pub fn run() {
         .manage(live::Live::default())
         .manage(bot::Bot::default())
         .manage(audio::Audio::open())
+        .manage(explorer::Explorer::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -943,6 +991,12 @@ pub fn run() {
             opening_status,
             opening_next,
             opening_own_count,
+            explorer_prepare,
+            explorer_moves,
+            explorer_lichess,
+            lichess_token_status,
+            lichess_token_set,
+            open_lichess_token_page,
             opening_record,
             opening_progress,
             opening_family_detail,

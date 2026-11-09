@@ -168,6 +168,17 @@ export function initSettings(d: SettingsDeps) {
     moveSound("Nxf3");
   });
   $("sound-diag-btn").addEventListener("click", runSoundDiagnosis);
+  $("lichess-token-steps").innerHTML = [
+    t("Auf <b>„Schlüssel bei Lichess erstellen“</b> klicken (dafür bei Lichess angemeldet sein)."),
+    t("<b>Keine Häkchen setzen!</b> Die Eröffnungsdatenbank braucht keine Rechte – ohne Häkchen kann der Schlüssel nichts an deinem Konto ändern."),
+    t("Unten auf <b>„Erstellen“</b> klicken und den Schlüssel (beginnt mit <code>lip_</code>) sofort kopieren – Lichess zeigt ihn nur einmal."),
+    t("Hier einfügen und <b>„Speichern“</b> klicken."),
+  ]
+    .map((s) => `<li>${s}</li>`)
+    .join("");
+  $("lichess-token-create").addEventListener("click", () => invoke("open_lichess_token_page").catch((e) => alert(String(e))));
+  $("lichess-token-save").addEventListener("click", () => saveToken(($("lichess-token") as HTMLInputElement).value));
+  $("lichess-token-remove").addEventListener("click", () => saveToken(null));
 
   $("engine-apply").addEventListener("click", applyEngine);
   $("puzzle-action").addEventListener("click", installPuzzles);
@@ -216,7 +227,32 @@ async function runSoundDiagnosis() {
   out.querySelectorAll<HTMLElement>(".diag-play").forEach((b) => b.addEventListener("click", () => testSound(b.dataset.sound!)));
 }
 
+interface TokenStatus {
+  set: boolean;
+  user: string | null;
+}
+
+function renderToken(st: TokenStatus) {
+  $("lichess-token-status").textContent = st.set
+    ? t("verbunden als {user}", { user: st.user ?? "?" })
+    : t("kein Schlüssel – „Frei spielen“ zeigt nur deine Partien und die Theorie");
+  ($("lichess-token-remove") as HTMLButtonElement).disabled = !st.set;
+}
+
+async function saveToken(token: string | null) {
+  const msg = $("lichess-token-msg");
+  msg.textContent = token ? t("Prüfe bei Lichess …") : "";
+  try {
+    renderToken(await invoke<TokenStatus>("lichess_token_set", { token }));
+    ($("lichess-token") as HTMLInputElement).value = "";
+    msg.textContent = token ? t("Gespeichert.") : t("Entfernt.");
+  } catch (e) {
+    msg.textContent = String(e);
+  }
+}
+
 async function refresh() {
+  invoke<TokenStatus>("lichess_token_status").then(renderToken).catch(() => {});
   const [info, st] = await Promise.all([invoke<SettingsInfo>("get_settings"), invoke<PuzzleStatus>("puzzle_status")]);
   renderEngine(info);
   puzzle = st;

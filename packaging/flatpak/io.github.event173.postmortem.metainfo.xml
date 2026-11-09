@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.6" date="2026-11-09">
+      <description>
+        <p>Free play for openings: play an opening freely and see which moves can come – from your own games, the opening theory and, with a personal Lichess token, how often each move is played on Lichess at your level. Optionally the opponent moves by frequency and Stockfish rates the candidates.</p>
+      </description>
+    </release>
     <release version="0.2.5" date="2026-11-09">
       <description>
         <p>New start page for openings (learn, review, mistakes from your games), guided lessons that go through a line move by move with explanations, main lines before sidelines, and built-in sounds as loud as your recordings.</p>

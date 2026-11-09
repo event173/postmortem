@@ -149,6 +149,11 @@ pub fn book() -> &'static Book {
     })
 }
 
+/// Name of the opening of exactly this position, if it has one.
+pub fn name_at(pos: &Chess) -> Option<String> {
+    table().get(&epd(pos)).map(|(_, name)| name.clone())
+}
+
 /// The deepest named opening position reached in the game.
 pub fn identify(moves: &[String]) -> Option<Opening> {
     let table = table();

@@ -151,6 +151,7 @@
 
       <section id="openings" class="openings" hidden>
         <div id="op-top" class="op-top"></div>
+        <div id="op-explore" class="panel op-explore" hidden></div>
         <div id="op-focus" class="panel op-focus" hidden></div>
         <div class="panel coach pz-card">
           <div id="op-head" class="pz-head"></div>
@@ -387,6 +388,25 @@
             <span id="puzzle-progress-text" class="muted"></span>
             <button id="puzzle-cancel">Abbrechen</button>
           </div>
+        </div>
+      </section>
+
+      <section>
+        <h3>Lichess-Eröffnungsdatenbank</h3>
+        <p class="hint">Für „Frei spielen“: wie oft ein Zug auf Lichess in deiner Spielstärke gespielt wird. Lichess verlangt dafür einen persönlichen Zugangsschlüssel. Er bleibt nur auf diesem Rechner.</p>
+        <ol id="lichess-token-steps" class="hint token-steps"></ol>
+        <div class="row">
+          <span>Status<small id="lichess-token-status"></small></span>
+          <button id="lichess-token-create">Schlüssel bei Lichess erstellen ↗</button>
+        </div>
+        <label class="row stack">
+          <span>Zugangsschlüssel</span>
+          <input id="lichess-token" type="password" placeholder="lip_…" spellcheck="false" autocomplete="off" />
+        </label>
+        <div class="row actions">
+          <span id="lichess-token-msg" class="msg"></span>
+          <button id="lichess-token-remove">Entfernen</button>
+          <button id="lichess-token-save" class="primary">Speichern</button>
         </div>
       </section>
 

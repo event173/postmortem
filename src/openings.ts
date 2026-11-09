@@ -19,6 +19,7 @@ import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, ty
 import { playerName, t, tn } from "./i18n";
 import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
+import { explorerKey, explorerMove, startExplorer, stopExplorer } from "./explorer";
 
 type Color = "white" | "black";
 
@@ -137,7 +138,7 @@ export interface OpeningDeps {
 }
 
 /** What the board is used for: learning (one opening), the due reviews, or your own mistakes. */
-type TrainMode = "learn" | "due" | "own";
+type TrainMode = "learn" | "due" | "own" | "explore";
 type View = "home" | "browse" | "train";
 type Sort = "popular" | "mine" | "learning" | "az";
 /** "intro": lesson start, "next": waiting for "Weiter" before the opponent's move (lesson). */
@@ -235,6 +236,8 @@ export function enterOpenings() {
 export function leaveOpenings() {
   active = false;
   clearTimeout(timer);
+  // A running free play must not move pieces on the review board later.
+  stopExplorer();
   document.querySelector(".layout")!.classList.remove("op-browse-mode");
   $("op-browse-view").hidden = true;
   $("op-home").hidden = true;
@@ -242,6 +245,7 @@ export function leaveOpenings() {
 
 export function openingKey(e: KeyboardEvent): boolean {
   if (view !== "train") return false;
+  if (trainMode === "explore") return explorerKey(e);
   if ((e.key === "Enter" || e.key === "ArrowRight") && (phase === "intro" || phase === "next")) {
     advance();
     return true;
@@ -266,6 +270,7 @@ function setView(v: View) {
   $("openings").hidden = !(v === "train" && active);
   if (v !== "train") {
     // Leaving the board ends what was going on there.
+    stopExplorer();
     token++;
     clearTimeout(timer);
     drill = null;
@@ -282,6 +287,9 @@ function setView(v: View) {
     // The board was hidden (size 0): let chessground measure it again before
     // drawing, otherwise the first arrow is drawn with zero size and stays invisible.
     if (active) deps.board.redrawAll();
+    const explore = trainMode === "explore";
+    $("op-explore").hidden = !explore;
+    document.querySelector<HTMLElement>("#openings .pz-card")!.hidden = explore;
     renderTop();
     renderSidebar();
     render();
@@ -362,6 +370,16 @@ async function startTrain(m: TrainMode, f: Focus | null) {
   trainMode = m;
   focus = f;
   setView("train");
+  if (m === "explore") {
+    startExplorer({
+      board: deps.board,
+      accounts: deps.accounts,
+      animMs: deps.animMs,
+      openGame: deps.openGame,
+      showTheory: (fen) => showTheory(fen),
+    });
+    return;
+  }
   await setFocus(f);
 }
 
@@ -377,6 +395,7 @@ const ICON = {
   learn: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2z"/><path d="M4 20a2 2 0 0 0 2 2h13v-4"/><path d="M9 8h6M9 11h4"/></svg>`,
   due: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="14" height="13" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-2"/><path d="M7 13l2 2 4-4"/></svg>`,
   own: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>`,
+  explore: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
 };
 
 function renderHome() {
@@ -420,6 +439,11 @@ function renderHome() {
         <span class="op-choice-icon">${ICON.own}</span>
         <b>${t("Fehler aus deinen Partien")}</b>
         <span>${ownText}</span>
+      </button>
+      <button class="op-choice" data-go="explore">
+        <span class="op-choice-icon">${ICON.explore}</span>
+        <b>${t("Frei spielen")}</b>
+        <span>${t("Eine Eröffnung frei durchspielen und sehen, was der Gegner wahrscheinlich antwortet – aus deinen Partien, der Theorie und Lichess.")}</span>
       </button>
     </div>
     <div class="op-home-mine">
@@ -465,7 +489,9 @@ function renderHome() {
 /** Top of the board column: way back to the choice, and what you're doing. */
 function renderTop() {
   const title =
-    trainMode === "due"
+    trainMode === "explore"
+      ? t("Frei spielen")
+      : trainMode === "due"
       ? t("Wiederholen")
       : trainMode === "own"
         ? t("Fehler aus deinen Partien")
@@ -596,6 +622,11 @@ function renderList() {
 
 function renderSidebar() {
   if (!active || view !== "train") return;
+  if (trainMode === "explore") {
+    $("op-focus").hidden = true;
+    $("op-variations").hidden = true;
+    return;
+  }
   const focusEl = $("op-focus");
   const varsEl = $("op-variations");
   focusEl.hidden = !focus;
@@ -795,6 +826,7 @@ function play(from: string, uci: string): Promise<PlayedMove> {
 }
 
 export async function openingMove(orig: Key, dest: Key, promotion?: string) {
+  if (trainMode === "explore") return explorerMove(orig, dest, promotion);
   const d = drill;
   if (!d || (phase !== "solve" && phase !== "wrong")) return render();
   const tk = token;
@@ -987,7 +1019,7 @@ function showTry(played: PlayedMove) {
 // rendering the drill
 
 function render(error?: string) {
-  if (!active || view !== "train") return;
+  if (!active || view !== "train" || trainMode === "explore") return;
   const d = drill;
   if (d && phase !== "loading" && phase !== "empty") {
     const shapes: DrawShape[] = [];
