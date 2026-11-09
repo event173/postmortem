@@ -1,4 +1,4 @@
-// "Eröffnungen" tab (see repertoire.rs):
+// "Lernen" tab (openings, flashcards, mistakes, exploring; see repertoire.rs):
 // - home (no board): "Was möchtest du tun?" – learn a new opening, review the
 //   due cards, or practise the opening mistakes from your own games – plus your
 //   openings with their flashcard progress
@@ -34,7 +34,8 @@ interface OwnMistake {
 }
 
 interface Drill {
-  kind: "line" | "own";
+  /** "card": your own flashcard (from a review, free play or a bot game). */
+  kind: "line" | "own" | "card";
   id: string;
   color: Color;
   name: string;
@@ -47,6 +48,33 @@ interface Drill {
   own: OwnMistake | null;
   /** Named theory moves; after that comes the engine's continuation. */
   bookLen: number;
+  card: Card | null;
+}
+
+interface BestMove {
+  uci: string;
+  san: string;
+  /** From your point of view. */
+  score: { kind: "cp" | "mate" | "mated" | "won"; value?: number };
+  line: string;
+}
+
+interface Card {
+  id: string;
+  fen: string;
+  color: Color;
+  best: BestMove[];
+  played: string | null;
+  source: "review" | "explore" | "play";
+  gameId: string | null;
+  ply: number | null;
+  createdAt: number;
+}
+
+interface CardInfo extends Card {
+  boxLevel: number;
+  due: boolean;
+  dueAt: number;
 }
 
 /** Wikibooks explanation of an opening position (see opening_texts.rs). */
@@ -70,6 +98,9 @@ interface SideStatus {
 interface Status {
   white: SideStatus;
   black: SideStatus;
+  /** Your own flashcards due now, and when the next one comes back. */
+  cardsDue: number;
+  cardsNextDue: number | null;
 }
 
 interface Repertoire {
@@ -196,6 +227,8 @@ let trainMode: TrainMode = "learn";
 let sort: Sort = "popular";
 /** Opening mistakes from your games that are due (third card on the home view). */
 let ownCount = 0;
+/** Your own flashcards (home view). */
+let cards: CardInfo[] = [];
 let focus: Focus | null = null;
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
@@ -243,7 +276,12 @@ export function leaveOpenings() {
   $("op-home").hidden = true;
 }
 
-/** The buttons under the board, in "Frei spielen" (false: not for us). */
+/** The "Lernen" tab clicked again: back to the choice. */
+export function openingsHome() {
+  if (active && view !== "home") setView("home");
+}
+
+/** The buttons under the board, in "Erkunden" (false: not for us). */
 export function openingNav(dir: "first" | "prev" | "next" | "last"): boolean {
   if (!active || view !== "train" || trainMode !== "explore") return false;
   explorerNav(dir);
@@ -289,7 +327,7 @@ function setView(v: View) {
   }
   if (v === "home") {
     renderHome();
-    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount()]).then(renderHome);
+    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards()]).then(renderHome);
   } else if (v === "browse") {
     renderList();
     Promise.all([loadProgress(), loadRepertoire()]).then(renderList);
@@ -319,6 +357,10 @@ async function loadProgress() {
   } catch {
     progress = {};
   }
+}
+
+async function loadCards() {
+  cards = await invoke<CardInfo[]>("cards_list").catch(() => []);
 }
 
 async function loadOwnCount() {
@@ -410,8 +452,8 @@ const ICON = {
 
 function renderHome() {
   if (!active || view !== "home") return;
-  const due = (status?.white.due ?? 0) + (status?.black.due ?? 0);
-  const nexts = [status?.white.nextDue, status?.black.nextDue].filter((x): x is number => !!x);
+  const due = (status?.white.due ?? 0) + (status?.black.due ?? 0) + (status?.cardsDue ?? 0);
+  const nexts = [status?.white.nextDue, status?.black.nextDue, status?.cardsNextDue].filter((x): x is number => !!x);
   const nextDue = nexts.length ? Math.min(...nexts) : null;
   const dueText = due
     ? tn(due, "<b>1 Karte</b> ist heute dran.", "<b>{n} Karten</b> sind heute dran.")
@@ -431,7 +473,7 @@ function renderHome() {
 
   $("op-home").innerHTML = `
     <div class="op-home-head">
-      <h2>${t("Eröffnungen")}</h2>
+      <h2>${t("Lernen")}</h2>
       <p class="muted">${t("Was möchtest du tun?")}</p>
     </div>
     <div class="op-choices">
@@ -442,7 +484,7 @@ function renderHome() {
       </button>
       <button class="op-choice ${due ? "hot" : ""}" data-go="due" ${due ? "" : "disabled"}>
         <span class="op-choice-icon">${ICON.due}</span>
-        <b>${t("Wiederholen")}</b>
+        <b>${t("Karteikasten")}</b>
         <span>${dueText}</span>
       </button>
       <button class="op-choice" data-go="own" ${ownCount ? "" : "disabled"}>
@@ -452,8 +494,8 @@ function renderHome() {
       </button>
       <button class="op-choice" data-go="explore">
         <span class="op-choice-icon">${ICON.explore}</span>
-        <b>${t("Frei spielen")}</b>
-        <span>${t("Eine Eröffnung frei durchspielen und sehen, was der Gegner wahrscheinlich antwortet – aus deinen Partien, der Theorie und Lichess.")}</span>
+        <b>${t("Erkunden")}</b>
+        <span>${t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess.")}</span>
       </button>
     </div>
     <div class="op-home-mine">
@@ -469,11 +511,32 @@ function renderHome() {
                    ${progressBar(p.lines, p.started, p.learned)}
                    <span class="op-progress-text">${cardSummary(p.lines, p.started, p.learned, p.due)}</span>
                    <button class="op-mine-go" data-color="${color}" data-family="${esc(family)}">${p.started ? t("Weiterlernen") : t("Anfangen")}</button>
+                   ${p.started ? `<button class="op-reset" data-color="${color}" data-family="${esc(family)}" title="${t("Lernstand zurücksetzen – alle Varianten wieder neu")}">⟲</button>` : ""}
                    <button class="op-remove" data-color="${color}" data-family="${esc(family)}" title="${t("Aus dem Repertoire nehmen (Lernstand bleibt)")}">✕</button>
                  </div>`,
                )
                .join("")}</div>`
           : `<p class="muted">${t("Noch keine. Wähl oben „Neue Eröffnung lernen“.")}</p>`
+      }
+    </div>
+    <div class="op-home-mine">
+      <h3>${t("Deine Karten")}</h3>
+      ${
+        cards.length
+          ? `<p class="panel-sub">${t("Stellungen, die du mit „In den Karteikasten“ gesammelt hast – aus Reviews, „Erkunden“ und Partien gegen Stockfish. Sie kommen im Karteikasten dran.")}</p>
+             <div class="op-mine-list">${cards
+               .map(
+                 (c) => `<div class="op-mine-row op-card-row" data-card="${esc(c.id)}" role="button" tabindex="0" title="${t("Diese Karte jetzt üben")}">
+                   <span class="mini-board cg-wrap card-thumb" data-fen="${esc(c.fen)}">${miniPieces(c.fen, c.color === "black")}</span>
+                   <span class="op-mine-name">${cardOrigin(c)}<br><span class="muted">${t("Beste Züge:")} ${c.best.map((b) => esc(fig(b.san))).join(", ")}</span></span>
+                   ${pips(c.boxLevel)}
+                   <span class="op-progress-text">${c.boxLevel === 0 ? t("neu") : c.due ? `<b>${t("fällig")}</b>` : t("wieder {when}", { when: relDays(c.dueAt) })}</span>
+                   <button class="op-card-go" data-card="${esc(c.id)}">${t("Üben")}</button>
+                   <button class="op-card-del" data-id="${esc(c.id)}" title="${t("Karte löschen")}">✕</button>
+                 </div>`,
+               )
+               .join("")}</div>`
+          : `<p class="muted">${t("Noch keine. In der Review, in „Erkunden“ und beim Spielen gegen Stockfish gibt es den Knopf „In den Karteikasten“.")}</p>`
       }
     </div>`;
   const home = $("op-home");
@@ -487,6 +550,28 @@ function renderHome() {
   home.querySelectorAll<HTMLElement>(".op-mine-go").forEach((b) =>
     b.addEventListener("click", () => startFocus(b.dataset.color as Color, b.dataset.family!)),
   );
+  home.querySelectorAll<HTMLElement>(".op-card-row").forEach((row) => {
+    const go = (e: Event) => {
+      if ((e.target as HTMLElement).closest(".op-card-del")) return;
+      const c = cards.find((x) => x.id === row.dataset.card);
+      if (c) practiseCard(c);
+    };
+    row.addEventListener("click", go);
+    row.addEventListener("keydown", (e) => e.key === "Enter" && go(e));
+  });
+  home.querySelectorAll<HTMLElement>(".op-card-del").forEach((b) =>
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await invoke("card_delete", { id: b.dataset.id });
+      await Promise.all([loadCards(), loadRepertoire()]);
+      renderHome();
+    }),
+  );
+  home.querySelectorAll<HTMLElement>(".op-reset").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (await resetOpening(b.dataset.color as Color, b.dataset.family!)) renderHome();
+    }),
+  );
   home.querySelectorAll<HTMLElement>(".op-remove").forEach((b) =>
     b.addEventListener("click", async () => {
       await removeFromRepertoire(b.dataset.color as Color, b.dataset.family!);
@@ -496,13 +581,40 @@ function renderHome() {
   );
 }
 
+/** Start an opening over after asking; true if it was reset. */
+async function resetOpening(color: Color, family: string): Promise<boolean> {
+  const ok = confirm(
+    t("Lernstand für {family} als {side} zurücksetzen? Alle Varianten fangen wieder bei „neu“ an – die Eröffnung bleibt in deiner Liste.", {
+      family,
+      side: SIDE[color],
+    }),
+  );
+  if (!ok) return false;
+  status = await invoke<Status>("opening_reset", { color, family });
+  await loadProgress();
+  return true;
+}
+
+/** Practise one of your cards right now (afterwards "Weiter" continues with what's due). */
+function practiseCard(c: CardInfo) {
+  trainMode = "due";
+  focus = null;
+  consolidate = null;
+  setView("train");
+  const tk = ++token;
+  startDrill(
+    { kind: "card", id: `card:${c.id}`, color: c.color, name: "", eco: "", fen: c.fen, moves: [c.best[0].uci], status: "due", own: null, bookLen: 1, card: c },
+    tk,
+  );
+}
+
 /** Top of the board column: way back to the choice, and what you're doing. */
 function renderTop() {
   const title =
     trainMode === "explore"
-      ? t("Frei spielen")
+      ? t("Erkunden")
       : trainMode === "due"
-      ? t("Wiederholen")
+      ? t("Karteikasten")
       : trainMode === "own"
         ? t("Fehler aus deinen Partien")
         : focus
@@ -654,7 +766,13 @@ function renderSidebar() {
         ${sub ? `<div class="op-focus-sub">${t("nur:")} ${esc(varName(sub))} <button id="op-focus-all" class="link">${t("alle Varianten")}</button></div>` : ""}</div>
     </div>
     ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${cardSummary(p.lines, p.started, p.learned, p.due)}</span></div>` : ""}
-    <p class="panel-sub op-box-help">${BOX_HELP()}</p>`;
+    <p class="panel-sub op-box-help">${BOX_HELP()}</p>
+    ${p?.started ? `<button id="op-focus-reset" class="link">${t("Lernstand zurücksetzen")}</button>` : ""}`;
+  document.getElementById("op-focus-reset")?.addEventListener("click", async () => {
+    if (!focus || !(await resetOpening(focus.color, focus.family))) return;
+    consolidate = null;
+    await setFocus({ color: focus.color, family: focus.family });
+  });
   document.getElementById("op-focus-all")?.addEventListener("click", () => setFocus({ color: focus!.color, family: focus!.family }));
 
   const current = drill?.kind === "line" ? drill.id : null;
@@ -786,7 +904,7 @@ async function loadNext() {
 /** Play the opponent's moves until it's your turn (or the line is over). */
 function continueLine(tk: number) {
   const d = drill!;
-  if (d.kind === "own") {
+  if (d.kind !== "line") {
     phase = "solve";
     return render();
   }
@@ -852,7 +970,8 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   if (tk !== token || n !== nav) return;
 
   if (played.uci === expected) return correct(played, tk);
-  if (d.kind === "own") {
+  // Your mistakes and your own cards: any good move counts, not only the engine's.
+  if (d.kind !== "line") {
     phase = "checking";
     showTry(played);
     try {
@@ -881,7 +1000,7 @@ function correct(played: PlayedMove, tk: number) {
   step++;
   wrongTry = null;
   hint = false;
-  if (drill!.kind === "own") return finish(tk);
+  if (drill!.kind !== "line") return finish(tk);
   showTheory(fen, learning() ? moveText(step - 1, played.san) : undefined);
   continueLine(tk);
 }
@@ -1083,6 +1202,31 @@ function lineProgress(d: Drill): string {
   return `<span class="muted">${t("Zug {i} von {n}", { i: Math.min(done + 1, mine), n: mine })}${mark}</span>`;
 }
 
+/** Evaluation from your point of view: "+0,4", "−1,2", "Matt in 3". */
+function scoreText(s: BestMove["score"]): string {
+  if (s.kind === "mate") return (s.value ?? 0) > 0 ? t("Matt in {n}", { n: s.value ?? 0 }) : t("wird matt in {n}", { n: -(s.value ?? 0) });
+  if (s.kind === "won") return t("Matt");
+  if (s.kind === "mated") return t("matt");
+  const v = (s.value ?? 0) / 100;
+  return `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+}
+
+/** Where a card comes from. */
+function cardOrigin(c: Card): string {
+  const date = new Date(c.createdAt).toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" });
+  const from = c.source === "review" ? t("aus einer Review") : c.source === "play" ? t("aus einer Partie gegen Stockfish") : t("aus „Erkunden“");
+  return `${from} <span class="muted">· ${date}</span>`;
+}
+
+/** The best moves of a card, after you've played. */
+function bestMovesHtml(c: Card): string {
+  return `<div class="card-best"><div class="muted">${t("Beste Züge laut Stockfish:")}</div>
+    <ol>${c.best
+      .map((b) => `<li><b>${esc(fig(b.san))}</b> <span class="card-score">${scoreText(b.score)}</span> <span class="muted">${esc(fig(b.line))}</span></li>`)
+      .join("")}</ol>
+    ${c.played ? `<div class="muted">${t("Damals gespielt: {move}", { move: `<b>${esc(fig(c.played))}</b>` })}</div>` : ""}</div>`;
+}
+
 function renderText(error?: string) {
   if (!active || view !== "train") return;
   const head = $("op-head");
@@ -1114,7 +1258,9 @@ function renderText(error?: string) {
   }
 
   const tag =
-    d.kind === "own"
+    d.kind === "card"
+      ? `<span class="pz-tag own">${t("Deine Karte")}</span>`
+      : d.kind === "own"
       ? `<span class="pz-tag own">${t("Aus deiner Partie")}</span>`
       : d.status === "new" || d.status === "relearn"
         ? `<span class="pz-tag mixed">${d.status === "relearn" ? t("Nochmal lernen") : t("Neu lernen")}</span>`
@@ -1122,7 +1268,9 @@ function renderText(error?: string) {
           ? `<span class="pz-tag op-practice-tag">${t("Festigen")} ${(consolidate?.clean ?? 0) + (phase === "done" ? 0 : 1)}/${CONSOLIDATE_RUNS}</span>`
           : `<span class="pz-tag op-review">${t("Wiederholung")}</span>`;
   const shortName = d.name.includes(":") ? d.name.split(":").slice(1).join(":").trim() : varName(d.name);
-  head.innerHTML = `${tag}<span class="op-name" title="${esc(d.name)}">${esc(focus ? shortName : d.name)}</span>`;
+  head.innerHTML = d.card
+    ? `${tag}<span class="op-name">${cardOrigin(d.card)}</span>`
+    : `${tag}<span class="op-name" title="${esc(d.name)}">${esc(focus ? shortName : d.name)}</span>`;
 
   const side = SIDE[d.color];
   const expected = d.moves[step];
@@ -1137,7 +1285,11 @@ function renderText(error?: string) {
       text.innerHTML = `<span class="muted">${t("Der Gegner zieht …")}</span><br>${lineProgress(d)}`;
       break;
     case "solve":
-      if (d.kind === "own" && d.own) {
+      if (d.card) {
+        text.innerHTML = `<b>${t("{side} am Zug.", { side })}</b> ${t("Was spielst du hier?")}${
+          d.card.played ? ` <span class="muted">${t("Damals kam {move}.", { move: `<b>${esc(fig(d.card.played))}</b>` })}</span>` : ""
+        }`;
+      } else if (d.kind === "own" && d.own) {
         const num = Math.ceil(d.own.ply / 2) + (d.own.ply % 2 ? "." : "...");
         text.innerHTML = t("Gegen {name} hast du hier {move} gespielt – {phrase}. Was ist besser?", {
           name: esc(playerName(d.own.opponent)),
@@ -1187,11 +1339,12 @@ function renderText(error?: string) {
             : t("<b class=\"ok\">Richtig!</b> Die Karte rutscht in Fach {n} von 5 und kommt <b>{when}</b> wieder.", { n: resultBox ?? 1, when: when || "…" });
       }
       if (d.own) extra.innerHTML = `<span class="muted">${t("In der Partie:")}</span> ${esc(fig(d.own.comment))}`;
+      if (d.card) extra.innerHTML = bestMovesHtml(d.card);
       break;
     }
   }
 
-  const game = d.own ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
+  const game = d.own || d.card?.gameId ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
   const backBtn =
     d.kind === "line"
       ? `<button data-act="back" title="${t("Deinen letzten Zug zurücknehmen (←)")}" ${backTarget() >= 0 && phase !== "checking" ? "" : "disabled"}>← ${t("Zurück")}</button>`
@@ -1240,6 +1393,7 @@ function bindActions(d: Drill | null) {
             break;
           case "game":
             if (d?.own) deps.openGame(d.own.gameId, d.own.ply);
+            else if (d?.card?.gameId) deps.openGame(d.card.gameId, d.card.ply ?? 0);
             break;
           case "advance":
             advance();

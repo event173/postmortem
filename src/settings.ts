@@ -273,7 +273,7 @@ interface TokenStatus {
 function renderToken(st: TokenStatus) {
   $("lichess-token-status").textContent = st.set
     ? t("verbunden als {user}", { user: st.user ?? "?" })
-    : t("kein Schlüssel – „Frei spielen“ zeigt nur deine Partien und die Theorie");
+    : t("kein Schlüssel – „Erkunden“ zeigt nur deine Partien und die Theorie");
   ($("lichess-token-remove") as HTMLButtonElement).disabled = !st.set;
 }
 

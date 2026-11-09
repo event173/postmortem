@@ -64,15 +64,15 @@ Die Oberfläche gibt es auf Deutsch und Englisch (Zahnrad → *Sprache · Langua
   Züge vor- und zurückgehen, Puzzle wiederholen
 
 **Spielen**
-- Gegen Stockfish in 8 Stufen (~800 bis ~2800 Elo), mit oder ohne Bedenkzeit,
+- Gegen Stockfish in 11 Stufen (~400 bis ~2800 Elo – die drei schwächsten spielen teils zufällig wie echte Anfänger), mit oder ohne Bedenkzeit,
   Zug zurücknehmen, Aufgeben
 - Nach der Partie mit einem Klick in die Review; Bot-Partien erscheinen in der
   Partieliste unter „Eigene“ und zählen dort (und unter „Alle“) in der Statistik
 
-**Eröffnungen**
-- Startseite mit der Frage „Was möchtest du tun?“: **Neue Eröffnung lernen**, **Wiederholen**
-  (die heute fälligen Karten) oder **Fehler aus deinen Partien** üben – darunter deine
-  Eröffnungen mit ihrem Lernstand
+**Lernen**
+- Startseite mit der Frage „Was möchtest du tun?“: **Neue Eröffnung lernen**, **Karteikasten**
+  (die heute fälligen Karten), **Fehler aus deinen Partien** üben oder **Erkunden** – darunter
+  deine Eröffnungen und deine eigenen Karten mit ihrem Lernstand
 - Alle 149 Eröffnungen als Kacheln mit Brett-Vorschau; als Weiß oder Schwarz lernen
 - **Geführte Lektion:** Zug für Zug – „Weiter“ zeigt den Zug des Gegners, deine eigenen Züge
   spielst du nach dem grünen Pfeil; zu jedem Zug die passende Erklärung
@@ -83,10 +83,14 @@ Die Oberfläche gibt es auf Deutsch und Englisch (Zahnrad → *Sprache · Langua
   „Mit Pfeilen neu lernen“, wenn eine Variante vergessen ist
 - Varianten einzeln wählbar, Hauptvariante zuerst; kurze Theorie-Linien werden mit Stockfish
   auf mindestens 8 eigene Züge verlängert
-- **Frei spielen:** eine Eröffnung frei durchspielen und bei jedem Zug sehen, was kommen kann –
+- **Erkunden:** Züge frei durchprobieren und bei jedem Zug sehen, was kommen kann –
   aus deinen eigenen Partien (wie oft, wie ausgegangen), der Theorie und, mit eigenem
-  Lichess-Schlüssel, wie oft der Zug auf Lichess in deiner Spielstärke gespielt wird.
-  Wahlweise zieht der Gegner nach Häufigkeit, Stockfish bewertet die Kandidaten
+  Lichess-Schlüssel, wie oft der Zug auf Lichess in deiner Spielstärke gespielt wird; oben
+  steht die Eröffnung bzw. wann die bekannte Theorie verlassen ist. Wahlweise zieht der Gegner
+  nach Häufigkeit, Stockfish bewertet die Kandidaten
+- **Eigene Karten:** „In den Karteikasten“ in der Review, in „Erkunden“ und beim Spielen gegen
+  Stockfish macht aus einer Stellung eine Lernkarte mit den 3 besten Zügen laut Stockfish;
+  sie kommt mit den Eröffnungen im Karteikasten dran
 
 ## Installation
 
@@ -125,9 +129,9 @@ Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install
    Hintergrund ausgewertet. Je mehr analysiert sind, desto aussagekräftiger.
 4. **Puzzles:** Einmalig im **Zahnrad-Menü** die Puzzle-Datenbank herunterladen (≈ 300 MB).
    Die App meldet sich, wenn Lichess eine neue Version hat.
-5. **Eröffnungen:** Unter *Eröffnungen → Neue Eröffnung lernen* eine Eröffnung aussuchen und
-   als Weiß oder Schwarz lernen. Fällige Karten findest du später unter *Wiederholen*.
-6. **Lichess-Häufigkeiten (optional):** Für *Frei spielen* im Zahnrad-Menü unter
+5. **Lernen:** Unter *Lernen → Neue Eröffnung lernen* eine Eröffnung aussuchen und
+   als Weiß oder Schwarz lernen. Fällige Karten findest du später im *Karteikasten*.
+6. **Lichess-Häufigkeiten (optional):** Für *Erkunden* im Zahnrad-Menü unter
    „Lichess-Eröffnungsdatenbank“ einen persönlichen Lichess-Schlüssel eintragen –
    **ohne Häkchen** erstellen, er braucht keine Rechte. Die Anleitung steht dort.
 
@@ -142,8 +146,8 @@ Zahnrad-Menü einen eigenen Pfad angeben oder es installieren (`sudo apt install
 | F | Brett drehen |
 | Esc | Variante verlassen / Übung beenden |
 | Enter | nächstes Puzzle / nächste Aufgabe |
-| → / Enter | Eröffnungs-Lektion: weiter zum nächsten Zug |
-| ← | Eröffnungen: deinen letzten Zug zurücknehmen |
+| → / Enter | Lektion: weiter zum nächsten Zug |
+| ← | Lernen: deinen letzten Zug zurücknehmen |
 | Rechtsklick ziehen | Pfeil zeichnen (Shift/Strg = rot, Alt = blau) |
 
 ## Gut zu wissen
@@ -178,12 +182,12 @@ Findet er keine konkrete Taktik, sagt er „Stellung verschlechtert“.
 chess.com abzurufen (öffentliche APIs, ohne Anmeldung) und um die Puzzle-Datenbank
 herunterzuladen bzw. auf Updates zu prüfen. Beim Start fragt sie außerdem GitHub, ob es eine
 neuere postmortem-Version gibt, und zeigt dann oben einen Hinweis. Nur wenn du einen
-Lichess-Schlüssel einträgst, fragt *Frei spielen* bei der Lichess-Eröffnungsdatenbank nach den
+Lichess-Schlüssel einträgst, fragt *Erkunden* bei der Lichess-Eröffnungsdatenbank nach den
 Zügen der gerade gezeigten Stellung (eine Anfrage nach der anderen, wie Lichess es verlangt).
 Der Schlüssel bleibt in der lokalen Datenbank. Analyse, Statistik und Training passieren
 lokal; es werden keine Daten an Dritte gesendet.
 
-*Frei spielen* und die Lichess-Häufigkeiten sind wie die Analyse nur zum Üben gedacht –
+*Erkunden* und die Lichess-Häufigkeiten sind wie die Analyse nur zum Üben gedacht –
 nicht während einer laufenden Partie.
 
 **Rechenzeit.** Die Analyse nutzt alle CPU-Kerne bis auf einen, Hintergrund-Analysen die
@@ -255,7 +259,7 @@ Wikibooks-Texte neu nach `src-tauri/data/opening-texts/en.tsv`; die deutschen Ü
 | `src-tauri/src/stats.rs`, `theory.rs`, `trainer.rs` | Statistik, Theorie-Abweichungen, Puzzles |
 | `src-tauri/src/repertoire.rs`, `openings.rs` | Eröffnungstraining (Karteikasten), Eröffnungsliste und -namen |
 | `src-tauri/src/opening_texts.rs` | Wikibooks-Erklärungen zu den Eröffnungszügen |
-| `src-tauri/src/explorer.rs` | *Frei spielen*: Züge aus deinen Partien, der Theorie und der Lichess-Eröffnungsdatenbank |
+| `src-tauri/src/explorer.rs` | *Erkunden*: Züge aus deinen Partien, der Theorie und der Lichess-Eröffnungsdatenbank |
 | `src-tauri/src/pgn.rs` | PGN einlesen (Import, Uhrzeiten) |
 | `src-tauri/src/audio.rs` | Klänge direkt über die Soundkarte (rodio) |
 | `src-tauri/src/update.rs` | Hinweis auf neue postmortem-Versionen |
@@ -267,7 +271,7 @@ Wikibooks-Texte neu nach `src-tauri/data/opening-texts/en.tsv`; die deutschen Ü
 
 - [Lichess API](https://lichess.org/api) – deine Partien
 - [Lichess-Eröffnungsdatenbank](https://lichess.org/api#tag/Opening-Explorer) – Zughäufigkeiten
-  für *Frei spielen* (nur mit eigenem Lichess-Schlüssel)
+  für *Erkunden* (nur mit eigenem Lichess-Schlüssel)
 - [chess.com Published-Data API](https://www.chess.com/news/view/published-data-api) – deine Partien
 - [Lichess-Puzzle-Datenbank](https://database.lichess.org/#puzzles) (CC0)
 - [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0) – Eröffnungsnamen und -linien

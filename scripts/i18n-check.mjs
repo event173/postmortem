@@ -15,6 +15,9 @@ const root = new URL("..", import.meta.url).pathname;
 /** Texts passed to t() as variables. */
 const DYNAMIC = [
   // bot levels (src-tauri/src/bot.rs)
+  "Erste Schritte",
+  "Neuling",
+  "Lernt noch",
   "Anfänger",
   "Einsteiger",
   "Gelegenheitsspieler",

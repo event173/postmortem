@@ -62,6 +62,8 @@ pub struct Moves {
     pub moves: Vec<Candidate>,
     /// Your games in the index.
     pub games: usize,
+    /// The position is on the way of a named opening line (still theory).
+    pub in_book: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,7 +189,7 @@ impl Explorer {
                 })
             })
             .collect();
-        Ok(Moves { opening: openings::name_at(&pos), moves, games })
+        Ok(Moves { opening: openings::name_at(&pos), moves, games, in_book: openings::book().positions.contains(&key) })
     }
 
     /// How often each move is played on Lichess at your level (None without a token).

@@ -58,6 +58,8 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE line_extension (line_id TEXT PRIMARY KEY, moves TEXT NOT NULL);",
     // 7: games marked as favourites in the game list
     "CREATE TABLE favorites (game_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);",
+    // 8: your own flashcards (positions with Stockfish's best moves, see cards.rs)
+    "CREATE TABLE cards (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, data TEXT NOT NULL);",
 ];
 
 /// Spaced-repetition state of one opening line for one colour.
@@ -172,6 +174,50 @@ impl Db {
         } else {
             self.conn.execute("DELETE FROM favorites WHERE game_id = ?1", [game_id]).map_err(sql_err)?;
         }
+        Ok(())
+    }
+
+    /// Store a flashcard (the same position replaces the old card).
+    pub fn save_card(&self, card: &crate::cards::Card) -> Result<(), String> {
+        let json = serde_json::to_string(card).map_err(|e| e.to_string())?;
+        self.conn
+            .execute("INSERT OR REPLACE INTO cards (id, created_at, data) VALUES (?1, ?2, ?3)", params![card.id, card.created_at, json])
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// All flashcards, newest first.
+    pub fn cards(&self) -> Result<Vec<crate::cards::Card>, String> {
+        let mut stmt = self.conn.prepare("SELECT data FROM cards ORDER BY created_at DESC").map_err(sql_err)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(sql_err)?;
+        let mut out = Vec::new();
+        for json in rows {
+            if let Ok(card) = serde_json::from_str(&json.map_err(sql_err)?) {
+                out.push(card);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Forget the learning progress of these lines for one colour.
+    pub fn reset_opening_progress(&self, line_ids: &[String], color: &str) -> Result<usize, String> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_err)?;
+        let mut n = 0;
+        for id in line_ids {
+            n += tx
+                .execute("DELETE FROM opening_progress WHERE line_id = ?1 AND color = ?2", params![id, color])
+                .map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)?;
+        Ok(n)
+    }
+
+    /// Remove a flashcard and its learning progress.
+    pub fn delete_card(&self, id: &str) -> Result<(), String> {
+        self.conn.execute("DELETE FROM cards WHERE id = ?1", [id]).map_err(sql_err)?;
+        self.conn
+            .execute("DELETE FROM opening_progress WHERE line_id = ?1", [crate::cards::progress_id(id)])
+            .map_err(sql_err)?;
         Ok(())
     }
 

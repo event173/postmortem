@@ -1,4 +1,4 @@
-// "Spielen" tab: a game against Stockfish at one of 8 levels (see bot.rs).
+// "Spielen" tab: a game against Stockfish at one of 11 levels (see bot.rs).
 // Finished games are stored as source "local" and can be reviewed like any other.
 
 import { invoke } from "@tauri-apps/api/core";
@@ -9,6 +9,7 @@ import { moveSound, setupSound } from "./sound";
 import type { GameInfo, PlayedMove, PositionInfo } from "./types";
 import { t } from "./i18n";
 import { $, esc, fig, store } from "./util";
+import { bindCardButton, CARD_BUTTON_LABEL } from "./cards";
 
 type Color = "white" | "black";
 
@@ -66,7 +67,13 @@ let token = 0;
 let tick: number | undefined;
 
 // setup choices (remembered)
-let level = Number(store.get("bot-level") ?? "3");
+// Since 0.2.9 there are three weaker levels below the old level 1: shift a stored choice once.
+if (store.get("bot-levels") !== "11") {
+  const old = store.get("bot-level");
+  if (old) store.set("bot-level", String(Math.min(11, Number(old) + 3)));
+  store.set("bot-levels", "11");
+}
+let level = Number(store.get("bot-level") ?? "6");
 let colorChoice: Color | "random" = (store.get("bot-color") as Color | "random") || "white";
 let tcChoice = store.get("bot-tc") ?? "none";
 
@@ -74,6 +81,26 @@ const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black
 const other = (c: Color): Color => (c === "white" ? "black" : "white");
 const fen = () => game!.fens[game!.fens.length - 1];
 const sq = (uci: string, from: boolean) => (from ? uci.slice(0, 2) : uci.slice(2, 4)) as Key;
+
+/** "In den Karteikasten" (kept across re-renders so its "✓" stays visible). */
+let cardBtn: HTMLButtonElement | null = null;
+function cardButton(): HTMLButtonElement {
+  if (!cardBtn) {
+    cardBtn = document.createElement("button");
+    cardBtn.className = "card-btn";
+    cardBtn.innerHTML = CARD_BUTTON_LABEL();
+    cardBtn.title = t("Diese Stellung als Lernkarte üben – Stockfish sucht die besten Züge");
+    // Your turn: the board. Otherwise the position before your last move, with that move.
+    bindCardButton(cardBtn, () => {
+      const g = game;
+      if (!g) return null;
+      const n = g.fens.length - 1;
+      if (sideOf(g.fens[n]) === g.you || n === 0) return { fen: g.fens[n], source: "play" };
+      return { fen: g.fens[n - 1], played: g.ucis[n - 1] ?? null, source: "play" };
+    });
+  }
+  return cardBtn;
+}
 
 export function initPlay(d: PlayDeps) {
   deps = d;
@@ -93,6 +120,13 @@ export function enterPlay() {
   deps.board.setAutoShapes([]);
   render();
   if (game && !game.result) startClock();
+}
+
+/** "Spielen" clicked again: back to the setup once the game is over (a running game stays). */
+export function playHome() {
+  if (!active || (game && !game.result)) return;
+  game = null;
+  render();
 }
 
 export function leavePlay() {
@@ -369,6 +403,7 @@ function renderPanel(error?: string) {
       <div class="play-status">${status}${error ? `<br><span class="error">${esc(error)}</span>` : ""}</div>
       <div class="training-actions">${actions}</div>
     </div>`;
+  el.querySelector(".play-game .training-actions")!.appendChild(cardButton());
   const list = el.querySelector(".play-moves");
   if (list) list.scrollTop = list.scrollHeight;
   renderClocks();
@@ -398,7 +433,7 @@ function renderPanel(error?: string) {
 }
 
 function setupHtml(): string {
-  const lvButtons = (levels.length ? levels : [{ level: 3, elo: 1200, label: "" } as Level])
+  const lvButtons = (levels.length ? levels : [{ level: 6, elo: 1200, label: "" } as Level])
     .map(
       (l) => `<button class="lv ${l.level === level ? "active" : ""}" data-level="${l.level}">
         <b>${l.level}</b><span>~${l.elo}</span><small>${esc(t(l.label))}</small></button>`,

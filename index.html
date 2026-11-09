@@ -14,7 +14,7 @@
         <button id="tab-review" class="tab active">Review</button>
         <button id="tab-stats" class="tab">Statistik</button>
         <button id="tab-puzzles" class="tab">Puzzles</button>
-        <button id="tab-openings" class="tab">Eröffnungen</button>
+        <button id="tab-openings" class="tab">Lernen</button>
         <button id="tab-play" class="tab">Spielen</button>
       </nav>
       <form id="load-form" class="load-form">
@@ -117,6 +117,7 @@
           <button id="btn-mistake" class="accent" title="Nächster eigener Fehler (N)">Nächster Fehler</button>
           <button id="btn-back" title="Zurück zur Partie (Esc)" hidden>↩ Zur Partie</button>
           <button id="btn-train" hidden>Aus Fehlern lernen</button>
+          <button id="btn-card" hidden title="Diese Stellung als Lernkarte üben – Stockfish sucht die besten Züge">＋ In den Karteikasten</button>
           </span>
         </nav>
       </section>
@@ -438,7 +439,7 @@
 
       <section>
         <h3>Lichess-Eröffnungsdatenbank</h3>
-        <p class="hint">Für „Frei spielen“: wie oft ein Zug auf Lichess in deiner Spielstärke gespielt wird. Lichess verlangt dafür einen persönlichen Zugangsschlüssel. Er bleibt nur auf diesem Rechner.</p>
+        <p class="hint">Für „Erkunden“: wie oft ein Zug auf Lichess in deiner Spielstärke gespielt wird. Lichess verlangt dafür einen persönlichen Zugangsschlüssel. Er bleibt nur auf diesem Rechner.</p>
         <ol id="lichess-token-steps" class="hint token-steps"></ol>
         <div class="row">
           <span>Status<small id="lichess-token-status"></small></span>

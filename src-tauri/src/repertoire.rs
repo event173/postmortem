@@ -99,6 +99,8 @@ pub struct Drill {
     pub own: Option<OwnMistake>,
     /// Moves that are named theory; the rest is the engine's continuation.
     pub book_len: usize,
+    /// Your own flashcard (kind "card"): the position's best moves etc.
+    pub card: Option<crate::cards::Card>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -119,6 +121,9 @@ pub struct SideStatus {
 pub struct Status {
     pub white: SideStatus,
     pub black: SideStatus,
+    /// Your own flashcards that are due now, and when the next one comes back.
+    pub cards_due: usize,
+    pub cards_next_due: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -221,7 +226,13 @@ pub fn status(db: &Db) -> Result<Status, String> {
         }
         Ok(s)
     };
-    Ok(Status { white: side("white")?, black: side("black")? })
+    let cards = crate::cards::list(db)?;
+    Ok(Status {
+        white: side("white")?,
+        black: side("black")?,
+        cards_due: cards.iter().filter(|c| c.due).count(),
+        cards_next_due: cards.iter().filter(|c| !c.due).map(|c| c.due_at).min(),
+    })
 }
 
 pub(crate) fn my_color(game: &GameInfo, accounts: &[Account]) -> Option<&'static str> {
@@ -258,6 +269,7 @@ fn own_mistakes(games: &[(GameInfo, GameReview)], accounts: &[Account]) -> Vec<D
                 moves: vec![best],
                 status: "due".into(),
                 book_len: 1,
+                card: None,
                 own: Some(OwnMistake {
                     game_id: game.id.clone(),
                     ply: m.ply,
@@ -285,6 +297,23 @@ fn line_drill(line: &Line, color: &str, status: &str) -> Drill {
         status: status.into(),
         own: None,
         book_len: line.moves.len(),
+        card: None,
+    }
+}
+
+fn card_drill(c: crate::cards::Card) -> Drill {
+    Drill {
+        kind: "card".into(),
+        id: crate::cards::progress_id(&c.id),
+        color: c.color.clone(),
+        name: String::new(),
+        eco: String::new(),
+        fen: c.fen.clone(),
+        moves: vec![c.best[0].uci.clone()],
+        status: "due".into(),
+        own: None,
+        book_len: 1,
+        card: Some(c),
     }
 }
 
@@ -426,6 +455,16 @@ pub fn next(
         }
     }
 
+    // Your own flashcards come back with the reviews (not while learning one opening).
+    if focus.is_none()
+        && matches!(mode, Mode::Due | Mode::Mixed)
+        && let Some(card) = crate::cards::due(db)?.into_iter().next()
+    {
+        let card_since = if card.box_level == 0 { card.card.created_at } else { card.due_at };
+        if due.iter().map(|(d, ..)| *d).min().is_none_or(|line_due| card_since <= line_due) {
+            return Ok(Some(card_drill(card.card)));
+        }
+    }
     if mode == Mode::Due && due.is_empty() {
         return Ok(None);
     }
@@ -566,6 +605,19 @@ pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<Vec<Variation
         g.lines.push(info);
     }
     Ok(groups)
+}
+
+/// Start an opening over: every line of the family (for this colour) is new again.
+/// The opening stays in the repertoire.
+pub fn reset(db: &Db, color: &str, family: &str) -> Result<Status, String> {
+    let rep = if color == "white" {
+        Repertoire { white: vec![family.to_string()], black: vec![] }
+    } else {
+        Repertoire { white: vec![], black: vec![family.to_string()] }
+    };
+    let ids: Vec<String> = trainable(&rep, color).into_iter().map(|l| l.id.clone()).collect();
+    db.reset_opening_progress(&ids, color)?;
+    status(db)
 }
 
 /// Leitner update: right -> one box up, wrong -> back to box 1.
@@ -755,6 +807,48 @@ mod tests {
         let mut t = line(3);
         trim_to_own_move(&mut t, 3, "black");
         assert_eq!(t.len(), 3);
+    }
+
+    #[test]
+    fn own_cards_come_back_under_review() {
+        let db = Db::in_memory();
+        let card = crate::cards::Card {
+            id: "x".into(),
+            fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".into(),
+            color: "black".into(),
+            best: vec![crate::cards::BestMove { uci: "c7c5".into(), san: "c5".into(), score: crate::engine::Score::Cp(20), line: String::new() }],
+            played: None,
+            source: "explore".into(),
+            game_id: None,
+            ply: None,
+            created_at: 1,
+        };
+        db.save_card(&card).unwrap();
+        assert_eq!(status(&db).unwrap().cards_due, 1);
+        let d = next(&db, &[], &[], Mode::Due, None).unwrap().unwrap();
+        assert_eq!((d.kind.as_str(), d.id.as_str(), d.moves[0].as_str()), ("card", "card:x", "c7c5"));
+        record(&db, &d.id, &d.color, true).unwrap();
+        let st = status(&db).unwrap();
+        assert_eq!(st.cards_due, 0);
+        assert!(st.cards_next_due.is_some());
+    }
+
+    #[test]
+    fn reset_starts_an_opening_over() {
+        let db = Db::in_memory();
+        let focus = Focus { color: "black".into(), family: "Caro-Kann Defense".into(), variation: None, line: None };
+        let d = next(&db, &[], &[], Mode::Mixed, Some(&focus)).unwrap().unwrap();
+        record(&db, &d.id, "black", true).unwrap();
+        // Another opening's progress must survive.
+        let italian = next(&db, &[], &[], Mode::Mixed, Some(&Focus { color: "white".into(), family: "Italian Game".into(), variation: None, line: None }))
+            .unwrap()
+            .unwrap();
+        record(&db, &italian.id, "white", true).unwrap();
+        assert_eq!(family_progress(&db).unwrap()["black|Caro-Kann Defense"].started, 1);
+        reset(&db, "black", "Caro-Kann Defense").unwrap();
+        let p = family_progress(&db).unwrap();
+        assert!(p.get("black|Caro-Kann Defense").is_none_or(|x| x.started == 0));
+        assert_eq!(p["white|Italian Game"].started, 1);
     }
 
     #[test]

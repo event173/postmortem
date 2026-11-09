@@ -2441,10 +2441,16 @@ button.danger:hover {
   font-size: 13px;
 }
 
-.op-remove {
+.op-remove,
+.op-reset {
   padding: 2px 7px;
   font-size: 11px;
   color: var(--muted);
+}
+
+#op-focus-reset {
+  margin-top: 4px;
+  font-size: 12px;
 }
 
 .op-progress {
@@ -2954,8 +2960,10 @@ body[data-board] cg-board {
 .play-moves {
   display: grid;
   grid-template-columns: 34px 1fr 1fr;
+  align-content: start;
   gap: 2px 4px;
-  max-height: 260px;
+  /* Fixed, so the players and buttons below don't move down with every move. */
+  height: 260px;
   overflow-y: auto;
   padding: 6px;
   background: var(--bg);
@@ -2972,7 +2980,7 @@ body[data-board] cg-board {
 }
 
 .play-status {
-  min-height: 22px;
+  min-height: 44px;
 }
 
 .play-result {
@@ -3594,4 +3602,55 @@ body[data-board] cg-board {
 
 .acc-bar.weak i {
   background: var(--danger);
+}
+
+/* --- own flashcards --------------------------------------------------------- */
+.mini-board.cg-wrap.card-thumb {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 3px;
+}
+
+.card-best {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.card-best ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.card-best li {
+  margin: 3px 0;
+}
+
+.card-score {
+  font-variant-numeric: tabular-nums;
+  margin: 0 4px;
+}
+
+.play-game .card-btn {
+  align-self: flex-start;
+}
+
+.ex-opening {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.ex-offbook {
+  color: #e3b341;
+  font-weight: 600;
+}
+
+.op-card-row {
+  cursor: pointer;
+}
+
+.op-card-row:hover,
+.op-card-row:focus-visible {
+  border-color: var(--accent);
+  outline: none;
 }

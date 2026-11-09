@@ -14,8 +14,9 @@ import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedLabel, store } f
 import { autoAnalyse, initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
-import { enterPlay, initPlay, isPlayMode, leavePlay, playMove } from "./play";
-import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, startFocus } from "./openings";
+import { enterPlay, initPlay, isPlayMode, leavePlay, playHome, playMove } from "./play";
+import { bindCardButton, type CardRequest } from "./cards";
+import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, openingsHome, startFocus } from "./openings";
 import { autoAnalysePref, displayPrefs, initSettings, refinePref } from "./settings";
 
 import {
@@ -367,7 +368,18 @@ function showTab(tab: Tab) {
   }
 }
 
-for (const t of TABS) $(`tab-${t}`).addEventListener("click", () => showTab(t));
+for (const t of TABS) $(`tab-${t}`).addEventListener("click", () => (t === currentTab ? tabHome(t) : showTab(t)));
+
+/** Clicking the tab you're already in goes back to its start (menu). */
+function tabHome(tab: Tab) {
+  if (tab === "openings") openingsHome();
+  else if (tab === "play") playHome();
+  else if (tab === "stats") $("stats").scrollTo({ top: 0, behavior: "smooth" });
+  else if (tab === "review") {
+    if (training) exitTraining();
+    else if (state.inVar) backToGame();
+  }
+}
 
 /** Open a stored game (e.g. from the statistics) at a given ply. */
 async function openGameAt(gameId: string, ply: number) {
@@ -889,6 +901,23 @@ function deleteVariation() {
 /** The node currently shown, if the board is inside the variation past the branch point. */
 function currentVarNode(): VarNode | undefined {
   return state.inVar && state.varIndex > 0 ? state.variation?.nodes[state.varIndex - 1] : undefined;
+}
+
+/**
+ * The position for "In den Karteikasten" in the review: where *you* had to
+ * move. On your turn that's the board; after your move, the position before
+ * it – with the move you played. In a side line: the board as it is.
+ */
+function cardRequest(): CardRequest | null {
+  const r = state.review;
+  const g = state.game;
+  if (!r || !g) return null;
+  if (state.inVar) return { fen: currentFen(), source: "review", gameId: g.id };
+  const me = userColor(g);
+  const turn = (fen: string) => (fen.split(" ")[1] === "w" ? "white" : "black");
+  let ply = state.ply;
+  if (me && turn(r.fens[ply]) !== me && ply > 0) ply -= 1;
+  return { fen: r.fens[ply], played: r.moves[ply]?.uci ?? null, source: "review", gameId: g.id, ply };
 }
 
 function currentFen(): string {
@@ -1435,6 +1464,7 @@ function trainingItems(): MoveReview[] {
 function updateTrainButton() {
   const n = trainingItems().length;
   const btn = $("btn-train") as HTMLButtonElement;
+  $("btn-card").hidden = !state.review || !!training;
   btn.hidden = !state.review || !!training;
   btn.disabled = n === 0;
   btn.title = n ? t("{n} eigene Fehler als Übung durchgehen (T)", { n }) : t("Keine eigenen Fehler in dieser Partie");
@@ -1822,6 +1852,7 @@ function bindTrainingActions() {
 }
 
 $("btn-train").addEventListener("click", startTraining);
+bindCardButton($("btn-card") as HTMLButtonElement, cardRequest);
 
 // ---------------------------------------------------------------------------
 // navigation

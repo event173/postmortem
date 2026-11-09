@@ -4,6 +4,7 @@ mod analysis;
 mod audio;
 mod backup;
 mod bot;
+mod cards;
 mod chesscom;
 mod coach;
 mod db;
@@ -565,6 +566,36 @@ async fn opening_next(
     with_db(app, move |db, _| repertoire::next(db, &accounts, &window(db, &accounts, last)?, mode, focus.as_ref())).await
 }
 
+/// Put a position into the flashcard box (Stockfish finds the best moves; takes a few seconds).
+#[tauri::command]
+async fn card_create(
+    app: AppHandle,
+    fen: String,
+    played: Option<String>,
+    source: String,
+    game_id: Option<String>,
+    ply: Option<usize>,
+) -> Result<cards::Card, String> {
+    let card = tauri::async_runtime::spawn_blocking(move || cards::build(&fen, played.as_deref(), &source, game_id, ply))
+        .await
+        .map_err(|e| e.to_string())??;
+    with_db(app, move |db, _| {
+        db.save_card(&card)?;
+        Ok(card)
+    })
+    .await
+}
+
+#[tauri::command]
+fn cards_list(db: State<DbState>) -> Result<Vec<cards::CardInfo>, String> {
+    cards::list(&db.0.lock().unwrap())
+}
+
+#[tauri::command]
+fn card_delete(db: State<DbState>, id: String) -> Result<(), String> {
+    db.0.lock().unwrap().delete_card(&id)
+}
+
 /// Ids of the favourite games.
 #[tauri::command]
 fn favorites(db: State<DbState>) -> Result<Vec<String>, String> {
@@ -676,6 +707,12 @@ async fn lichess_token_set(app: AppHandle, token: Option<String>) -> Result<expl
         Ok(explorer::token_status(db))
     })
     .await
+}
+
+/// Start an opening over (all its lines new again, for one colour).
+#[tauri::command]
+fn opening_reset(db: State<DbState>, color: String, family: String) -> Result<repertoire::Status, String> {
+    repertoire::reset(&db.0.lock().unwrap(), &color, &family)
 }
 
 /// Opening mistakes from your own games that are due for practice.
@@ -837,7 +874,9 @@ fn save_bot_game(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let me = lichess::Player { name: LOCAL_PLAYER.into(), rating: None };
-    let bot = lichess::Player { name: format!("Stockfish Stufe {level}"), rating: Some(bot::level_elo(level)) };
+    // By strength, not level number (the levels were renumbered in 0.2.9).
+    let elo = bot::level_elo(level);
+    let bot = lichess::Player { name: format!("Stockfish ~{elo}"), rating: Some(elo) };
     let (white, black) = if you == "white" { (me, bot) } else { (bot, me) };
     let game = GameInfo {
         id: format!("pm{now}"),
@@ -1060,6 +1099,10 @@ pub fn run() {
             opening_status,
             opening_next,
             opening_own_count,
+            opening_reset,
+            card_create,
+            cards_list,
+            card_delete,
             favorites,
             favorite_set,
             game_errors,

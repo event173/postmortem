@@ -1,4 +1,4 @@
-// "Frei spielen" in the openings tab (see explorer.rs): play an opening freely
+// "Erkunden" in the learning tab (see explorer.rs): play an opening freely
 // and see which moves can come – from your own games, the opening theory and
 // (with a personal token) the Lichess opening explorer. A click on a move plays
 // it; "Gegner zieht realistisch" lets the app pick the opponent's moves by how
@@ -12,6 +12,7 @@ import { t, tn } from "./i18n";
 import { moveSound, setupSound } from "./sound";
 import type { Account, MoveReview, PlayedMove, PositionInfo } from "./types";
 import { $, badgeHtml, esc, fig, store } from "./util";
+import { bindCardButton, CARD_BUTTON_LABEL } from "./cards";
 
 type Color = "white" | "black";
 
@@ -37,6 +38,8 @@ interface Moves {
   opening: string | null;
   moves: Candidate[];
   games: number;
+  /** Still on the way of a named opening line. */
+  inBook: boolean;
 }
 
 interface LichessMove {
@@ -88,8 +91,9 @@ let cursor = 0;
 const fenAt = (n: number) => (n === 0 ? START_FEN : line[n - 1].fen);
 let fen = START_FEN;
 let lastMove: string | undefined;
-/** Deepest opening name seen on the way. */
-let opening: string | null = null;
+/** Opening name of the position after n moves (index n), where it has one. */
+let names: (string | null)[] = [null];
+let inBook = true;
 
 let moves: Moves | null = null;
 let lichess: LichessData | null = null;
@@ -99,6 +103,18 @@ const evals = new Map<string, MoveReview | "busy">();
 /** Bumped on every position change: answers for an old position are dropped. */
 let gen = 0;
 let timer: number | undefined;
+
+/** "In den Karteikasten" for the position on the board (kept across re-renders). */
+let cardBtn: HTMLButtonElement | null = null;
+function cardButton(): HTMLButtonElement {
+  if (!cardBtn) {
+    cardBtn = document.createElement("button");
+    cardBtn.innerHTML = CARD_BUTTON_LABEL();
+    cardBtn.title = t("Diese Stellung als Lernkarte üben – Stockfish sucht die besten Züge");
+    bindCardButton(cardBtn, () => ({ fen, source: "explore" }));
+  }
+  return cardBtn;
+}
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
 const sq = (uci: string, from: boolean) => (from ? uci.slice(0, 2) : uci.slice(2, 4)) as Key;
@@ -155,7 +171,8 @@ function reset() {
   lastMove = undefined;
   line = [];
   cursor = 0;
-  opening = null;
+  names = [null];
+  inBook = true;
   moves = null;
   lichess = null;
   setupSound();
@@ -178,7 +195,8 @@ async function load(auto = false) {
     moves = null;
   }
   if (g !== gen || !running) return;
-  if (moves?.opening) opening = moves.opening;
+  names[cursor] = moves?.opening ?? null;
+  inBook = moves?.inBook ?? false;
   render();
   const lichessDone = invoke<LichessData | null>("explorer_lichess", { fen, accounts: deps.accounts() })
     .then((d) => {
@@ -251,7 +269,10 @@ export async function explorerMove(orig: Key, dest: Key, promotion?: string) {
 
 function applyMove(played: PlayedMove) {
   // The same move as the one taken back: keep the moves after it for "vor".
-  if (line[cursor]?.uci !== played.uci) line = [...line.slice(0, cursor), played];
+  if (line[cursor]?.uci !== played.uci) {
+    line = [...line.slice(0, cursor), played];
+    names = names.slice(0, cursor + 1);
+  }
   cursor++;
   fen = played.fen;
   lastMove = played.uci;
@@ -304,6 +325,15 @@ function moveList(): string {
   return sans.map((s, i) => `${i % 2 === 0 ? `<span class="muted">${i / 2 + 1}.</span>` : ""}${esc(fig(s))}`).join(" ");
 }
 
+/** The opening on the board: the deepest named position on the way; outside theory, the last one. */
+function openingHeading(): string {
+  let last: string | null = null;
+  for (let i = 0; i <= cursor; i++) last = names[i] ?? last;
+  if (!cursor) return `<div class="ex-opening"><span class="muted">${t("Grundstellung")}</span></div>`;
+  if (inBook) return `<div class="ex-opening"><b>${esc(last ?? t("Eröffnungstheorie"))}</b></div>`;
+  return `<div class="ex-opening"><span class="ex-offbook">${t("Außerhalb der bekannten Theorie")}</span>${last ? `<br><span class="muted">${t("zuletzt: {name}", { name: esc(last) })}</span>` : ""}</div>`;
+}
+
 function ownCell(o: OwnStats | null): string {
   if (!o) return `<span class="muted">–</span>`;
   const who = o.byYou === o.games ? t("von dir") : o.byYou === 0 ? t("gegen dich") : t("{n}× von dir", { n: o.byYou });
@@ -339,11 +369,13 @@ function renderPanel() {
         <button data-c="black" class="${color === "black" ? "active" : ""}">${t("Ich spiele Schwarz")}</button>
       </div>
       <button id="ex-reset" ${line.length ? "" : "disabled"}>${t("Neu")}</button>
+      <span id="ex-card-slot"></span>
     </div>
     <label class="ex-opt"><input type="checkbox" id="ex-realistic" ${realistic ? "checked" : ""}/> ${t("Gegner zieht realistisch")}
       <small>${t("Die App wählt die Züge deines Gegners nach Häufigkeit.")}</small></label>
     <label class="ex-opt"><input type="checkbox" id="ex-evalon" ${evalOn ? "checked" : ""}/> ${t("Stockfish bewertet die Züge")}</label>
-    <div class="ex-line">${opening ? `<b>${esc(opening)}</b><br>` : ""}${moveList()}</div>
+    ${openingHeading()}
+    <div class="ex-line">${moveList()}</div>
     <h3>${yourTurn ? t("Deine Möglichkeiten") : t("Was kann der Gegner spielen?")}</h3>
     ${
       list.length
@@ -373,6 +405,7 @@ function renderPanel() {
     }),
   );
   $("ex-reset").addEventListener("click", reset);
+  $("ex-card-slot").appendChild(cardButton());
   ($("ex-realistic") as HTMLInputElement).addEventListener("change", (e) => {
     realistic = (e.target as HTMLInputElement).checked;
     store.set("ex-realistic", realistic ? "1" : "0");
