@@ -1801,9 +1801,21 @@ setView(savedView === "chesscom" || savedView === "all" || savedView === "local"
 checkEngine();
 preloadSounds();
 
+// Own version under "Über" in the settings; the link opens the release page.
+$("app-releases").addEventListener("click", (e) => {
+  e.preventDefault();
+  invoke("open_releases_page").catch((err) => alert(String(err)));
+});
+
 // A newer release on GitHub? Show a small pill in the top bar (once per start, silent when offline).
 invoke<{ current: string; latest: string | null; available: boolean }>("app_update")
   .then((u) => {
+    $("app-version").textContent = `postmortem ${u.current}`;
+    $("app-version-state").innerHTML = u.available && u.latest
+      ? `– <b class="update">${t("Update {v} verfügbar", { v: esc(u.latest) })}</b>`
+      : u.latest
+        ? `– ${t("aktuell")}`
+        : "";
     if (!u.available || !u.latest) return;
     const btn = $("app-update");
     btn.textContent = t("Update {v} verfügbar", { v: u.latest });

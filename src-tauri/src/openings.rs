@@ -18,7 +18,7 @@ pub fn epd(pos: &Chess) -> String {
     Epd::from_position(pos, EnPassantMode::Legal).to_string()
 }
 
-fn play_san_line(moves: impl IntoIterator<Item = impl AsRef<str>>) -> Option<Chess> {
+pub(crate) fn play_san_line(moves: impl IntoIterator<Item = impl AsRef<str>>) -> Option<Chess> {
     let mut pos = Chess::default();
     for san in moves {
         let m = san.as_ref().parse::<SanPlus>().ok()?.san.to_move(&pos).ok()?;

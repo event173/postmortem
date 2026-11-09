@@ -1,6 +1,6 @@
 [package]
 name = "postmortem"
-version = "0.2.3"
+version = "0.2.4"
 description = "Review your Lichess games with Stockfish and a rule-based coach"
 authors = ["event173"]
 license = "GPL-3.0-or-later"
@@ -28,6 +28,7 @@ reqwest = { version = "0.13.5", default-features = false, features = ["http2", "
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 zstd = "0.14.3"
 fastrand = "2.5.0"
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

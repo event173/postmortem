@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import { lang, locale, setLang, t, type Lang } from "./i18n";
 import { $, esc, miniPieces, store } from "./util";
-import { moveSound, soundOn, volume } from "./sound";
+import { diagnoseSounds, moveSound, soundOn, testSound, volume } from "./sound";
 
 interface SettingsInfo {
   stockfishPath: string | null;
@@ -167,6 +167,7 @@ export function initSettings(d: SettingsDeps) {
     store.set("volume", vol.value);
     moveSound("Nxf3");
   });
+  $("sound-diag-btn").addEventListener("click", runSoundDiagnosis);
 
   $("engine-apply").addEventListener("click", applyEngine);
   $("puzzle-action").addEventListener("click", installPuzzles);
@@ -182,6 +183,37 @@ export function initSettings(d: SettingsDeps) {
     update = await invoke<UpdateCheck>("puzzle_check_update");
     $("settings-dot").hidden = !update.available;
   });
+}
+
+const SOUND_LABEL = (): Record<string, string> => ({
+  Move: t("Zug"),
+  Capture: t("Schlagen"),
+  Check: t("Schach"),
+  Checkmate: t("Matt"),
+  Setup: t("Aufstellen"),
+  Error: t("Falsch"),
+  Confirmation: t("Richtig"),
+  Victory: t("Gewonnen"),
+});
+
+async function runSoundDiagnosis() {
+  const out = $("sound-diag");
+  out.innerHTML = `<span class="muted">${t("Prüfe …")}</span>`;
+  const d = await diagnoseSounds();
+  out.innerHTML =
+    `<div class="muted">${t("Ausgabe:")} <b>${esc(d.output)}</b></div>` +
+    d.files
+      .map(
+        (f) => `<div class="diag-row">
+          <button data-sound="${f.name}" class="diag-play" title="${t("Abspielen")}">▶</button>
+          <span class="diag-name">${SOUND_LABEL()[f.name] ?? f.name}</span>
+          <span class="muted">${f.source === "file" ? t("eigene Datei") : t("eingebaut")}</span>
+          ${f.ok ? `<span class="ok">✓ ${f.seconds} s${f.native ? "" : ` · ${t("nur Web Audio")}`}</span>` : ""}
+          ${f.error ? `<span class="error">${esc(f.error)}</span>` : ""}
+        </div>`,
+      )
+      .join("");
+  out.querySelectorAll<HTMLElement>(".diag-play").forEach((b) => b.addEventListener("click", () => testSound(b.dataset.sound!)));
 }
 
 async function refresh() {

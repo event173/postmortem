@@ -37,11 +37,20 @@ interface Drill {
   eco: string;
   fen: string;
   moves: string[];
-  /** "practice" = consolidating a just-learned line (frontend only). */
-  status: "new" | "due" | "early" | "practice";
+  /** "practice" = consolidating a just-learned line, "relearn" = learning a
+   *  forgotten line again with arrows (both frontend only). */
+  status: "new" | "due" | "early" | "practice" | "relearn";
   own: OwnMistake | null;
   /** Named theory moves; after that comes the engine's continuation. */
   bookLen: number;
+}
+
+/** Wikibooks explanation of an opening position (see opening_texts.rs). */
+interface OpeningText {
+  paragraphs: string[];
+  /** English original although the app is German. */
+  untranslated: boolean;
+  url: string;
 }
 
 interface SideStatus {
@@ -83,6 +92,8 @@ interface LineInfo {
   plies: number;
   boxLevel: number;
   due: boolean;
+  /** When it comes back (ms; 0 = not seen yet). */
+  dueAt: number;
 }
 
 interface VariationGroup {
@@ -152,6 +163,15 @@ let resultDue: number | null = null;
 let resultBox: number | null = null;
 /** Consolidating a just-learned line: replay it without arrows. */
 let consolidate: { line: Drill; clean: number; runs: number } | null = null;
+/** Positions before each move of the current drill (for "Zurück"). */
+let history: { fen: string; lastMove?: string; step: number }[] = [];
+/** Bumped by "Zurück": moves still in flight from before are dropped. */
+let nav = 0;
+/** The drill's result is already recorded (replaying after "Zurück" doesn't count again). */
+let finished = false;
+/** Position whose Wikibooks explanation is shown (null: none). */
+let theoryFen: string | null = null;
+const theoryCache = new Map<string, OpeningText | null>();
 
 // data
 let repertoire: Repertoire = { white: [], black: [] };
@@ -170,7 +190,7 @@ let focus: Focus | null = null;
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
 const sq = (uci: string, from: boolean) => (from ? uci.slice(0, 2) : uci.slice(2, 4)) as Key;
 /** A new line is taught with arrows, not tested. */
-const learning = () => drill?.kind === "line" && drill.status === "new";
+const learning = () => drill?.kind === "line" && (drill.status === "new" || drill.status === "relearn");
 
 // ---------------------------------------------------------------------------
 // setup and views
@@ -229,6 +249,10 @@ export function leaveOpenings() {
 export function openingKey(e: KeyboardEvent): boolean {
   if (e.key === "Enter" && phase === "done") {
     loadNext();
+    return true;
+  }
+  if (e.key === "ArrowLeft" && backTarget() >= 0) {
+    back();
     return true;
   }
   return false;
@@ -338,9 +362,36 @@ const thumbObserver = new IntersectionObserver(
 /** Two-tone bar: learned (green) and in progress (light green) out of `total`. */
 function progressBar(total: number, started: number, learned: number): string {
   if (!total) return "";
-  return `<span class="learn-bar" title="${t("{l} sicher, {s} in Arbeit, {n} neu", { l: learned, s: started - learned, n: total - started })}">
+  return `<span class="learn-bar" title="${t("{l} sitzen, {s} im Lernen, {n} neu", { l: learned, s: started - learned, n: total - started })}">
     <span class="lb-learned" style="width:${(learned / total) * 100}%"></span><span class="lb-started" style="width:${((started - learned) / total) * 100}%"></span></span>`;
 }
+
+/** Learning progress in words, like a flashcard box: "1 sitzt · 2 im Lernen · 5 neu · 1 fällig". */
+function cardSummary(total: number, started: number, learned: number, due: number): string {
+  const parts: string[] = [];
+  if (learned) parts.push(tn(learned, "{n} sitzt", "{n} sitzen"));
+  if (started - learned) parts.push(t("{n} im Lernen", { n: started - learned }));
+  if (total - started) parts.push(t("{n} neu", { n: total - started }));
+  if (due) parts.push(`<b>${t("{n} fällig", { n: due })}</b>`);
+  return parts.join(" · ");
+}
+
+/** The five compartments of the flashcard box, filled up to the card's one. */
+function pips(box: number): string {
+  const cls = box >= 3 ? "sure" : "work";
+  return `<span class="pips ${cls}">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= box ? "on" : ""}"></i>`).join("")}</span>`;
+}
+
+/** One line's state: "neu", "Fach 2 · wieder morgen", "fällig", "sitzt ✓ · wieder in 7 Tagen". */
+function lineState(l: LineInfo): string {
+  if (l.boxLevel === 0) return t("neu");
+  if (l.due) return `<b>${t("fällig")}</b>`;
+  const again = t("wieder {when}", { when: relDays(l.dueAt) });
+  return l.boxLevel >= 3 ? `${t("sitzt ✓")} · ${again}` : again;
+}
+
+const BOX_HELP = () =>
+  t("Wie Karteikarten: Jede Variante ist eine Karte. Spielst du sie richtig, rutscht sie ein Fach weiter und kommt später wieder (10 Min. → 1 Tag → 3 → 7 → 21 Tage). Ein Fehler schickt sie zurück in Fach 1. Ab Fach 3 sitzt sie.");
 
 function renderList() {
   if (view !== "browse") return;
@@ -378,7 +429,7 @@ function renderList() {
         return `<div class="op-side-row">
           <button class="op-learn ${started ? "primary" : ""}" data-color="${color}" data-family="${esc(f.name)}">
             <span class="pdot ${color}"></span>${started ? t("Weiterlernen als {side}", { side: SIDE[color] }) : t("Lernen als {side}", { side: SIDE[color] })}</button>
-          ${pr ? `${progressBar(pr.lines, pr.started, pr.learned)}<span class="op-progress-text">${pr.learned}/${pr.lines}${pr.due ? ` · <b>${t("{n} fällig", { n: pr.due })}</b>` : ""}</span>` : ""}
+          ${pr ? `${progressBar(pr.lines, pr.started, pr.learned)}<span class="op-progress-text" title="${esc(BOX_HELP())}">${cardSummary(pr.lines, pr.started, pr.learned, pr.due)}</span>` : ""}
           ${inRep ? `<button class="op-remove" data-color="${color}" data-family="${esc(f.name)}" title="${t("Aus dem Repertoire nehmen (Lernstand bleibt)")}">✕</button>` : ""}
         </div>`;
       };
@@ -444,12 +495,13 @@ function renderSidebar() {
         ${sub ? `<div class="op-focus-sub">${t("nur:")} ${esc(varName(sub))} <button id="op-focus-all" class="link">${t("alle Varianten")}</button></div>` : ""}</div>
       <button id="op-focus-x" class="icon" title="${t("Lernen beenden – zurück zum gemischten Training")}">✕</button>
     </div>
-    ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${t("{l} sicher · {s} in Arbeit · {n} neu", { l: p.learned, s: p.started - p.learned, n: p.lines - p.started })}</span></div>` : ""}`;
+    ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${cardSummary(p.lines, p.started, p.learned, p.due)}</span></div>` : ""}
+    <p class="panel-sub op-box-help">${BOX_HELP()}</p>`;
   $("op-focus-x").addEventListener("click", () => setFocus(null));
   document.getElementById("op-focus-all")?.addEventListener("click", () => setFocus({ color: focus!.color, family: focus!.family }));
 
   const current = drill?.kind === "line" ? drill.id : null;
-  varsEl.innerHTML = `<h3>${t("Varianten")}</h3><p class="panel-sub">${t("Klick auf eine Variante, um nur sie zu lernen. Grün = sicher, hell = in Arbeit.")}</p>
+  varsEl.innerHTML = `<h3>${t("Varianten")}</h3><p class="panel-sub">${t("Klick auf eine Variante, um nur sie zu lernen. Die Kästchen zeigen das Fach im Karteikasten: grün = sitzt, gestreift = im Lernen.")}</p>
     ${variations
       .map((g) => {
         const open = expanded.has(g.name);
@@ -459,18 +511,17 @@ function renderSidebar() {
             <button class="var-toggle" data-group="${esc(g.name)}" title="${open ? t("Zuklappen") : t("Linien zeigen")}">${open ? "▾" : "▸"}</button>
             <button class="var-name" data-group="${esc(g.name)}" title="${t("Nur diese Variante lernen")}">${esc(varName(g.name))}</button>
             ${progressBar(g.total, g.started, g.learned)}
-            <span class="var-count">${g.learned}/${g.total}${g.due ? ` · <b>${g.due}</b>` : ""}</span>
+            <span class="var-count">${groupState(g)}</span>
           </div>
           ${
             open
               ? `<div class="var-lines">${g.lines
                   .map((l) => {
-                    const state = l.boxLevel === 0 ? "new" : l.boxLevel >= 3 ? "learned" : "started";
-                    const label = state === "new" ? t("neu") : state === "learned" ? t("sicher") : t("Stufe {n}", { n: l.boxLevel });
-                    return `<button class="var-line ${l.id === current ? "current" : ""} ${focus!.line === l.id ? "selected" : ""}" data-line="${esc(l.id)}" title="${t("Nur diese Linie lernen")}">
-                      <span class="line-dot ${state}" title="${label}${l.due ? t(", fällig") : ""}"></span>
+                    const where = l.boxLevel ? t("Fach {n} von 5", { n: l.boxLevel }) : t("noch nicht gelernt");
+                    return `<button class="var-line ${l.id === current ? "current" : ""} ${focus!.line === l.id ? "selected" : ""}" data-line="${esc(l.id)}" title="${t("Nur diese Linie lernen")} · ${where} · ${t("{n} Züge", { n: Math.ceil(l.plies / 2) })}">
+                      ${pips(l.boxLevel)}
                       <span class="line-name">${esc(varName(l.name))}</span>
-                      <span class="muted">${t("{n} Z.", { n: Math.ceil(l.plies / 2) })}</span></button>`;
+                      <span class="line-state">${lineState(l)}</span></button>`;
                   })
                   .join("")}</div>`
               : ""
@@ -500,6 +551,15 @@ function renderSidebar() {
 // ---------------------------------------------------------------------------
 // drills
 
+/** A variation group's state in a few words. */
+function groupState(g: VariationGroup): string {
+  if (g.due) return `<b>${t("{n} fällig", { n: g.due })}</b>`;
+  if (!g.started) return t("neu");
+  if (g.learned === g.total) return t("sitzt ✓");
+  if (g.total === 1) return t("im Lernen");
+  return t("{l} von {n} sitzen", { l: g.learned, n: g.total });
+}
+
 function startDrill(d: Drill | null, tk: number) {
   drill = d;
   failed = false;
@@ -508,7 +568,10 @@ function startDrill(d: Drill | null, tk: number) {
   wrongTry = null;
   resultDue = null;
   resultBox = null;
+  history = [];
+  finished = false;
   deps.board.setShapes([]);
+  showTheory(null);
   if (!d) {
     phase = "empty";
     render();
@@ -558,15 +621,20 @@ function continueLine(tk: number) {
   }
   phase = "opponent";
   render();
+  const n = nav;
   timer = window.setTimeout(
     async () => {
-      if (tk !== token) return;
+      if (tk !== token || n !== nav) return;
       const played = await play(fen, d.moves[step]);
-      if (tk !== token) return;
+      if (tk !== token || n !== nav) return;
+      history.push({ fen, lastMove, step });
       fen = played.fen;
       lastMove = played.uci;
       moveSound(played.san);
       step++;
+      // While learning, explain every move; otherwise only your own (so the
+      // text doesn't give away the answer you're asked for).
+      if (learning()) showTheory(fen);
       continueLine(tk);
     },
     step === 0 ? 500 : deps.animMs() + 250,
@@ -581,6 +649,7 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   const d = drill;
   if (!d || (phase !== "solve" && phase !== "wrong")) return render();
   const tk = token;
+  const n = nav;
   const expected = d.moves[step];
   const promo = expected && expected.slice(0, 4) === orig + dest ? expected[4] : promotion;
   let played: PlayedMove;
@@ -589,7 +658,7 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   } catch {
     return render();
   }
-  if (tk !== token) return;
+  if (tk !== token || n !== nav) return;
 
   if (played.uci === expected) return correct(played, tk);
   if (d.kind === "own") {
@@ -615,12 +684,14 @@ export async function openingMove(orig: Key, dest: Key, promotion?: string) {
 
 function correct(played: PlayedMove, tk: number) {
   moveSound(played.san);
+  history.push({ fen, lastMove, step });
   fen = played.fen;
   lastMove = played.uci;
   step++;
   wrongTry = null;
   hint = false;
   if (drill!.kind === "own") return finish(tk);
+  showTheory(fen);
   continueLine(tk);
 }
 
@@ -629,9 +700,10 @@ async function showMove() {
   const d = drill;
   if (!d || !d.moves[step]) return;
   const tk = token;
+  const n = nav;
   if (!learning()) failed = true;
   const played = await play(fen, d.moves[step]);
-  if (tk !== token) return;
+  if (tk !== token || n !== nav) return;
   correct(played, tk);
 }
 
@@ -639,6 +711,9 @@ async function finish(tk: number) {
   const d = drill!;
   phase = "done";
   if (!failed) successSound();
+  // Replayed after "Zurück": the result already counts.
+  if (finished) return render();
+  finished = true;
 
   if (d.status === "practice" && consolidate) {
     // Consolidation run: count clean runs in a row; nothing is recorded.
@@ -654,7 +729,8 @@ async function finish(tk: number) {
     const r = await invoke<{ boxLevel: number; due: number; status: Status }>("opening_record", {
       id: d.id,
       color: d.color,
-      success: !failed,
+      // Learning a forgotten line again: the card goes back to box 1.
+      success: d.status === "relearn" ? false : !failed,
     });
     if (tk !== token) return;
     resultBox = r.boxLevel;
@@ -664,11 +740,77 @@ async function finish(tk: number) {
     console.error(e);
   }
   // A line was just taught: consolidate it right away (without arrows).
-  if (d.kind === "line" && d.status === "new") consolidate = { line: d, clean: 0, runs: 0 };
+  if (learning()) consolidate = { line: { ...d, status: "new" }, clean: 0, runs: 0 };
   await Promise.all([loadProgress(), loadVariations()]);
   if (tk !== token) return;
   renderSidebar();
   renderText();
+}
+
+/** Forgotten the line: start it over with arrows (the card goes back to box 1). */
+function relearn() {
+  const d = drill;
+  if (!d || d.kind !== "line") return;
+  const tk = ++token;
+  clearTimeout(timer);
+  consolidate = null;
+  startDrill({ ...d, status: "relearn" }, tk);
+}
+
+/** Index of the last position in the history where it was your move. */
+function backTarget(): number {
+  const d = drill;
+  if (!d || d.kind !== "line") return -1;
+  for (let i = history.length - 1; i >= 0; i--) if (sideOf(history[i].fen) === d.color) return i;
+  return -1;
+}
+
+/** "Zurück": take back your last move (and the opponent's answer). Doesn't count as a mistake. */
+function back() {
+  const i = backTarget();
+  if (i < 0 || phase === "loading" || phase === "checking") return;
+  const h = history[i];
+  history.length = i;
+  nav++;
+  clearTimeout(timer);
+  fen = h.fen;
+  lastMove = h.lastMove;
+  step = h.step;
+  wrongTry = null;
+  verdict = null;
+  hint = false;
+  phase = "solve";
+  deps.board.cancelMove();
+  showTheory(learning() ? fen : null);
+  render();
+}
+
+/** Show the explanation of a position, if Wikibooks has one. */
+async function showTheory(f: string | null) {
+  theoryFen = f;
+  const box = $("op-theory");
+  if (!f) {
+    box.hidden = true;
+    return;
+  }
+  let text = theoryCache.get(f);
+  if (text === undefined) {
+    text = await invoke<OpeningText | null>("opening_text", { fen: f }).catch(() => null);
+    theoryCache.set(f, text);
+  }
+  if (theoryFen !== f) return;
+  // Keep the previous text when this position has none: it still describes the line.
+  if (!text) return;
+  box.innerHTML = `
+    <h3>${t("Eröffnungstheorie")}${text.untranslated ? ` <span class="muted">${t("(englisch)")}</span>` : ""}</h3>
+    <div class="op-theory-text">${text.paragraphs.map((p) => `<p>${esc(fig(p))}</p>`).join("")}</div>
+    <p class="op-theory-source">${t("Quelle:")} <a href="#" data-url="${esc(text.url)}">Wikibooks – Chess Opening Theory</a> · CC BY-SA 4.0</p>`;
+  box.hidden = false;
+  box.querySelector<HTMLElement>(".op-theory-text")!.scrollTop = 0;
+  box.querySelector("a[data-url]")!.addEventListener("click", (e) => {
+    e.preventDefault();
+    invoke("open_opening_source", { url: text.url }).catch(console.error);
+  });
 }
 
 function showTry(played: PlayedMove) {
@@ -771,8 +913,8 @@ function renderText(error?: string) {
   const tag =
     d.kind === "own"
       ? `<span class="pz-tag own">${t("Aus deiner Partie")}</span>`
-      : d.status === "new"
-        ? `<span class="pz-tag mixed">${t("Neu lernen")}</span>`
+      : d.status === "new" || d.status === "relearn"
+        ? `<span class="pz-tag mixed">${d.status === "relearn" ? t("Nochmal lernen") : t("Neu lernen")}</span>`
         : d.status === "practice"
           ? `<span class="pz-tag op-practice-tag">${t("Festigen")} ${(consolidate?.clean ?? 0) + (phase === "done" ? 0 : 1)}/${CONSOLIDATE_RUNS}</span>`
           : `<span class="pz-tag op-review">${t("Wiederholung")}</span>`;
@@ -822,18 +964,18 @@ function renderText(error?: string) {
       if (d.status === "practice") {
         text.innerHTML = consolidate
           ? failed
-            ? t("Noch nicht ganz – <b>nochmal</b>. Zweimal fehlerfrei hintereinander, dann sitzt sie.")
-            : t("<b class=\"ok\">Fehlerfrei!</b> Noch einmal, dann sitzt sie.")
-          : t("<b class=\"ok\">Variante sitzt.</b> Sie kommt zur Wiederholung wieder, bevor du sie vergisst.");
-      } else if (d.kind === "line" && d.status === "new") {
-        text.innerHTML = t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander sitzt.");
+            ? t("Noch nicht ganz – <b>nochmal</b>. Zweimal fehlerfrei hintereinander, dann hast du sie drin.")
+            : t("<b class=\"ok\">Fehlerfrei!</b> Noch einmal, dann hast du sie drin.")
+          : t("<b class=\"ok\">Eingeprägt.</b> Die Karte liegt jetzt in Fach 1 deines Karteikastens und kommt in 10 Minuten wieder.");
+      } else if (learning()) {
+        text.innerHTML = t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander klappt.");
       } else {
         const when = resultDue ? relDays(resultDue) : "";
         text.innerHTML = failed
-          ? t("<b>Geschafft</b> – mit Fehlern. Kommt <b>{when}</b> nochmal.", { when: when || t("bald") })
-          : t("<b class=\"ok\">Richtig!</b> Nächste Wiederholung <b>{when}</b>", { when: when || "…" }) +
-            (resultBox ? ` <span class="muted">${t("(Stufe {n}/5)", { n: resultBox })}</span>` : "") +
-            ".";
+          ? t("<b>Geschafft</b> – mit Fehlern. Die Karte geht zurück in Fach 1 und kommt <b>{when}</b> wieder.", { when: when || t("bald") })
+          : resultBox && resultBox >= 3
+            ? t("<b class=\"ok\">Richtig!</b> Die Karte rutscht in Fach {n} von 5 – <b>sie sitzt</b>. Wieder <b>{when}</b>.", { n: resultBox, when: when || "…" })
+            : t("<b class=\"ok\">Richtig!</b> Die Karte rutscht in Fach {n} von 5 und kommt <b>{when}</b> wieder.", { n: resultBox ?? 1, when: when || "…" });
       }
       if (d.own) extra.innerHTML = `<span class="muted">${t("In der Partie:")}</span> ${esc(fig(d.own.comment))}`;
       break;
@@ -841,10 +983,15 @@ function renderText(error?: string) {
   }
 
   const game = d.own ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
+  const backBtn =
+    d.kind === "line"
+      ? `<button data-act="back" title="${t("Deinen letzten Zug zurücknehmen (←)")}" ${backTarget() >= 0 && phase !== "checking" ? "" : "disabled"}>← ${t("Zurück")}</button>`
+      : "";
   actions.innerHTML =
     phase === "done"
-      ? `${game}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
-      : `${learning() ? "" : `<button data-act="hint" ${hint || phase !== "solve" ? "disabled" : ""}>${t("Tipp")}</button>`}
+      ? `${backBtn}${game}${d.kind === "line" && !learning() && failed ? `<button data-act="relearn">${t("Mit Pfeilen neu lernen")}</button>` : ""}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
+      : `${backBtn}${learning() ? "" : `<button data-act="hint" ${hint || phase !== "solve" ? "disabled" : ""}>${t("Tipp")}</button>`}
+         ${learning() || d.kind !== "line" ? "" : `<button data-act="relearn" title="${t("Die Variante von vorn mit allen Pfeilen zeigen. Die Karte kommt zurück in Fach 1.")}">${t("Mit Pfeilen neu lernen")}</button>`}
          ${learning() ? "" : `<button data-act="show" ${phase === "solve" || phase === "wrong" ? "" : "disabled"}>${d.kind === "line" ? t("Zug zeigen") : t("Lösung zeigen")}</button>`}
          ${game}
          <button data-act="skip" class="end">${t("Überspringen")}</button>`;
@@ -863,6 +1010,12 @@ function bindActions(d: Drill | null) {
             break;
           case "show":
             showMove();
+            break;
+          case "back":
+            back();
+            break;
+          case "relearn":
+            relearn();
             break;
           case "next":
             loadNext();

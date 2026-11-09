@@ -2438,8 +2438,9 @@ button.link:hover {
   background: var(--accent);
 }
 
+/* Learned but not yet sure: striped, so it can't be mistaken for "done". */
 .lb-started {
-  background: rgba(124, 173, 63, 0.4);
+  background: repeating-linear-gradient(135deg, rgba(124, 173, 63, 0.55) 0 3px, rgba(124, 173, 63, 0.18) 3px 6px);
 }
 
 .op-focus {
@@ -2477,6 +2478,35 @@ button.link:hover {
 
 .op-focus-progress .learn-bar {
   width: 120px;
+}
+
+.op-theory {
+  padding: 10px 12px;
+}
+
+.op-theory h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.op-theory-text {
+  max-height: 220px;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.op-theory-text p {
+  margin: 0 0 8px;
+}
+
+.op-theory-source {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.op-theory-source a {
+  color: inherit;
 }
 
 .op-variations {
@@ -2539,7 +2569,9 @@ button.link:hover {
 }
 
 .var-count {
-  width: 54px;
+  flex: none;
+  max-width: 120px;
+  white-space: nowrap;
   text-align: right;
   font-size: 12px;
   color: var(--muted);
@@ -2582,6 +2614,38 @@ button.link:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Flashcard box: five compartments, filled up to the card's one. */
+.pips {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pips i {
+  width: 6px;
+  height: 8px;
+  border-radius: 1px;
+  background: #3f3e3a;
+}
+
+.pips.work i.on {
+  background: repeating-linear-gradient(135deg, rgba(124, 173, 63, 0.75) 0 2px, rgba(124, 173, 63, 0.3) 2px 4px);
+}
+
+.pips.sure i.on {
+  background: var(--accent);
+}
+
+.line-state {
+  flex: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.op-box-help {
+  margin: 6px 0 0;
 }
 
 .line-dot {
@@ -3033,4 +3097,27 @@ body[data-board] cg-board {
   color: var(--muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.sound-diag {
+  font-size: 13px;
+}
+
+.diag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.diag-play {
+  padding: 2px 8px;
+}
+
+.diag-name {
+  width: 80px;
+}
+
+.sound-diag .ok {
+  color: var(--accent);
 }

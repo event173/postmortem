@@ -1,6 +1,7 @@
 #[macro_use]
 mod i18n;
 mod analysis;
+mod audio;
 mod bot;
 mod chesscom;
 mod coach;
@@ -9,6 +10,7 @@ mod engine;
 mod explore;
 mod lichess;
 mod live;
+mod opening_texts;
 mod openings;
 mod pgn;
 mod puzzles;
@@ -608,6 +610,21 @@ async fn puzzle_profile(app: AppHandle, accounts: Vec<Account>) -> Result<traine
     with_db(app, move |db, _| trainer::profile(db, &accounts)).await
 }
 
+/// Wikibooks explanation of an opening position, if there is one.
+#[tauri::command]
+fn opening_text(fen: String) -> Option<opening_texts::OpeningText> {
+    opening_texts::lookup(&fen)
+}
+
+/// Open the Wikibooks page an opening text comes from (nothing else).
+#[tauri::command]
+fn open_opening_source(url: String) -> Result<(), String> {
+    if !url.starts_with(opening_texts::WIKI) {
+        return Err("unexpected URL".into());
+    }
+    update::open_in_browser(&url)
+}
+
 #[tauri::command]
 fn position_info(fen: String) -> Result<explore::PositionInfo, String> {
     explore::position_info(&fen)
@@ -643,6 +660,23 @@ async fn engine_line(fen: String, depth: Option<u32>, plies: Option<usize>) -> R
     tauri::async_runtime::spawn_blocking(move || explore::engine_line(&fen, depth, plies))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Is native sound output available? (Otherwise the frontend uses Web Audio.)
+#[tauri::command]
+fn sound_available(audio: State<audio::Audio>) -> bool {
+    audio.available()
+}
+
+/// Register a sound (WAV bytes) under a name.
+#[tauri::command]
+fn sound_register(audio: State<audio::Audio>, name: String, data: Vec<u8>) -> Result<(), String> {
+    audio.register(&name, data)
+}
+
+#[tauri::command]
+fn sound_play(audio: State<audio::Audio>, name: String, volume: f32) -> Result<(), String> {
+    audio.play(&name, volume)
 }
 
 #[tauri::command]
@@ -841,6 +875,7 @@ pub fn run() {
         .manage(PuzzleInstall::default())
         .manage(live::Live::default())
         .manage(bot::Bot::default())
+        .manage(audio::Audio::open())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -895,6 +930,8 @@ pub fn run() {
             engine_line,
             opening_report,
             opening_families,
+            opening_text,
+            open_opening_source,
             repertoire_get,
             repertoire_set,
             opening_status,
@@ -902,6 +939,9 @@ pub fn run() {
             opening_record,
             opening_progress,
             opening_family_detail,
+            sound_available,
+            sound_register,
+            sound_play,
             bot_levels,
             bot_move,
             game_status,

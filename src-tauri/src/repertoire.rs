@@ -476,6 +476,8 @@ pub struct LineInfo {
     /// 0 = not seen yet, 1..=5 = Leitner box.
     pub box_level: u8,
     pub due: bool,
+    /// When it comes back (ms; 0 = not seen yet).
+    pub due_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -509,6 +511,7 @@ pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<Vec<Variation
             plies: l.moves.len(),
             box_level: p.map_or(0, |p| p.box_),
             due: p.is_some_and(|p| p.due <= now),
+            due_at: p.map_or(0, |p| p.due),
         };
         let idx = match groups.iter().position(|g| g.name == l.variation()) {
             Some(i) => i,

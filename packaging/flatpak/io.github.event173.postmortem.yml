@@ -19,6 +19,8 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
+  # Move sounds (native output through ALSA → PipeWire/PulseAudio)
+  - --socket=pulseaudio
   # Lichess / chess.com APIs and the puzzle database download
   - --share=network
 

@@ -185,7 +185,7 @@ WebKitGTK-Pakete:
 
 ```sh
 sudo apt install libwebkit2gtk-4.1-dev build-essential libssl-dev \
-  libayatana-appindicator3-dev librsvg2-dev libxdo-dev stockfish
+  libayatana-appindicator3-dev librsvg2-dev libxdo-dev libasound2-dev stockfish
 ```
 
 ```sh
@@ -235,6 +235,10 @@ Stockfish und legt einen Release-Entwurf an.
 - [chess.com Published-Data API](https://www.chess.com/news/view/published-data-api) – deine Partien
 - [Lichess-Puzzle-Datenbank](https://database.lichess.org/#puzzles) (CC0)
 - [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0) – Eröffnungsnamen und -linien
+- [Wikibooks: Chess Opening Theory](https://en.wikibooks.org/wiki/Chess_Opening_Theory)
+  ([CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)) – Erklärungen zu den
+  Eröffnungszügen in `src-tauri/data/opening-texts/` (`en.tsv` Original, abgerufen mit
+  `scripts/fetch-opening-texts.mjs`; `de.tsv` deutsche Übersetzung, ebenfalls CC BY-SA 4.0)
 - [Stockfish](https://stockfishchess.org) (GPL-3.0) – die Engine
 - Figurensätze aus [lichess-org/lila](https://github.com/lichess-org/lila) – nur frei
   lizenzierte (Details: `src/assets/pieces/LICENSES.md`); die Klänge erzeugt die App selbst

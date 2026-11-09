@@ -60,16 +60,21 @@ pub async fn check() -> AppUpdate {
 
 /// Open the release page in the system browser.
 pub fn open_releases_page() -> Result<(), String> {
+    open_in_browser(RELEASES_PAGE)
+}
+
+/// Open a web page in the system browser.
+pub fn open_in_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut cmd = {
         let mut c = std::process::Command::new("explorer");
-        c.arg(RELEASES_PAGE);
+        c.arg(url);
         c
     };
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
         let mut c = std::process::Command::new("xdg-open");
-        c.arg(RELEASES_PAGE);
+        c.arg(url);
         c
     };
     cmd.spawn().map(|_| ()).map_err(|e| crate::tr!("Browser konnte nicht geöffnet werden: {e}", "Could not open the browser: {e}"))

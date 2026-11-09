@@ -165,6 +165,7 @@
           <div id="op-extra" class="coach-best"></div>
           <div id="op-actions" class="training-actions"></div>
         </div>
+        <div id="op-theory" class="panel op-theory" hidden></div>
         <div id="op-variations" class="panel op-variations" hidden></div>
 
         <div id="op-summary" class="panel op-summary">
@@ -378,6 +379,11 @@
           <span>Lautstärke</span>
           <input id="pref-volume" type="range" min="0" max="1" step="0.05" />
         </label>
+        <div class="row">
+          <span>Funktionieren alle Klänge?<small>Prüft jede Sounddatei und spielt sie einzeln ab.</small></span>
+          <button id="sound-diag-btn">Sound-Diagnose</button>
+        </div>
+        <div id="sound-diag" class="sound-diag"></div>
       </section>
 
       <section>
@@ -402,6 +408,12 @@
       <section>
         <h3>Daten</h3>
         <p id="data-info" class="hint"></p>
+      </section>
+
+      <section>
+        <h3>Über</h3>
+        <p class="hint"><b id="app-version">postmortem</b> <span id="app-version-state"></span>
+          · <a href="#" id="app-releases">Alle Versionen</a></p>
       </section>
     </dialog>
   </body>

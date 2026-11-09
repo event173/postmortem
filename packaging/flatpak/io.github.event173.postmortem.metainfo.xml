@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.4" date="2026-11-09">
+      <description>
+        <p>Opening training: explanations for every move from the Wikibooks opening theory, progress shown like a flashcard box, a back button and "learn again with arrows". Move sounds now play reliably through the sound card, and the Flatpak can play sound at all.</p>
+      </description>
+    </release>
     <release version="0.2.3" date="2026-11-09">
       <description>
         <p>Fair play: games that are still running are not analysed (Lichess links, PGN imports), so you can't break the sites' rules by accident.</p>

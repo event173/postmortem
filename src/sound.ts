@@ -1,12 +1,24 @@
 // Move and feedback sounds.
-// Own recordings in src/assets/sounds/ (move, capture, check, checkmate, setup –
-// .ogg/.mp3/.wav) are used when present; everything else is synthesised with
-// Web Audio: a wooden piece set down on a board (short muffled strike, a few
-// damped wood modes and a low thud from the board).
+//
+// Sounds are played natively by the backend (rodio, see audio.rs): WebKitGTK
+// suspends Web Audio on its own (after silence, tab switches …) and only lets
+// it resume inside a direct click, so move sounds were often swallowed.
+//
+// At start every sound is prepared once and handed to the backend as WAV:
+// - own recordings in src/assets/sounds/ (move, capture, check, checkmate,
+//   setup – .ogg/.mp3/.wav) are decoded and re-encoded,
+// - all others are synthesised (a wooden piece set down on a board: short
+//   muffled strike, damped wood modes, low thud) with an OfflineAudioContext,
+//   which needs no permission to "play".
+// If the backend has no audio device, sounds fall back to Web Audio.
 
+import { invoke } from "@tauri-apps/api/core";
+
+import { t } from "./i18n";
 import { store } from "./util";
 
 type Name = "Move" | "Capture" | "Check" | "Checkmate" | "Error" | "Confirmation" | "Victory" | "Setup";
+const NAMES: Name[] = ["Move", "Capture", "Check", "Checkmate", "Error", "Confirmation", "Victory", "Setup"];
 
 const FILES = import.meta.glob("./assets/sounds/*.{ogg,mp3,wav}", { eager: true, query: "?url", import: "default" }) as Record<
   string,
@@ -30,74 +42,10 @@ const RECORDED: Partial<Record<Name, string>> = {
   Setup: "setup",
 };
 
-// Recordings are fetched and decoded into Web Audio buffers instead of being
-// played with <audio>: in the installed app WebKitGTK (Linux) cannot stream
-// media from Tauri's own URL scheme, but fetch() works. Buffers also start
-// without delay.
-const buffers = new Map<string, Promise<AudioBuffer | null>>();
-
-function loadBuffer(url: string): Promise<AudioBuffer | null> {
-  let p = buffers.get(url);
-  if (!p) {
-    p = (async () => {
-      const ac = audio();
-      if (!ac) return null;
-      try {
-        const data = await (await fetch(url)).arrayBuffer();
-        return await ac.decodeAudioData(data);
-      } catch {
-        return null;
-      }
-    })();
-    buffers.set(url, p);
-  }
-  return p;
-}
-
-/** Only the latest instance of each recording plays; quick steps don't pile up. */
-const playingFiles = new Map<string, AudioBufferSourceNode>();
-
-async function playFile(url: string, fallback: () => void) {
-  const ac = audio();
-  const buffer = await loadBuffer(url);
-  if (!ac || !buffer) return fallback();
-  // The output may be suspended (no user gesture yet, or after standby).
-  if (ac.state !== "running") await ac.resume().catch(() => {});
-  try {
-    playingFiles.get(url)?.stop();
-  } catch {
-    /* already finished */
-  }
-  const src = ac.createBufferSource();
-  src.buffer = buffer;
-  const gain = ac.createGain();
-  gain.gain.value = volume();
-  src.connect(gain).connect(ac.destination);
-  src.start();
-  playingFiles.set(url, src);
-}
-
-/**
- * Web Audio starts suspended until the user interacts with the page; resume it
- * on every click/key press so sounds triggered later (bot or opponent moves)
- * aren't swallowed.
- */
-function unlockOnGesture() {
-  const unlock = () => {
-    const ac = audio();
-    if (ac && ac.state !== "running") void ac.resume().catch(() => {});
-  };
-  window.addEventListener("pointerdown", unlock, true);
-  window.addEventListener("keydown", unlock, true);
-}
-
-/** Decode all recordings up front so the first move already sounds instantly. */
-export function preloadSounds() {
-  unlockOnGesture();
-  for (const name of Object.values(RECORDED)) {
-    const url = name && recording(name);
-    if (url) void loadBuffer(url);
-  }
+/** Own recording for a sound (a capture falls back to the move recording). */
+function recordingFor(name: Name): string | undefined {
+  const file = RECORDED[name];
+  return (file && recording(file)) ?? (name === "Capture" ? recording("move") : undefined);
 }
 
 export function soundOn(): boolean {
@@ -109,21 +57,219 @@ export function volume(): number {
   return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.6;
 }
 
-// --- synthesised wood ---------------------------------------------------------
+// ---------------------------------------------------------------------------
+// preparing sounds (decode or synthesise -> AudioBuffer -> WAV)
+
+const SAMPLE_RATE = 44100;
+
+interface Prepared {
+  buffer: AudioBuffer | null;
+  source: "file" | "synth";
+  error: string | null;
+  /** Registered with the native backend. */
+  native: boolean;
+}
+
+const prepared = new Map<Name, Prepared>();
+let nativeOutput = false;
+let preparing: Promise<void> | null = null;
+
+async function decodeFile(url: string): Promise<AudioBuffer> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.arrayBuffer();
+  if (!data.byteLength) throw new Error(t("Datei ist leer"));
+  // Decoding doesn't need a running (or permitted) audio output.
+  return new OfflineAudioContext(2, 1, SAMPLE_RATE).decodeAudioData(data);
+}
+
+/** Render a synthesised sound offline. */
+async function renderSynth(name: Name): Promise<AudioBuffer> {
+  const seconds = name === "Checkmate" ? 1.3 : name === "Setup" ? 0.8 : 0.6;
+  const ac = new OfflineAudioContext(2, Math.ceil(SAMPLE_RATE * seconds), SAMPLE_RATE);
+  renderWood(ac, ac.destination, 0.002, name);
+  return ac.startRendering();
+}
+
+/** 16-bit PCM WAV of an AudioBuffer (mono or stereo). */
+function toWav(buf: AudioBuffer): Uint8Array {
+  const channels = Math.min(2, buf.numberOfChannels);
+  const frames = buf.length;
+  const dataLen = frames * channels * 2;
+  const out = new DataView(new ArrayBuffer(44 + dataLen));
+  const str = (o: number, s: string) => [...s].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF");
+  out.setUint32(4, 36 + dataLen, true);
+  str(8, "WAVEfmt ");
+  out.setUint32(16, 16, true);
+  out.setUint16(20, 1, true); // PCM
+  out.setUint16(22, channels, true);
+  out.setUint32(24, buf.sampleRate, true);
+  out.setUint32(28, buf.sampleRate * channels * 2, true);
+  out.setUint16(32, channels * 2, true);
+  out.setUint16(34, 16, true);
+  str(36, "data");
+  out.setUint32(40, dataLen, true);
+  const data = Array.from({ length: channels }, (_, c) => buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < channels; c++) {
+      const v = Math.max(-1, Math.min(1, data[c][i]));
+      out.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return new Uint8Array(out.buffer);
+}
+
+async function prepareOne(name: Name): Promise<Prepared> {
+  const url = recordingFor(name);
+  let buffer: AudioBuffer | null = null;
+  let source: Prepared["source"] = url ? "file" : "synth";
+  let error: string | null = null;
+  try {
+    buffer = url ? await decodeFile(url) : await renderSynth(name);
+  } catch (e) {
+    error = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    // A broken recording: use the built-in sound instead.
+    if (url) {
+      source = "synth";
+      buffer = await renderSynth(name).catch(() => null);
+    }
+  }
+  let native = false;
+  if (buffer && nativeOutput) {
+    try {
+      await invoke("sound_register", { name, data: Array.from(toWav(buffer)) });
+      native = true;
+    } catch (e) {
+      error ??= String(e);
+    }
+  }
+  return { buffer, source, error, native };
+}
+
+/** Prepare all sounds once (call at start). */
+export function preloadSounds(): Promise<void> {
+  preparing ??= (async () => {
+    nativeOutput = await invoke<boolean>("sound_available").catch(() => false);
+    for (const name of NAMES) prepared.set(name, await prepareOne(name));
+  })();
+  unlockOnGesture();
+  return preparing;
+}
+
+// ---------------------------------------------------------------------------
+// playing
+
+function play(name: Name) {
+  if (!soundOn()) return;
+  const p = prepared.get(name);
+  if (p?.native) {
+    invoke("sound_play", { name, volume: volume() }).catch(() => webPlay(name));
+  } else {
+    webPlay(name);
+  }
+}
+
+/** Sound for a move given in SAN: mate, check, capture or a plain move. */
+export function moveSound(san: string) {
+  if (san.includes("#")) play("Checkmate");
+  else if (san.includes("+")) play("Check");
+  else if (san.includes("x")) play("Capture");
+  else play("Move");
+}
+
+export const errorSound = () => play("Error");
+export const successSound = () => play("Confirmation");
+export const victorySound = () => play("Victory");
+/** A new board is set up (new game, puzzle or opening line). */
+export const setupSound = () => play("Setup");
+
+// ---------------------------------------------------------------------------
+// fallback: Web Audio in the web view (no native audio device)
 
 let ctx: AudioContext | null = null;
 function audio(): AudioContext | null {
   try {
     ctx ??= new AudioContext();
-    if (ctx.state === "suspended") void ctx.resume();
+    if (ctx.state !== "running") void ctx.resume().catch(() => {});
     return ctx;
   } catch {
     return null;
   }
 }
 
+/** Web Audio starts suspended until the user interacts; resume on every gesture. */
+let unlocked = false;
+function unlockOnGesture() {
+  if (unlocked) return;
+  unlocked = true;
+  const unlock = () => {
+    if (!nativeOutput) audio();
+  };
+  window.addEventListener("pointerdown", unlock, true);
+  window.addEventListener("keydown", unlock, true);
+}
+
+function webPlay(name: Name) {
+  const ac = audio();
+  if (!ac) return;
+  const out = ac.createGain();
+  out.gain.value = volume();
+  out.connect(ac.destination);
+  const buffer = prepared.get(name)?.buffer;
+  if (buffer) {
+    const src = ac.createBufferSource();
+    src.buffer = buffer;
+    src.connect(out);
+    src.start();
+  } else {
+    renderWood(ac, out, ac.currentTime + 0.005, name);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// diagnosis (settings)
+
+export interface SoundCheck {
+  name: string;
+  source: "file" | "synth";
+  ok: boolean;
+  native: boolean;
+  seconds: number | null;
+  error: string | null;
+}
+
+export async function diagnoseSounds(): Promise<{ output: string; files: SoundCheck[] }> {
+  await preloadSounds();
+  const files: SoundCheck[] = NAMES.map((name) => {
+    const p = prepared.get(name);
+    return {
+      name,
+      source: p?.source ?? "synth",
+      ok: !!p?.buffer,
+      native: !!p?.native,
+      seconds: p?.buffer ? Math.round(p.buffer.duration * 100) / 100 : null,
+      error: p?.error ?? null,
+    };
+  });
+  const output = nativeOutput
+    ? t("nativ (Soundkarte direkt)")
+    : t("Web Audio ({state}) – keine native Ausgabe gefunden", { state: ctx?.state ?? t("inaktiv") });
+  return { output, files };
+}
+
+/** Play one sound by its internal name (test buttons in the settings). */
+export function testSound(name: string) {
+  play(name as Name);
+}
+
+// ---------------------------------------------------------------------------
+// synthesised wood
+
 /** A short burst of noise (the strike itself). */
-function noiseBuffer(ac: AudioContext): AudioBuffer {
+function noiseBuffer(ac: BaseAudioContext): AudioBuffer {
   const len = Math.floor(ac.sampleRate * 0.012);
   const buf = ac.createBuffer(1, len, ac.sampleRate);
   const d = buf.getChannelData(0);
@@ -135,10 +281,9 @@ function noiseBuffer(ac: AudioContext): AudioBuffer {
  * One wooden "tock" at time `at`. `pitch` scales all wood modes (lower =
  * heavier piece / thicker board), `level` is the loudness.
  */
-function knock(ac: AudioContext, out: AudioNode, at: number, pitch = 1, level = 1) {
-  // Wood modes: inharmonic partials that die out quickly (higher = faster).
+function knock(ac: BaseAudioContext, out: AudioNode, at: number, pitch = 1, level = 1) {
+  // Wood modes: inharmonic partials that die out quickly – low and short: a muffled, dull knock.
   const modes: [number, number, number][] = [
-    // [frequency Hz, decay s, gain] – low and short: a muffled, dull knock
     [260, 0.05, 0.6],
     [610, 0.03, 0.3],
     [1250, 0.016, 0.08],
@@ -155,7 +300,7 @@ function knock(ac: AudioContext, out: AudioNode, at: number, pitch = 1, level = 
     osc.start(at);
     osc.stop(at + decay * 4 + 0.02);
   }
-  // The strike: band-passed noise click.
+  // The strike: low-passed noise click.
   const click = ac.createBufferSource();
   click.buffer = noiseBuffer(ac);
   const band = ac.createBiquadFilter();
@@ -181,7 +326,7 @@ function knock(ac: AudioContext, out: AudioNode, at: number, pitch = 1, level = 
 }
 
 /** A soft marimba-like (wooden bar) note, for feedback sounds. */
-function marimba(ac: AudioContext, out: AudioNode, at: number, freq: number, level = 0.5) {
+function marimba(ac: BaseAudioContext, out: AudioNode, at: number, freq: number, level = 0.5) {
   for (const [mult, g, decay] of [
     [1, 1, 0.35],
     [3.9, 0.25, 0.08],
@@ -199,13 +344,8 @@ function marimba(ac: AudioContext, out: AudioNode, at: number, freq: number, lev
   }
 }
 
-function wood(name: Name) {
-  const ac = audio();
-  if (!ac) return;
-  const out = ac.createGain();
-  out.gain.value = volume();
-  out.connect(ac.destination);
-  const t = ac.currentTime + 0.005;
+/** The synthesised version of a sound, starting at `t`. */
+function renderWood(ac: BaseAudioContext, out: AudioNode, t: number, name: Name) {
   switch (name) {
     case "Move":
       knock(ac, out, t);
@@ -245,25 +385,3 @@ function wood(name: Name) {
     }
   }
 }
-
-function play(name: Name) {
-  if (!soundOn()) return;
-  const file = RECORDED[name];
-  const url = (file && recording(file)) ?? (name === "Capture" ? recording("move") : undefined);
-  if (url) void playFile(url, () => wood(name));
-  else wood(name);
-}
-
-/** Sound for a move given in SAN: mate, check, capture or a plain move. */
-export function moveSound(san: string) {
-  if (san.includes("#")) play("Checkmate");
-  else if (san.includes("+")) play("Check");
-  else if (san.includes("x")) play("Capture");
-  else play("Move");
-}
-
-export const errorSound = () => play("Error");
-export const successSound = () => play("Confirmation");
-export const victorySound = () => play("Victory");
-/** A new board is set up (new game, puzzle or opening line). */
-export const setupSound = () => play("Setup");

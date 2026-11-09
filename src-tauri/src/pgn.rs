@@ -97,10 +97,10 @@ pub fn parse(pgn: &str) -> Parsed {
         if brace {
             if c == '}' {
                 brace = false;
-                if paren == 0 {
-                    if let (Some(clk), Some(last)) = (clock_in(&comment), out.clocks.last_mut()) {
-                        *last = Some(clk);
-                    }
+                if paren == 0
+                    && let (Some(clk), Some(last)) = (clock_in(&comment), out.clocks.last_mut())
+                {
+                    *last = Some(clk);
                 }
                 comment.clear();
             } else {
@@ -232,15 +232,15 @@ fn fnv(s: &str) -> u64 {
 /// Turn one parsed PGN into a stored game. `you` = "white" / "black" renames that
 /// side to "Du", so the game counts as yours (game list, statistics, puzzles).
 pub fn to_game(p: &Parsed, you: Option<&str>, now_ms: i64) -> Result<GameInfo, String> {
-    if let Some(v) = p.header("Variant") {
-        if !matches!(v.to_ascii_lowercase().as_str(), "standard" | "chess" | "normal") {
-            return Err(crate::tr!("Variante „{v}“ wird nicht unterstützt.", "Variant “{v}” is not supported."));
-        }
+    if let Some(v) = p.header("Variant")
+        && !matches!(v.to_ascii_lowercase().as_str(), "standard" | "chess" | "normal")
+    {
+        return Err(crate::tr!("Variante „{v}“ wird nicht unterstützt.", "Variant “{v}” is not supported."));
     }
-    if let Some(fen) = p.header("FEN") {
-        if fen.trim() != START_FEN {
-            return Err(crate::tr!("Nur Partien ab der Grundstellung werden unterstützt.", "Only games from the initial position are supported."));
-        }
+    if let Some(fen) = p.header("FEN")
+        && fen.trim() != START_FEN
+    {
+        return Err(crate::tr!("Nur Partien ab der Grundstellung werden unterstützt.", "Only games from the initial position are supported."));
     }
     if p.moves.is_empty() {
         return Err(crate::tr!("Keine Züge gefunden.", "No moves found."));
