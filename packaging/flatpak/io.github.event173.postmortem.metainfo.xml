@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.1.7" date="2026-11-09">
+      <description>
+        <p>The deep analysis is now offered instead of started automatically; the review column scrolls on small screens and the board no longer jumps.</p>
+      </description>
+    </release>
     <release version="0.1.6" date="2026-11-08">
       <description>
         <p>Reviews open within seconds: a quick preview first, refined in the background.</p>

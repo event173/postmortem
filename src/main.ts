@@ -469,7 +469,7 @@ async function selectGame(game: GameInfo, startPly = 0) {
     goto(startPly);
     renderGraph();
     updateTrainButton();
-    if (first.depth < depth) refine(game, depth, token);
+    if (first.depth < depth) askRefine(game, depth, token);
   } catch (e) {
     if (token !== analysisToken) return;
     $("review-progress").hidden = true;
@@ -482,9 +482,25 @@ async function selectGame(game: GameInfo, startPly = 0) {
 /** Depth of the quick first review; the chosen depth follows in the background. */
 const PREVIEW_DEPTH = 10;
 
+/** After the quick preview: offer the full-depth analysis instead of starting it unasked. */
+function askRefine(game: GameInfo, depth: number, token: number) {
+  $("refine").hidden = false;
+  $("refine-spin").hidden = true;
+  $("refine-ask").hidden = false;
+  $("refine-text").textContent = `Schnellanalyse (Tiefe ${state.review?.depth}). Tiefe Analyse (Tiefe ${depth}) starten?`;
+  ($("refine-yes") as HTMLButtonElement).onclick = () => {
+    if (token === analysisToken) refine(game, depth, token);
+  };
+  ($("refine-no") as HTMLButtonElement).onclick = () => {
+    $("refine").hidden = true;
+  };
+}
+
 /** Analyse at the full depth in the background and swap it in quietly. */
 async function refine(game: GameInfo, depth: number, token: number) {
   $("refine").hidden = false;
+  $("refine-spin").hidden = false;
+  $("refine-ask").hidden = true;
   $("refine-text").textContent = "Verfeinere Analyse …";
   let review: GameReview;
   try {
@@ -516,7 +532,7 @@ listen<Progress>("analysis-progress", (e) => {
   const p = e.payload;
   if (p.gameId !== state.game?.id) return;
   if (!state.review) setProgress(p.done, p.total);
-  else if (p.depth > state.review.depth) {
+  else if (p.depth > state.review.depth && !$("refine").hidden && $("refine-ask").hidden) {
     $("refine-text").textContent = `Verfeinere Analyse (Tiefe ${p.depth}) … ${Math.round((p.done / p.total) * 100)} %`;
   }
 });
@@ -1066,13 +1082,24 @@ function renderMoveHighlight() {
   document.querySelectorAll<HTMLElement>(".mv").forEach((el) => {
     const active = !state.inVar && Number(el.dataset.ply) === state.ply;
     el.classList.toggle("active", active);
-    if (active) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (active) revealMove(el);
   });
   document.querySelectorAll<HTMLElement>(".vmv").forEach((el) => {
     const active = state.inVar && Number(el.dataset.var) === state.varIndex;
     el.classList.toggle("active", active);
-    if (active) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (active) revealMove(el);
   });
+}
+
+/** Scroll the move list (and only the move list) so `el` is visible. scrollIntoView
+ *  would also scroll the page and the right column, making the board jump. */
+function revealMove(el: HTMLElement) {
+  const box = el.closest<HTMLElement>(".moves-panel");
+  if (!box) return;
+  const b = box.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  if (r.top < b.top) box.scrollBy({ top: r.top - b.top - 4, behavior: "smooth" });
+  else if (r.bottom > b.bottom) box.scrollBy({ top: r.bottom - b.bottom + 4, behavior: "smooth" });
 }
 
 let graphWidth = 0;
