@@ -19,7 +19,7 @@ import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, ty
 import { playerName, t, tn } from "./i18n";
 import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
-import { explorerKey, explorerMove, startExplorer, stopExplorer } from "./explorer";
+import { explorerKey, explorerMove, explorerNav, startExplorer, stopExplorer } from "./explorer";
 
 type Color = "white" | "black";
 
@@ -238,9 +238,16 @@ export function leaveOpenings() {
   clearTimeout(timer);
   // A running free play must not move pieces on the review board later.
   stopExplorer();
-  document.querySelector(".layout")!.classList.remove("op-browse-mode");
+  document.querySelector(".layout")!.classList.remove("op-browse-mode", "explore-mode");
   $("op-browse-view").hidden = true;
   $("op-home").hidden = true;
+}
+
+/** The buttons under the board, in "Frei spielen" (false: not for us). */
+export function openingNav(dir: "first" | "prev" | "next" | "last"): boolean {
+  if (!active || view !== "train" || trainMode !== "explore") return false;
+  explorerNav(dir);
+  return true;
 }
 
 export function openingKey(e: KeyboardEvent): boolean {
@@ -264,7 +271,10 @@ export function openingKey(e: KeyboardEvent): boolean {
 function setView(v: View) {
   view = v;
   // Home and the opening list take the whole width; the board is hidden meanwhile.
-  document.querySelector(".layout")!.classList.toggle("op-browse-mode", v !== "train" && active);
+  const layout = document.querySelector(".layout")!;
+  layout.classList.toggle("op-browse-mode", v !== "train" && active);
+  // Free play uses the board's buttons (start, back, forward, end).
+  layout.classList.toggle("explore-mode", v === "train" && active && trainMode === "explore");
   $("op-home").hidden = !(v === "home" && active);
   $("op-browse-view").hidden = !(v === "browse" && active);
   $("openings").hidden = !(v === "train" && active);

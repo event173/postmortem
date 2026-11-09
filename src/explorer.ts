@@ -82,10 +82,12 @@ let color: Color = store.get("ex-color") === "black" ? "black" : "white";
 let realistic = store.get("ex-realistic") === "1";
 let evalOn = store.get("ex-eval") === "1";
 
+/** The moves played so far; `cursor` of them are on the board (the rest can be redone with "vor"). */
+let line: PlayedMove[] = [];
+let cursor = 0;
+const fenAt = (n: number) => (n === 0 ? START_FEN : line[n - 1].fen);
 let fen = START_FEN;
 let lastMove: string | undefined;
-let history: { fen: string; lastMove?: string }[] = [];
-let sans: string[] = [];
 /** Deepest opening name seen on the way. */
 let opening: string | null = null;
 
@@ -108,7 +110,7 @@ export function startExplorer(d: ExplorerDeps) {
   invoke("explorer_prepare", { accounts: deps.accounts() })
     .catch(() => 0)
     .then(() => {
-      if (running) load();
+      if (running) load(true);
     });
 }
 
@@ -119,11 +121,31 @@ export function stopExplorer() {
 }
 
 export function explorerKey(e: KeyboardEvent): boolean {
-  if (e.key === "ArrowLeft" && history.length) {
-    back();
-    return true;
-  }
-  return false;
+  const dir = ({ ArrowLeft: "prev", ArrowRight: "next", Home: "first", End: "last" } as const)[e.key as "ArrowLeft"];
+  if (!dir) return false;
+  explorerNav(dir);
+  return true;
+}
+
+/** The buttons under the board: start, back, forward, end (forward redoes taken-back moves). */
+export function explorerNav(dir: "first" | "prev" | "next" | "last") {
+  if (!running) return;
+  let n = dir === "first" ? 0 : dir === "last" ? line.length : dir === "prev" ? cursor - 1 : cursor + 1;
+  n = Math.max(0, Math.min(line.length, n));
+  // With the opponent moving by itself, stop on your own moves.
+  if (realistic && n > 0 && n < line.length && sideOf(fenAt(n)) !== color) n += dir === "prev" ? -1 : dir === "next" ? 1 : 0;
+  if (n === cursor) return;
+  goTo(n);
+}
+
+function goTo(n: number) {
+  cursor = n;
+  fen = fenAt(n);
+  lastMove = n ? line[n - 1].uci : undefined;
+  deps.board.cancelMove();
+  if (n) moveSound(line[n - 1].san);
+  deps.showTheory(n ? fen : null);
+  load(false);
 }
 
 function reset() {
@@ -131,18 +153,21 @@ function reset() {
   clearTimeout(timer);
   fen = START_FEN;
   lastMove = undefined;
-  history = [];
-  sans = [];
+  line = [];
+  cursor = 0;
   opening = null;
   moves = null;
   lichess = null;
   setupSound();
   deps.showTheory(null);
-  load();
+  load(true);
 }
 
-/** Fetch the candidates of the current position, then maybe let the opponent move. */
-async function load() {
+/**
+ * Fetch the candidates of the current position; after a real move (`auto`),
+ * let the opponent answer if "Gegner zieht realistisch" is on.
+ */
+async function load(auto = false) {
   const g = ++gen;
   clearTimeout(timer);
   lichess = null;
@@ -168,10 +193,10 @@ async function load() {
     })
     .finally(() => g === gen && running && render());
   if (evalOn) evaluate(g);
-  if (realistic && sideOf(fen) !== color) {
+  if (auto && realistic && sideOf(fen) !== color) {
     await lichessDone;
     if (g !== gen || !running) return;
-    timer = window.setTimeout(() => g === gen && opponentMove(), history.length ? deps.animMs() + 300 : 500);
+    timer = window.setTimeout(() => g === gen && opponentMove(), cursor ? deps.animMs() + 300 : 500);
   }
 }
 
@@ -225,28 +250,14 @@ export async function explorerMove(orig: Key, dest: Key, promotion?: string) {
 }
 
 function applyMove(played: PlayedMove) {
-  history.push({ fen, lastMove });
-  sans.push(played.san);
+  // The same move as the one taken back: keep the moves after it for "vor".
+  if (line[cursor]?.uci !== played.uci) line = [...line.slice(0, cursor), played];
+  cursor++;
   fen = played.fen;
   lastMove = played.uci;
   moveSound(played.san);
   deps.showTheory(fen);
-  load();
-}
-
-function back() {
-  if (!history.length) return;
-  // With the opponent moving by itself, go back to your own move.
-  const steps = realistic && history.length >= 2 && sideOf(history[history.length - 1].fen) !== color ? 2 : 1;
-  for (let i = 0; i < steps && history.length; i++) {
-    const h = history.pop()!;
-    fen = h.fen;
-    lastMove = h.lastMove;
-    sans.pop();
-  }
-  deps.board.cancelMove();
-  deps.showTheory(history.length ? fen : null);
-  load();
+  load(true);
 }
 
 /** Stockfish's verdict on the candidates (the first few), one after the other. */
@@ -288,6 +299,7 @@ function render() {
 }
 
 function moveList(): string {
+  const sans = line.slice(0, cursor).map((m) => m.san);
   if (!sans.length) return `<span class="muted">${t("Grundstellung – zieh einen Zug oder wähl unten einen aus.")}</span>`;
   return sans.map((s, i) => `${i % 2 === 0 ? `<span class="muted">${i / 2 + 1}.</span>` : ""}${esc(fig(s))}`).join(" ");
 }
@@ -326,8 +338,7 @@ function renderPanel() {
         <button data-c="white" class="${color === "white" ? "active" : ""}">${t("Ich spiele Weiß")}</button>
         <button data-c="black" class="${color === "black" ? "active" : ""}">${t("Ich spiele Schwarz")}</button>
       </div>
-      <button id="ex-back" ${history.length ? "" : "disabled"} title="${t("Zug zurück (←)")}">← ${t("Zurück")}</button>
-      <button id="ex-reset" ${history.length ? "" : "disabled"}>${t("Neu")}</button>
+      <button id="ex-reset" ${line.length ? "" : "disabled"}>${t("Neu")}</button>
     </div>
     <label class="ex-opt"><input type="checkbox" id="ex-realistic" ${realistic ? "checked" : ""}/> ${t("Gegner zieht realistisch")}
       <small>${t("Die App wählt die Züge deines Gegners nach Häufigkeit.")}</small></label>
@@ -361,12 +372,11 @@ function renderPanel() {
       reset();
     }),
   );
-  $("ex-back").addEventListener("click", back);
   $("ex-reset").addEventListener("click", reset);
   ($("ex-realistic") as HTMLInputElement).addEventListener("change", (e) => {
     realistic = (e.target as HTMLInputElement).checked;
     store.set("ex-realistic", realistic ? "1" : "0");
-    load();
+    load(true);
   });
   ($("ex-evalon") as HTMLInputElement).addEventListener("change", (e) => {
     evalOn = (e.target as HTMLInputElement).checked;

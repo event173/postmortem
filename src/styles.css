@@ -293,7 +293,10 @@ p.empty {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 26px;
+  /* Fixed, so the board doesn't move when the clock or accuracy appear. */
+  height: 28px;
+  white-space: nowrap;
+  overflow: hidden;
   font-weight: 600;
 }
 
@@ -388,13 +391,26 @@ p.empty {
 
 .controls {
   /* Same width as the board row, minus the eval bar on the left (20px + 8px gap),
-     so the buttons are centred under the board itself. */
+     so the buttons are centred under the board itself. The arrows sit in the
+     middle column and never move; buttons that come and go ("Zur Partie",
+     "Aus Fehlern lernen") live in the right column. */
   width: min(100%, calc(100vh - 230px) + 28px);
   padding-left: 28px;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
   gap: 6px;
+}
+
+.ctl-main,
+.ctl-extra {
+  display: flex;
+  gap: 6px;
+}
+
+.ctl-extra {
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .controls button {
@@ -1766,6 +1782,16 @@ button.icon {
 .layout.puzzle-mode .controls,
 .layout.puzzle-mode .player {
   visibility: hidden;
+}
+
+/* Free play in the openings: start / back / forward / end under the board. */
+.layout.explore-mode .controls {
+  visibility: visible;
+}
+
+.layout.explore-mode #btn-flip,
+.layout.explore-mode .ctl-extra {
+  display: none;
 }
 
 .puzzles {

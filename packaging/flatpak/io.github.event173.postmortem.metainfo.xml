@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.7" date="2026-11-09">
+      <description>
+        <p>Free play gets start, back, forward and end under the board; the board buttons and player rows no longer shift while reviewing a game.</p>
+      </description>
+    </release>
     <release version="0.2.6" date="2026-11-09">
       <description>
         <p>Free play for openings: play an opening freely and see which moves can come – from your own games, the opening theory and, with a personal Lichess token, how often each move is played on Lichess at your level. Optionally the opponent moves by frequency and Stockfish rates the candidates.</p>

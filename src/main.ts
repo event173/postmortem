@@ -15,7 +15,7 @@ import { autoAnalyse, initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
 import { enterPlay, initPlay, isPlayMode, leavePlay, playMove } from "./play";
-import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, startFocus } from "./openings";
+import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, startFocus } from "./openings";
 import { autoAnalysePref, displayPrefs, initSettings, refinePref } from "./settings";
 
 import {
@@ -1696,10 +1696,11 @@ function next() {
   showVar(state.varIndex + 1);
 }
 
-$("btn-first").addEventListener("click", () => goto(0));
-$("btn-prev").addEventListener("click", prev);
-$("btn-next").addEventListener("click", next);
-$("btn-last").addEventListener("click", () => goto(Infinity));
+// In the openings' free play the same buttons step through the moves played there.
+$("btn-first").addEventListener("click", () => openingNav("first") || goto(0));
+$("btn-prev").addEventListener("click", () => openingNav("prev") || prev());
+$("btn-next").addEventListener("click", () => openingNav("next") || next());
+$("btn-last").addEventListener("click", () => openingNav("last") || goto(Infinity));
 $("btn-back").addEventListener("click", backToGame);
 $("btn-flip").addEventListener("click", flip);
 $("btn-mistake").addEventListener("click", nextMistake);
