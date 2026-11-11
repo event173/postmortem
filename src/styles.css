@@ -3789,3 +3789,263 @@ body[data-board] cg-board {
   border-color: var(--accent);
   outline: none;
 }
+
+/* --- your repertoire as a tree (Lernen › Repertoire) ---------------------- */
+
+.op-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.tree-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tree-cov-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.tree-cov {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.tree-cov i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+.tree-counts,
+.tree-status {
+  margin: 0;
+  font-size: 12px;
+}
+
+.tree-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 2px;
+}
+
+.tree-ok {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.tree-rows {
+  display: flex;
+  flex-direction: column;
+  max-height: 46vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.tree-row:hover {
+  background: var(--panel-2);
+}
+
+.tree-row.selected {
+  background: rgba(91, 141, 214, 0.18);
+  box-shadow: inset 3px 0 0 #5b8dd6;
+}
+
+.tree-caret {
+  flex: none;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tree-move {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tree-opp {
+  color: #c9c7c3;
+}
+
+.tree-gap,
+.tree-state.gap {
+  color: #e8c27a;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.tree-reach {
+  flex: none;
+  width: 92px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.tree-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.tree-bar i.gap {
+  background: #e0aa4f;
+}
+
+.tree-pct {
+  width: 38px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-card {
+  flex: none;
+  width: 104px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-state {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tree-state.due {
+  color: #f0a294;
+  font-weight: 600;
+}
+
+.tree-state.new {
+  color: var(--accent);
+}
+
+.tree-legend {
+  margin: 0;
+}
+
+.tree-suggs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tree-sugg {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.tree-sugg:hover {
+  border-color: var(--accent);
+}
+
+.op-tree-go {
+  padding: 4px 10px;
+}
+
+/* The repertoire tree gets a wide right column. */
+.layout.tree-mode {
+  --side-w: 560px;
+}
+
+@media (max-width: 1440px) {
+  .layout.tree-mode {
+    --side-w: 470px;
+  }
+}
+
+.layout.tree-mode .tree-rows {
+  max-height: 58vh;
+}
+
+.tree-exit {
+  flex: none;
+  color: #e8c27a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tree-exit-note {
+  margin: 0 0 8px;
+  color: #e8c27a;
+  line-height: 1.45;
+}
+
+.tree-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+}
+
+/* A row of "Deine Eröffnungen": the whole row opens the tree. */
+.op-mine-row.op-open {
+  cursor: pointer;
+}
+
+.op-mine-row.op-open:hover,
+.op-mine-row.op-open:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.op-open-go {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.op-whole {
+  display: inline-block;
+  margin-left: 4px;
+}

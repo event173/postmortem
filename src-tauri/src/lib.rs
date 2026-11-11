@@ -23,6 +23,7 @@ mod repertoire;
 mod stats;
 mod theory;
 mod trainer;
+mod tree;
 mod update;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -732,6 +733,36 @@ fn opening_line_for_game(db: State<DbState>, game_id: String, ply: usize, color:
     Ok(repertoire::line_for_game(&db, &game, ply, &color))
 }
 
+/// Where a repertoire tree starts: an opening's defining moves, or the start.
+fn tree_root(color: &str, family: Option<&str>) -> Vec<String> {
+    family.map(|f| tree::root_of(color, f)).unwrap_or_default()
+}
+
+/// Your repertoire as a tree (whole, or from an opening), with the numbers at hand.
+#[tauri::command]
+async fn rep_tree(app: AppHandle, accounts: Vec<Account>, color: String, family: Option<String>) -> Result<tree::TreeView, String> {
+    with_db(app, move |db, _| tree::view(db, &accounts, &color, tree_root(&color, family.as_deref()))).await
+}
+
+/// The same after fetching missing numbers from Lichess (takes a while the first time).
+#[tauri::command]
+async fn rep_tree_prepare(app: AppHandle, accounts: Vec<Account>, color: String, family: Option<String>) -> Result<tree::TreeView, String> {
+    let root = tree_root(&color, family.as_deref());
+    tree::prepare(app, accounts, color, root).await
+}
+
+/// Your openings in a few numbers (coverage, gaps, cards, due), keyed "color|family".
+#[tauri::command]
+async fn rep_summaries(app: AppHandle, accounts: Vec<Account>, keys: Vec<(String, String)>) -> Result<std::collections::HashMap<String, tree::Summary>, String> {
+    with_db(app, move |db, _| tree::summaries(db, &accounts, &keys)).await
+}
+
+/// Your move in a position of the tree (fills a gap; a new card).
+#[tauri::command]
+fn rep_set_move(db: State<DbState>, color: String, path: Vec<String>, uci: String) -> Result<tree::RepMove, String> {
+    tree::set_move(&db.0.lock().unwrap(), &color, &path, &uci)
+}
+
 /// What your games say about your openings ("Für dich", "Deine Eröffnungen").
 #[tauri::command]
 async fn opening_recommendations(app: AppHandle, accounts: Vec<Account>) -> Result<Vec<recommend::Insight>, String> {
@@ -1067,6 +1098,10 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             migrate_old_data_dir(&dir);
             let db = db::Db::open(&dir.join("postmortem.db"))?;
+            // Once: learned lines become repertoire moves (with a backup before).
+            if let Err(e) = tree::migrate(&db, &dir) {
+                eprintln!("repertoire migration failed: {e}");
+            }
             engine::configure(engine::EngineConfig {
                 path: db.setting("stockfish_path")?.map(std::path::PathBuf::from),
                 threads: db.setting("threads")?.and_then(|t| t.parse().ok()),
@@ -1145,6 +1180,10 @@ pub fn run() {
             opening_relevance_prepare,
             opening_recommendations,
             opening_line_for_game,
+            rep_tree,
+            rep_tree_prepare,
+            rep_set_move,
+            rep_summaries,
             sound_available,
             sound_register,
             sound_play,

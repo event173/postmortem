@@ -70,6 +70,18 @@ const MIGRATIONS: &[&str] = &[
         computed_at INTEGER NOT NULL,
         PRIMARY KEY (color, family)
      );",
+    // 10: your repertoire as a tree – your move in each position you play (see tree.rs);
+    // its flashcards live in opening_progress as "m:<epd>"
+    "CREATE TABLE rep_moves (
+        color    TEXT NOT NULL,
+        epd      TEXT NOT NULL,
+        uci      TEXT NOT NULL,
+        san      TEXT NOT NULL,
+        path     TEXT NOT NULL,
+        source   TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (color, epd)
+     );",
 ];
 
 /// Spaced-repetition state of one opening line for one colour.
@@ -522,6 +534,42 @@ impl Db {
                 "INSERT INTO opening_relevance (color, family, data, computed_at) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(color, family) DO UPDATE SET data = excluded.data, computed_at = excluded.computed_at",
                 params![color, family, data, computed_at],
+            )
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Your repertoire moves for one colour, by position (EPD before the move).
+    pub fn rep_moves(&self, color: &str) -> Result<std::collections::HashMap<String, crate::tree::RepMove>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT epd, uci, san, path, source, added_at FROM rep_moves WHERE color = ?1")
+            .map_err(sql_err)?;
+        let rows = stmt
+            .query_map([color], |r| {
+                let path: String = r.get(3)?;
+                Ok(crate::tree::RepMove {
+                    color: color.to_string(),
+                    epd: r.get(0)?,
+                    uci: r.get(1)?,
+                    san: r.get(2)?,
+                    path: path.split_whitespace().map(String::from).collect(),
+                    source: r.get(4)?,
+                    added_at: r.get(5)?,
+                })
+            })
+            .map_err(sql_err)?;
+        rows.map(|r| r.map(|m| (m.epd.clone(), m))).collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    /// Store (or replace) your move in a position.
+    pub fn set_rep_move(&self, m: &crate::tree::RepMove) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO rep_moves (color, epd, uci, san, path, source, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(color, epd) DO UPDATE SET uci = excluded.uci, san = excluded.san, path = excluded.path,
+                    source = excluded.source, added_at = excluded.added_at",
+                params![m.color, m.epd, m.uci, m.san, m.path.join(" "), m.source, m.added_at],
             )
             .map_err(sql_err)?;
         Ok(())

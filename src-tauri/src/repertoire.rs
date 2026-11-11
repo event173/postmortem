@@ -15,6 +15,7 @@ use crate::db::{Account, Db, LineProgress};
 use crate::lichess::GameInfo;
 use crate::openings::{self, Line};
 use crate::relevance;
+use crate::tree;
 use crate::stats::Example;
 
 /// Mistakes up to this ply count as "in the opening" (move 12).
@@ -102,6 +103,10 @@ pub struct Drill {
     pub book_len: usize,
     /// Your own flashcard (kind "card"): the position's best moves etc.
     pub card: Option<crate::cards::Card>,
+    /// A move of your repertoire (kind "move"): `moves` up to this index are
+    /// played for you, then you're asked for the move at this index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ask_from: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -236,14 +241,11 @@ pub fn status(db: &Db) -> Result<Status, String> {
                     if p.box_ >= 3 {
                         s.learned += 1;
                     }
-                    if p.due <= now {
-                        s.due += 1;
-                    } else {
-                        s.next_due = Some(s.next_due.map_or(p.due, |d| d.min(p.due)));
-                    }
                 }
             }
         }
+        // What's due are your repertoire moves (lines are learned in the courses).
+        (s.due, s.next_due) = tree::due_summary(db, color, now)?;
         Ok(s)
     };
     let cards = crate::cards::list(db)?;
@@ -290,6 +292,7 @@ fn own_mistakes(games: &[(GameInfo, GameReview)], accounts: &[Account]) -> Vec<D
                 status: "due".into(),
                 book_len: 1,
                 card: None,
+                ask_from: None,
                 own: Some(OwnMistake {
                     game_id: game.id.clone(),
                     ply: m.ply,
@@ -318,6 +321,7 @@ fn line_drill(line: &Line, color: &str, status: &str) -> Drill {
         own: None,
         book_len: line.moves.len(),
         card: None,
+        ask_from: None,
     }
 }
 
@@ -334,6 +338,29 @@ fn card_drill(c: crate::cards::Card) -> Drill {
         own: None,
         book_len: 1,
         card: Some(c),
+        ask_from: None,
+    }
+}
+
+/// One move of your repertoire: the moves before it are played for you.
+fn move_drill(m: &tree::RepMove, status: &str) -> Drill {
+    let name = tree::opening_of(m).unwrap_or_default();
+    let eco = openings::lines().iter().find(|l| l.name == name).map(|l| l.eco.clone()).unwrap_or_default();
+    let mut moves = m.path.clone();
+    moves.push(m.uci.clone());
+    Drill {
+        kind: "move".into(),
+        id: tree::card_id(&m.epd),
+        color: m.color.clone(),
+        name,
+        eco,
+        fen: START_FEN.into(),
+        book_len: moves.len(),
+        moves,
+        status: status.into(),
+        own: None,
+        card: None,
+        ask_from: Some(m.path.len()),
     }
 }
 
@@ -490,6 +517,31 @@ pub fn next(
         return Ok((!own.is_empty()).then(|| own[rng.usize(..own.len())].clone()));
     }
 
+    // The flashcards: your repertoire moves that are due, and your own cards.
+    if focus.is_none() && matches!(mode, Mode::Due | Mode::Mixed) {
+        let mut due_moves: Vec<(tree::RepMove, i64)> = Vec::new();
+        for color in ["white", "black"] {
+            due_moves.extend(tree::due(db, color, now)?);
+        }
+        due_moves.sort_by_key(|(m, at)| (*at, m.path.len()));
+        let first_due = due_moves.first().map(|(_, at)| *at);
+        if let Some(card) = crate::cards::due(db)?.into_iter().next() {
+            let card_since = if card.box_level == 0 { card.card.created_at } else { card.due_at };
+            if first_due.is_none_or(|d| card_since <= d) {
+                return Ok(Some(card_drill(card.card)));
+            }
+        }
+        if !due_moves.is_empty() {
+            // A little randomness among the most overdue so the order isn't rigid.
+            let (m, _) = &due_moves[rng.usize(..due_moves.len().min(3))];
+            return Ok(Some(move_drill(m, "due")));
+        }
+        if mode == Mode::Due {
+            return Ok(None);
+        }
+    }
+
+    // Learning lines (a course): new lines first, then practising ahead.
     let mut due: Vec<(i64, &Line, &str)> = Vec::new();
     let mut new: Vec<(&Line, &str)> = Vec::new();
     let mut later: Vec<(i64, &Line, &str)> = Vec::new();
@@ -501,25 +553,11 @@ pub fn next(
             match progress_of(color).get(&line.id) {
                 None if chosen || common => new.push((line, color)),
                 None => {}
-                Some(p) if p.due <= now => due.push((p.due, line, color)),
                 Some(p) => later.push((p.due, line, color)),
             }
         }
     }
 
-    // Your own flashcards come back with the reviews (not while learning one opening).
-    if focus.is_none()
-        && matches!(mode, Mode::Due | Mode::Mixed)
-        && let Some(card) = crate::cards::due(db)?.into_iter().next()
-    {
-        let card_since = if card.box_level == 0 { card.card.created_at } else { card.due_at };
-        if due.iter().map(|(d, ..)| *d).min().is_none_or(|line_due| card_since <= line_due) {
-            return Ok(Some(card_drill(card.card)));
-        }
-    }
-    if mode == Mode::Due && due.is_empty() {
-        return Ok(None);
-    }
     let take_own = mode == Mode::Mixed && (rng.f64() < OWN_SHARE || (due.is_empty() && new.is_empty()));
     if !own.is_empty() && take_own {
         return Ok(Some(own[rng.usize(..own.len())].clone()));
@@ -580,7 +618,7 @@ pub fn family_progress(db: &Db) -> Result<HashMap<String, FamilyProgress>, Strin
             if let Some(p) = p {
                 e.started += 1;
                 e.learned += (p.box_ >= 3) as usize;
-                e.due += (p.due <= now) as usize;
+                let _ = now;
             }
         }
     }
@@ -593,6 +631,14 @@ pub fn family_progress(db: &Db) -> Result<HashMap<String, FamilyProgress>, Strin
             .into_iter()
             .filter(|l| progress.contains_key(&l.id) || relevance::is_common(rel.get(key.as_str()), &l.id))
             .count();
+    }
+    // Due are your repertoire moves, counted with the opening they belong to.
+    for color in ["white", "black"] {
+        for (m, _) in tree::due(db, color, now)? {
+            if let Some(e) = tree::family_of_move(&m).and_then(|f| out.get_mut(&format!("{color}|{f}"))) {
+                e.due += 1;
+            }
+        }
     }
     Ok(out)
 }
@@ -643,7 +689,6 @@ pub struct FamilyDetail {
 pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<FamilyDetail, String> {
     let progress = db.opening_progress(color)?;
     let rel = relevance::get(db, color, family);
-    let now = now_ms();
     let mut lines = family_lines(color, family);
     lines.sort_by_cached_key(|l| main_line_key(l));
     let mut groups: Vec<VariationGroup> = Vec::new();
@@ -656,7 +701,8 @@ pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<FamilyDetail,
             name: l.short_name().to_string(),
             plies: l.moves.len(),
             box_level: p.map_or(0, |p| p.box_),
-            due: p.is_some_and(|p| p.due <= now),
+            // Lines aren't due any more: the flashcards are your moves.
+            due: false,
             due_at: p.map_or(0, |p| p.due),
             reach: r.and_then(|r| r.reach),
             in_games: r.is_some_and(|r| r.in_games),
@@ -712,6 +758,13 @@ pub fn record(db: &Db, id: &str, color: &str, success: bool) -> Result<LineProgr
     let previous = db.opening_progress(color)?.get(id).copied();
     let p = update(previous, success, now_ms());
     db.set_opening_progress(id, color, &p)?;
+    // A line learned in a course: its moves join your repertoire (where you
+    // don't play something else already), each as a new card.
+    if success && let Some(line) = openings::lines().iter().find(|l| l.id == id) {
+        let mut moves = line.moves.clone();
+        moves.extend(db.line_extension(id)?.unwrap_or_default());
+        tree::add_line(db, color, &moves, "course", Some(tree::learned_now()))?;
+    }
     Ok(p)
 }
 
@@ -1002,17 +1055,26 @@ mod tests {
     }
 
     #[test]
-    fn due_mode_only_offers_due_lines() {
+    fn due_mode_offers_your_moves() {
         let db = Db::in_memory();
         save(&db, &Repertoire { white: vec!["Italian Game".into()], black: vec![] }).unwrap();
         // Nothing learned yet: nothing to review (new lines are not offered).
         assert!(next(&db, &[], &[], Mode::Due, None).unwrap().is_none());
         let d = next(&db, &[], &[], Mode::Repertoire, None).unwrap().unwrap();
-        record(&db, &d.id, "white", false).unwrap();
-        // Box 1 comes back in 10 minutes: still nothing due, but the status knows when.
+        record(&db, &d.id, "white", true).unwrap();
+        // The line's moves are cards now, back in 10 minutes: nothing due yet, but the status knows when.
         assert!(next(&db, &[], &[], Mode::Due, None).unwrap().is_none());
-        assert!(status(&db).unwrap().white.next_due.is_some());
+        let s = status(&db).unwrap();
+        assert!(s.white.next_due.is_some() && s.white.due == 0);
+        // Due: one move at a time, with the moves before it played for you.
+        let first = tree::cards(&db, "white").unwrap().remove(0).0;
+        db.set_opening_progress(&tree::card_id(&first.epd), "white", &LineProgress { box_: 1, due: 0, attempts: 1, successes: 1 }).unwrap();
+        let m = next(&db, &[], &[], Mode::Due, None).unwrap().unwrap();
+        assert_eq!((m.kind.as_str(), m.ask_from), ("move", Some(0)));
+        assert_eq!(m.moves, vec![first.uci.clone()]);
+        assert_eq!(status(&db).unwrap().white.due, 1);
     }
+
 
     #[test]
     fn main_lines_come_before_sidelines() {

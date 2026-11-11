@@ -26,6 +26,8 @@ const MAX_BOOK: usize = 2;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostlyExit {
+    /// The position (EPD before your move) – a node of your repertoire tree.
+    pub epd: String,
     /// 1-based ply of your move.
     pub ply: usize,
     /// Your move there (SAN), and the theory moves.
@@ -135,9 +137,10 @@ pub fn insights(db: &Db, accounts: &[Account], reviewed: &[(GameInfo, GameReview
         open.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
         let exit = t
             .exits
-            .into_values()
-            .max_by(|a, b| a.3.cmp(&b.3).then_with(|| b.0.cmp(&a.0)))
-            .map(|(ply, played, book, times, game_id)| CostlyExit {
+            .into_iter()
+            .max_by(|a, b| a.1.3.cmp(&b.1.3).then_with(|| b.1.0.cmp(&a.1.0)))
+            .map(|(epd, (ply, played, book, times, game_id))| CostlyExit {
+                epd,
                 ply,
                 played: played.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0))).map(|(s, _)| s).unwrap_or_default(),
                 book,
