@@ -532,6 +532,9 @@ pub struct GameCheck {
     pub reached: HashMap<String, u32>,
     /// Where games left it, newest games first.
     pub deviations: Vec<Deviation>,
+    /// Per game in your repertoire: when it was played and how many of your
+    /// repertoire moves you played before it left (for `progress`).
+    pub stays: Vec<(i64, usize)>,
 }
 
 /// Follow your games as long as they stay in your repertoire.
@@ -550,6 +553,8 @@ pub fn check_games(games: &[GameInfo], accounts: &[Account], color: &str, moves:
         let mut opp: Option<String> = None;
         // When the last repertoire move on the way came in.
         let mut since: i64 = 0;
+        // Your repertoire moves played; None: the game isn't in your repertoire at all.
+        let mut stay: Option<usize> = Some(0);
         for (i, san) in g.moves.iter().enumerate().take(MAX_PLIES) {
             let Some(m) = san.parse::<San>().ok().and_then(|s| s.to_move(&pos).ok()) else { break };
             let uci = UciMove::from_move(m, CastlingMode::Standard).to_string();
@@ -558,11 +563,13 @@ pub fn check_games(games: &[GameInfo], accounts: &[Account], color: &str, moves:
                 let mine = moves.get(&key);
                 if mine.is_none() && path.is_empty() {
                     // Nothing for the first move (as White): not your repertoire.
+                    stay = None;
                     break;
                 }
                 *out.reached.entry(key.clone()).or_default() += 1;
                 if mine.is_some_and(|r| r.uci == uci) {
                     since = since.max(mine.map_or(0, |r| r.added_at));
+                    stay = stay.map(|n| n + 1);
                 } else {
                     let name = mine.and_then(opening_of).or_else(|| path_opening(&path));
                     out.deviations.push(Deviation {
@@ -589,9 +596,61 @@ pub fn check_games(games: &[GameInfo], accounts: &[Account], color: &str, moves:
             path.push(uci);
             pos.play_unchecked(m);
         }
+        if let Some(n) = stay {
+            out.stays.push((g.created_at, n));
+        }
     }
     out.deviations.sort_by_key(|d| std::cmp::Reverse(d.created_at));
     out
+}
+
+/// How long your games stay in your repertoire: the average number of your
+/// repertoire moves played in your last games, and in the ones before.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub recent: Option<f64>,
+    pub before: Option<f64>,
+    /// Games in each window.
+    pub window: usize,
+    pub games: usize,
+}
+
+const PROGRESS_WINDOW: usize = 20;
+
+pub fn progress(db: &Db, accounts: &[Account]) -> Result<Progress, String> {
+    let mut stays: Vec<(i64, usize)> = check_all(db, accounts)?.into_values().flat_map(|c| c.stays).collect();
+    stays.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    Ok(progress_of(&stays))
+}
+
+fn progress_of(stays: &[(i64, usize)]) -> Progress {
+    let avg = |xs: &[(i64, usize)]| (!xs.is_empty()).then(|| xs.iter().map(|(_, n)| *n as f64).sum::<f64>() / xs.len() as f64);
+    let recent = &stays[..stays.len().min(PROGRESS_WINDOW)];
+    let older = stays.get(PROGRESS_WINDOW..(2 * PROGRESS_WINDOW).min(stays.len())).unwrap_or(&[]);
+    Progress {
+        recent: avg(recent),
+        // Only a comparison with enough games behind it.
+        before: if older.len() >= PROGRESS_WINDOW / 2 { avg(older) } else { None },
+        window: PROGRESS_WINDOW,
+        games: stays.len(),
+    }
+}
+
+/// Setting: compare only serious games with your repertoire (no bots, no bullet); on unless "0".
+const SERIOUS_KEY: &str = "rep_serious_only";
+
+pub fn serious_only(db: &Db) -> bool {
+    db.setting(SERIOUS_KEY).ok().flatten().as_deref() != Some("0")
+}
+
+pub fn set_serious_only(db: &Db, on: bool) -> Result<(), String> {
+    db.set_setting(SERIOUS_KEY, Some(if on { "1" } else { "0" }))
+}
+
+/// A game worth comparing with your repertoire: not against a bot, not bullet.
+fn serious(g: &GameInfo) -> bool {
+    g.source != crate::lichess::Source::Local && !matches!(g.speed.as_str(), "bullet" | "ultraBullet" | "bot")
 }
 
 /// Name of the deepest named position along a path.
@@ -608,8 +667,10 @@ fn path_opening(path: &[String]) -> Option<String> {
     name
 }
 
+/// Your games for comparing with your repertoire (only serious ones, if set).
 fn games_of(db: &Db, accounts: &[Account]) -> Result<Vec<GameInfo>, String> {
-    Ok(db.games_of(accounts, 1_000_000)?.into_iter().map(|g| g.game).collect())
+    let only = serious_only(db);
+    Ok(db.games_of(accounts, 1_000_000)?.into_iter().map(|g| g.game).filter(|g| !only || serious(g)).collect())
 }
 
 /// Your games walked along both colours of your repertoire.
@@ -1494,6 +1555,29 @@ mod tests {
         assert_eq!((g.suggestions[0].san.as_str(), g.suggestions[0].games), ("2…d5", 1));
         let bf5 = nodes.iter().find(|n| n.mine.as_deref() == Some("3…Bf5")).unwrap();
         assert_eq!(bf5.strays.len(), 1);
+    }
+
+    #[test]
+    fn progress_compares_your_last_games_with_the_ones_before() {
+        let stays: Vec<(i64, usize)> = (0..40).map(|i| (100 - i as i64, if i < 20 { 6 } else { 3 })).collect();
+        let p = progress_of(&stays);
+        assert_eq!((p.recent, p.before, p.games), (Some(6.0), Some(3.0), 40));
+        assert_eq!(progress_of(&stays[..25]).before, None, "too few games to compare");
+        assert_eq!(progress_of(&[]).recent, None);
+    }
+
+    #[test]
+    fn games_count_their_repertoire_moves_and_bullet_is_left_out() {
+        let db = Db::in_memory();
+        add_line(&db, "black", &ucis("e4 c6 d4 d5 e5 Bf5"), "line", None).unwrap();
+        let moves = db.rep_moves("black").unwrap();
+        let accounts = vec![Account::new(crate::lichess::Source::Lichess, "me")];
+        let games = vec![game("a", "x", "me", "e4 c6 d4 d5 e5 c5", 2), game("b", "x", "me", "d4 d5", 1)];
+        let check = check_games(&games, &accounts, "black", &moves);
+        assert_eq!(check.stays, vec![(2, 2), (1, 0)], "c6 and d5; nothing against 1. d4");
+        let mut bullet = game("c", "x", "me", "e4 c6", 3);
+        bullet.speed = "bullet".into();
+        assert!(!serious(&bullet) && serious(&games[0]));
     }
 
     #[test]

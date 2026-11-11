@@ -22,7 +22,7 @@ import type { Key } from "chessground/types";
 import { windowLast } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
 import { playerName, t, tn } from "./i18n";
-import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
+import { $, badgeHtml, commentOf, esc, fig, miniPieces, store } from "./util";
 import { openingName } from "./opening-names";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 import { explorerKey, explorerMove, explorerNav, startExplorer, stopExplorer } from "./explorer";
@@ -325,6 +325,8 @@ export interface OpeningDeps {
   accounts: () => Account[];
   animMs: () => number;
   openGame: (gameId: string, ply: number) => void;
+  /** Switch to the puzzles (for the daily plan). */
+  openPuzzles: () => void;
 }
 
 /** What the board is used for: learning (one opening), the due reviews, or your own mistakes. */
@@ -456,6 +458,10 @@ let reports: GameReport[] = [];
 let reportsAll = false;
 /** "Alles aus deinen Partien" on the home page unfolded. */
 let gamesOpen = false;
+/** How long your games stay in your repertoire (see tree.rs). */
+let repProgress: { recent: number | null; before: number | null; window: number; games: number } | null = null;
+/** Only serious games are compared with your repertoire (no bots, no bullet). */
+let seriousOnly = true;
 let freshDeviations = 0;
 const REPORTS_FOLDED = 4;
 /** Your ideas behind your repertoire moves, by colour and position (for the flashcards). */
@@ -607,7 +613,7 @@ function setView(v: View) {
   } else if (v === "home") {
     renderHome();
     checkGames()
-      .then(() => Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards(), loadRecs(), loadTheory(), loadReports()]))
+      .then(() => Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards(), loadRecs(), loadTheory(), loadReports(), loadRepProgress()]))
       .then(loadSummaries)
       .then(() => {
         renderHome();
@@ -678,6 +684,16 @@ async function loadNotes() {
   notes = { white, black };
 }
 
+async function loadRepProgress() {
+  let profile: { todayAttempts: number } | null;
+  [repProgress, seriousOnly, profile] = await Promise.all([
+    invoke<typeof repProgress>("rep_progress", { accounts: deps.accounts() }).catch(() => null),
+    invoke<boolean>("rep_serious_get").catch(() => true),
+    invoke<{ todayAttempts: number }>("puzzle_profile", { accounts: deps.accounts() }).catch(() => null),
+  ]);
+  puzzlesToday = profile?.todayAttempts ?? 0;
+}
+
 async function loadTheory() {
   theory = await invoke<TheoryReport>("theory_report", { accounts: deps.accounts(), last: windowLast() }).catch(() => null);
 }
@@ -685,6 +701,7 @@ async function loadTheory() {
 async function loadOwnCount() {
   try {
     ownCount = await invoke<number>("opening_own_count", { accounts: deps.accounts(), last: windowLast() });
+    ownLoaded = true;
   } catch {
     ownCount = 0;
   }
@@ -884,6 +901,7 @@ function renderHome() {
     <div class="op-home-head">
       <h2>${t("Lernen")}</h2>
     </div>
+    ${planHtml()}
     <div class="op-tiles">
       ${tile("due", ICON.due, t("Karteikasten"), dueText, t("Die Karten wiederholen, die heute dran sind."), { hot: !!due, off: !due })}
       ${tile("own", ICON.own, t("Fehler aus deinen Partien"), ownText, t("Stellungen aus deinen Partien, in denen du in der Eröffnung danebengegriffen hast."), { off: !ownCount })}
@@ -955,6 +973,13 @@ function renderHome() {
     }
   }
   bindReports(home, reports, renderHome);
+  bindPlan(home);
+  ($("op-serious") as HTMLInputElement | null)?.addEventListener("change", async (e) => {
+    seriousOnly = (e.target as HTMLInputElement).checked;
+    await invoke("rep_serious_set", { on: seriousOnly }).catch(console.error);
+    await Promise.all([loadReports(), loadRepProgress(), loadSummaries()]);
+    renderHome();
+  });
   home.querySelector(".op-games-toggle")?.addEventListener("click", () => {
     gamesOpen = !gamesOpen;
     renderHome();
@@ -2365,6 +2390,211 @@ function gamesCell(color: Color, family: string): string {
   return `<span class="op-games muted">${tn(g.games, "1 Partie", "{n} Partien")}${errors}${off}</span>`;
 }
 
+// ---------------------------------------------------------------------------
+// the daily plan: what's worth doing today, best first
+
+interface PlanItem {
+  key: string;
+  title: string;
+  text: string;
+  /** Still to do. */
+  open: boolean;
+  /** What the item works on (opening, game moment) – enough to start it again later. */
+  arg?: { color: Color; family: string | null; gameId?: string; ply?: number };
+}
+
+/** Today's plan as stored: which items, their titles, which are done, how far along. */
+interface StoredPlan {
+  /** Format version: older plans (done on click) are made again. */
+  v: number;
+  day: string;
+  items: { key: string; title: string; text: string; arg?: PlanItem["arg"] }[];
+  done: string[];
+  /** Mistakes from your games solved today (the item is done after `OWN_GOAL`). */
+  own?: number;
+}
+
+const OWN_GOAL = 3;
+const PUZZLE_GOAL = 10;
+/** The plan item being worked on (finishing it marks it done). */
+let planActive: string | null = null;
+/** Puzzles tried today (from the puzzle profile). */
+let puzzlesToday = 0;
+/** `ownCount` has been loaded (0 before that means nothing). */
+let ownLoaded = false;
+
+const PLAN_KEY = "lern-plan";
+const PLAN_VERSION = 2;
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+};
+
+/** A costly exit from theory: you left it and it cost you (analysed games). */
+const costlyExit = (x: TheoryExit) => x.analysed > 0 && (x.errorsAfter > 0 || (x.avgLoss ?? 0) >= COSTLY_LOSS);
+
+/**
+ * What's worth doing now, best first: the flashcards that are due, the most
+ * costly thing in your openings (a weak repertoire move, else where you drop
+ * out of theory and it costs you), your mistakes from games, a new line in the
+ * opening that pays off most – only if the flashcards aren't piling up – and
+ * puzzles for tactics.
+ */
+function planCandidates(): PlanItem[] {
+  const out: PlanItem[] = [];
+  const due = (status?.white.due ?? 0) + (status?.black.due ?? 0) + (status?.cardsDue ?? 0);
+  if (due) {
+    out.push({
+      key: "due",
+      title: t("Karteikasten"),
+      text: tn(due, "1 Karte ist fällig.", "{n} Karten sind fällig."),
+      open: true,
+    });
+  }
+  const weak = Object.entries(summaries).find(([, x]) => x.weak > 0);
+  const exit = (theory?.positions ?? []).find(costlyExit);
+  if (weak) {
+    const [color, family] = weak[0].split("|") as [Color, string];
+    out.push({
+      key: `weak:${weak[0]}`,
+      title: t("Schwachen Zug verbessern"),
+      text: t("In {family} als {side} hält Stockfish einen deiner Züge für schwach.", { family: openingName(family), side: SIDE[color] }),
+      open: true,
+      arg: { color, family },
+    });
+  } else if (exit) {
+    const num = `${Math.ceil(exit.ply / 2)}${exit.ply % 2 ? "." : "…"}`;
+    out.push({
+      key: `exit:${exit.gameId}:${exit.ply}`,
+      title: t("Linie lernen: {name}", { name: openingName(exit.family ?? exit.opening ?? "") }),
+      text: t("Hier fällst du aus der Theorie und es kostet dich: {move}.", { move: `${num} ${exit.played.map((m) => m.san).join(", ")}` }),
+      open: true,
+      arg: { color: exit.color, family: exit.family, gameId: exit.gameId, ply: exit.ply },
+    });
+  }
+  if (ownCount) {
+    out.push({
+      key: "own",
+      title: t("Fehler aus deinen Partien"),
+      text: tn(ownCount, "1 Stellung, in der du danebengegriffen hast.", "{n} Stellungen, in denen du danebengegriffen hast."),
+      open: true,
+    });
+  }
+  // Something new only while the flashcards keep up.
+  if (due < 20) {
+    const pick =
+      insights.find((r) => r.score > 0 && (progress[`${r.color}|${r.family}`]?.learned ?? 0) < (progress[`${r.color}|${r.family}`]?.lines ?? Infinity)) ??
+      myOpenings().find((o) => o.p && o.p.started < o.p.lines);
+    if (pick) {
+      out.push({
+        key: `learn:${pick.color}|${pick.family}`,
+        title: t("Neue Linie: {family}", { family: openingName(pick.family) }),
+        text: t("Als {side} – die nächste wichtige Linie, mit Erklärungen.", { side: SIDE[pick.color] }),
+        open: true,
+        arg: { color: pick.color, family: pick.family },
+      });
+    }
+  }
+  out.push({ key: "puzzles", title: t("10 Puzzles"), text: t("Taktik – entscheidet die meisten Partien."), open: true });
+  return out.slice(0, 5);
+}
+
+function loadPlan(): StoredPlan | null {
+  try {
+    const p = JSON.parse(store.get(PLAN_KEY) ?? "null") as StoredPlan | null;
+    return p?.day === today() && p.v === PLAN_VERSION ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Today's plan: made once a day (so it doesn't jump around); an item is done when it really is. */
+function plan(): PlanItem[] {
+  const live = planCandidates();
+  let stored = loadPlan();
+  if (!stored) {
+    // Only make it once the data is there (the flashcards' status at least).
+    if (!status) return live;
+    stored = { v: PLAN_VERSION, day: today(), items: live.map(({ key, title, text, arg }) => ({ key, title, text, arg })), done: [] };
+    store.set(PLAN_KEY, JSON.stringify(stored));
+  }
+  const s = stored;
+  return s.items.map((it) => {
+    const now = live.find((x) => x.key === it.key);
+    return { ...it, ...(now ?? {}), open: !itemDone(it.key, s) };
+  });
+}
+
+function itemDone(key: string, s: StoredPlan): boolean {
+  if (s.done.includes(key)) return true;
+  const due = (status?.white.due ?? 0) + (status?.black.due ?? 0) + (status?.cardsDue ?? 0);
+  if (key === "due") return !!status && due === 0;
+  if (key.startsWith("weak:")) return summaries[key.slice(5)]?.weak === 0;
+  if (key === "own") return (s.own ?? 0) >= OWN_GOAL || (ownLoaded && ownCount === 0);
+  if (key === "puzzles") return puzzlesToday >= PUZZLE_GOAL;
+  // A line (from a costly exit or a new one): done once you played it cleanly.
+  return false;
+}
+
+/** Start a plan item; finishing it (see `planProgress`) marks it done. */
+function startPlanItem(x: PlanItem) {
+  planActive = x.key;
+  const a = x.arg;
+  if (x.key === "due") startTrain("due", null);
+  else if (x.key === "own") startTrain("own", null);
+  else if (x.key === "puzzles") deps.openPuzzles();
+  else if (x.key.startsWith("weak:") && a?.family) openPage(a.color, a.family);
+  else if (x.key.startsWith("exit:") && a?.gameId && a.ply != null) learnLineForGame(a.gameId, a.ply, a.color, a.family);
+  else if (x.key.startsWith("learn:") && a?.family) startFocus(a.color, a.family);
+}
+
+/** A drill was finished: count it for the plan item being worked on. */
+function planProgress(d: Drill, clean: boolean) {
+  const key = planActive;
+  const s = loadPlan();
+  if (!key || !s) return;
+  if (key === "own" && d.kind === "own") {
+    s.own = (s.own ?? 0) + 1;
+  } else if ((key.startsWith("exit:") || key.startsWith("learn:")) && d.kind === "line" && clean && d.status !== "new" && d.status !== "relearn") {
+    // The line played once without arrows and without a mistake (practice after the lesson, or a known line).
+    if (!s.done.includes(key)) s.done.push(key);
+  } else {
+    return;
+  }
+  store.set(PLAN_KEY, JSON.stringify(s));
+}
+
+function planHtml(): string {
+  const items = plan();
+  if (!items.length) return "";
+  const left = items.filter((x) => x.open).length;
+  return `<div class="op-plan">
+      <div class="op-plan-head">
+        <h3>${t("Dein Plan für heute")}</h3>
+        <span class="muted">${left ? t("{done} von {all} erledigt", { done: items.length - left, all: items.length }) : `✓ ${t("Für heute geschafft")}`}</span>
+        ${left ? `<button class="primary" id="op-plan-go">${items.length - left ? t("Weiter") : t("Plan starten")} →</button>` : ""}
+      </div>
+      <ol class="op-plan-list">${items
+        .map(
+          (x, i) => `<li class="${x.open ? "" : "done"}">
+            <button class="op-plan-item" data-plan="${i}" title="${x.open ? "" : t("Erledigt – du kannst es trotzdem noch einmal machen")}">
+              <span class="op-plan-check">${x.open ? i + 1 : "✓"}</span>
+              <span><b>${esc(x.title)}</b><br><span class="muted">${esc(x.text)}</span></span>
+            </button></li>`,
+        )
+        .join("")}</ol>
+    </div>`;
+}
+
+function bindPlan(el: HTMLElement) {
+  const items = plan();
+  const run = (x: PlanItem | undefined) => {
+    if (x) startPlanItem(x);
+  };
+  el.querySelectorAll<HTMLElement>("[data-plan]").forEach((b) => b.addEventListener("click", () => run(items[Number(b.dataset.plan)])));
+  el.querySelector("#op-plan-go")?.addEventListener("click", () => run(items.find((x) => x.open)));
+}
+
 /** Home: everything from your games in one folded block (details live on the opening pages). */
 function gamesBlockHtml(): string {
   const exits = theory?.positions.length ?? 0;
@@ -2376,8 +2606,30 @@ function gamesBlockHtml(): string {
     .filter(Boolean)
     .join(" · ");
   return `<div class="op-home-mine op-games-block">
+      ${progressHtml()}
       <button class="op-cards-toggle op-games-toggle">${gamesOpen ? "▾" : "▸"} ${t("Alles aus deinen Partien")} <span class="muted">· ${summary}</span></button>
       ${gamesOpen ? `${reportsHtml(reports, true)}${theoryHtml()}` : `<p class="panel-sub">${t("Pro Eröffnung findest du das auch auf ihrer Seite – mit „Linie lernen“.")}</p>`}
+      <label class="op-serious"><input type="checkbox" id="op-serious" ${seriousOnly ? "checked" : ""}/> ${t("Nur ernsthafte Partien mit dem Repertoire vergleichen (ohne Bots und Bullet)")}</label>
+    </div>`;
+}
+
+/** "Im Repertoire: Ø 5,5 deiner Züge – vorher 3,0": does the learning show in your games? */
+function progressHtml(): string {
+  const p = repProgress;
+  if (!p || p.recent == null) return "";
+  const fmt = (x: number) => x.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const trend =
+    p.before == null
+      ? ""
+      : p.recent > p.before + 0.2
+        ? `<span class="op-trend up">↑ ${t("vorher {n}", { n: fmt(p.before) })}</span>`
+        : p.recent < p.before - 0.2
+          ? `<span class="op-trend down">↓ ${t("vorher {n}", { n: fmt(p.before) })}</span>`
+          : `<span class="op-trend">${t("vorher {n}", { n: fmt(p.before) })}</span>`;
+  return `<div class="op-progress-stat" title="${t("Wie viele deiner Repertoire-Züge du im Schnitt spielst, bevor eine Partie dein Repertoire verlässt – in deinen letzten {n} Partien, verglichen mit den {n} davor.", { n: p.window })}">
+      <span>${t("In deinen letzten Partien spielst du im Schnitt")}</span>
+      <b>${t("{n} Züge aus deinem Repertoire", { n: fmt(p.recent) })}</b>
+      ${trend}
     </div>`;
 }
 
@@ -2760,6 +3012,7 @@ async function finish(tk: number) {
   // Replayed after "Zurück": the result already counts.
   if (finished) return render();
   finished = true;
+  planProgress(d, !failed);
 
   enteredBox = false;
   if (d.status === "practice" && consolidate) {

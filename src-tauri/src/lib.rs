@@ -777,6 +777,23 @@ async fn rep_check_quality(app: AppHandle, accounts: Vec<Account>, color: String
     tree::check_quality(app, accounts, color, root).await
 }
 
+/// How long your games stay in your repertoire (last games vs. the ones before).
+#[tauri::command]
+async fn rep_progress(app: AppHandle, accounts: Vec<Account>) -> Result<tree::Progress, String> {
+    with_db(app, move |db, _| tree::progress(db, &accounts)).await
+}
+
+/// Compare only serious games with your repertoire (no bots, no bullet).
+#[tauri::command]
+fn rep_serious_get(db: State<DbState>) -> bool {
+    tree::serious_only(&db.0.lock().unwrap())
+}
+
+#[tauri::command]
+fn rep_serious_set(db: State<DbState>, on: bool) -> Result<(), String> {
+    tree::set_serious_only(&db.0.lock().unwrap(), on)
+}
+
 /// Your short idea behind a repertoire move.
 #[tauri::command]
 fn rep_set_note(db: State<DbState>, color: String, epd: String, note: String) -> Result<(), String> {
@@ -1256,6 +1273,9 @@ pub fn run() {
             rep_change_move,
             rep_add_line,
             rep_set_note,
+            rep_progress,
+            rep_serious_get,
+            rep_serious_set,
             rep_check_quality,
             rep_notes,
             rep_set_depth,

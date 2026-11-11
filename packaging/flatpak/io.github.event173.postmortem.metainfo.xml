@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.6.0" date="2026-11-11">
+      <description>
+        <p>A daily plan picks what's worth doing today: due flashcards, your most costly opening problem (a weak repertoire move or where dropping out of theory costs you), mistakes from your games, a new line in the opening that pays off most, and puzzles. Items count as done once they really are. New: how many of your repertoire moves you play on average in your recent games, compared with the games before. Only serious games (no bots, no bullet) are compared with your repertoire, switchable. More opening texts in German.</p>
+      </description>
+    </release>
     <release version="0.5.2" date="2026-11-11">
       <description>
         <p>Fixes and comfort: "move back" in a solved puzzle works, the buttons under the board step through the puzzle or the course line instead of the hidden game, the flashcards button on an opening's page asks only that opening's cards, and changing or deleting moves in your repertoire can be undone.</p>

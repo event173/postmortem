@@ -1972,6 +1972,7 @@ initOpenings({
   accounts,
   animMs: () => animMs,
   openGame: (gameId, ply) => openGameAt(gameId, ply),
+  openPuzzles: () => showTab("puzzles"),
 });
 
 initSettings({
