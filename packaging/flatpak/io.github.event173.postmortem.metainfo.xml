@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.3.1" date="2026-11-11">
+      <description>
+        <p>Opening courses focus on what is played at your level: lines that come up in at least 3 in 100 games in your Lichess rating group (via the Lichess opening explorer) and lines from your own games; rare sidelines are listed apart. A new line enters the flashcards only after one run without arrows and without mistakes.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-11-11">
       <description>
         <p>German opening names when the interface is set to German (game list, review, coach, Learn, Explore, statistics), and a game list that fits small windows: the source switch and the sync buttons wrap instead of being squeezed.</p>

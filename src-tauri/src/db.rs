@@ -60,6 +60,16 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE favorites (game_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);",
     // 8: your own flashcards (positions with Stockfish's best moves, see cards.rs)
     "CREATE TABLE cards (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, data TEXT NOT NULL);",
+    // 9: Lichess explorer answers (move counts per position and rating group) and,
+    // computed from them, which lines of an opening are common (see relevance.rs)
+    "CREATE TABLE explorer_cache (key TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at INTEGER NOT NULL);
+     CREATE TABLE opening_relevance (
+        color       TEXT NOT NULL,
+        family      TEXT NOT NULL,
+        data        TEXT NOT NULL,
+        computed_at INTEGER NOT NULL,
+        PRIMARY KEY (color, family)
+     );",
 ];
 
 /// Spaced-repetition state of one opening line for one colour.
@@ -465,6 +475,43 @@ impl Db {
                     box = excluded.box, due = excluded.due,
                     attempts = excluded.attempts, successes = excluded.successes",
                 params![line_id, color, p.box_, p.due, p.attempts, p.successes],
+            )
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Cached Lichess explorer answers whose key starts with `prefix`.
+    pub fn explorer_cache(&self, prefix: &str) -> Result<Vec<(String, String)>, String> {
+        // length() and substr() count characters (the prefix has an en dash).
+        let mut stmt = self.conn.prepare("SELECT key, data FROM explorer_cache WHERE substr(key, 1, length(?1)) = ?1").map_err(sql_err)?;
+        let rows = stmt.query_map([prefix], |r| Ok((r.get(0)?, r.get(1)?))).map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    pub fn set_explorer_cache(&self, key: &str, data: &str, fetched_at: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO explorer_cache (key, data, fetched_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at",
+                params![key, data, fetched_at],
+            )
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Stored relevance of the lines of every opening: (color, family, json).
+    pub fn opening_relevance(&self) -> Result<Vec<(String, String, String)>, String> {
+        let mut stmt = self.conn.prepare("SELECT color, family, data FROM opening_relevance").map_err(sql_err)?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    pub fn set_opening_relevance(&self, color: &str, family: &str, data: &str, computed_at: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO opening_relevance (color, family, data, computed_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(color, family) DO UPDATE SET data = excluded.data, computed_at = excluded.computed_at",
+                params![color, family, data, computed_at],
             )
             .map_err(sql_err)?;
         Ok(())

@@ -14,6 +14,7 @@ use crate::analysis::{Class, GameReview};
 use crate::db::{Account, Db, LineProgress};
 use crate::lichess::GameInfo;
 use crate::openings::{self, Line};
+use crate::relevance;
 use crate::stats::Example;
 
 /// Mistakes up to this ply count as "in the opening" (move 12).
@@ -192,6 +193,20 @@ pub fn families() -> Vec<Family> {
     out
 }
 
+/// The trainable lines of one opening for one colour.
+pub(crate) fn family_lines(color: &str, family: &str) -> Vec<&'static Line> {
+    trainable(&one(color, family), color)
+}
+
+/// A repertoire of just this opening.
+fn one(color: &str, family: &str) -> Repertoire {
+    if color == "white" {
+        Repertoire { white: vec![family.to_string()], black: vec![] }
+    } else {
+        Repertoire { white: vec![], black: vec![family.to_string()] }
+    }
+}
+
 /// Lines of the chosen families in which `color` has at least one move to play.
 fn trainable<'a>(rep: &Repertoire, color: &str) -> Vec<&'a Line> {
     let fams = rep.families(color);
@@ -204,10 +219,15 @@ fn trainable<'a>(rep: &Repertoire, color: &str) -> Vec<&'a Line> {
 
 pub fn status(db: &Db) -> Result<Status, String> {
     let rep = load(db);
+    let rel = relevance::all(db);
     let now = now_ms();
     let side = |color: &str| -> Result<SideStatus, String> {
         let progress = db.opening_progress(color)?;
-        let lines = trainable(&rep, color);
+        // Rare lines you haven't started aren't part of the course.
+        let lines: Vec<&Line> = trainable(&rep, color)
+            .into_iter()
+            .filter(|l| progress.contains_key(&l.id) || relevance::is_common(rel.get(&format!("{color}|{}", l.family)), &l.id))
+            .collect();
         let mut s = SideStatus { families: rep.families(color).to_vec(), lines: lines.len(), ..Default::default() };
         for l in lines {
             match progress.get(&l.id) {
@@ -420,12 +440,9 @@ pub fn next(
     let mut rng = fastrand::Rng::new();
     let mut rep = load(db);
     if let Some(f) = focus {
-        rep = if f.color == "white" {
-            Repertoire { white: vec![f.family.clone()], black: vec![] }
-        } else {
-            Repertoire { white: vec![], black: vec![f.family.clone()] }
-        };
+        rep = one(&f.color, &f.family);
     }
+    let rel = relevance::all(db);
     let in_focus = |l: &Line| focus.is_none_or(|f| f.matches(l));
     let mode = if focus.is_some() { Mode::Repertoire } else { mode };
     let now = now_ms();
@@ -447,8 +464,12 @@ pub fn next(
     let mut later: Vec<(i64, &Line, &str)> = Vec::new();
     for color in ["white", "black"] {
         for line in trainable(&rep, color).into_iter().filter(|l| in_focus(l)) {
+            // Rare sidelines only when you pick that very line.
+            let chosen = focus.and_then(|f| f.line.as_deref()) == Some(line.id.as_str());
+            let common = relevance::is_common(rel.get(&format!("{color}|{}", line.family)), &line.id);
             match progress_of(color).get(&line.id) {
-                None => new.push((line, color)),
+                None if chosen || common => new.push((line, color)),
+                None => {}
                 Some(p) if p.due <= now => due.push((p.due, line, color)),
                 Some(p) => later.push((p.due, line, color)),
             }
@@ -508,6 +529,7 @@ pub struct FamilyProgress {
 /// added: key "white|Caro-Kann Defense".
 pub fn family_progress(db: &Db) -> Result<HashMap<String, FamilyProgress>, String> {
     let rep = load(db);
+    let rel = relevance::all(db);
     let now = now_ms();
     let mut out: HashMap<String, FamilyProgress> = HashMap::new();
     for color in ["white", "black"] {
@@ -531,14 +553,15 @@ pub fn family_progress(db: &Db) -> Result<HashMap<String, FamilyProgress>, Strin
             }
         }
     }
-    // Families that were started but have only some lines counted above: count all lines.
+    // Families that were started but have only some lines counted above: count
+    // all lines of the course (common ones and the ones you've started).
     for (key, e) in out.iter_mut() {
         let (color, family) = key.split_once('|').unwrap_or_default();
-        let rep = Repertoire {
-            white: if color == "white" { vec![family.to_string()] } else { vec![] },
-            black: if color == "black" { vec![family.to_string()] } else { vec![] },
-        };
-        e.lines = trainable(&rep, color).len();
+        let progress = db.opening_progress(color)?;
+        e.lines = family_lines(color, family)
+            .into_iter()
+            .filter(|l| progress.contains_key(&l.id) || relevance::is_common(rel.get(key.as_str()), &l.id))
+            .count();
     }
     Ok(out)
 }
@@ -555,6 +578,10 @@ pub struct LineInfo {
     pub due: bool,
     /// When it comes back (ms; 0 = not seen yet).
     pub due_at: i64,
+    /// Share of games at your level that reach this line (Lichess), if known.
+    pub reach: Option<f64>,
+    /// The line came up in your own games.
+    pub in_games: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -568,20 +595,31 @@ pub struct VariationGroup {
     pub lines: Vec<LineInfo>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FamilyDetail {
+    /// The course: common lines and the ones you've started, by variation.
+    pub groups: Vec<VariationGroup>,
+    /// Rare sidelines (not started), most frequent first.
+    pub rare: Vec<LineInfo>,
+    /// Rating groups of the Lichess numbers ("" = none yet).
+    pub ratings: String,
+    /// All numbers are there.
+    pub complete: bool,
+}
+
 /// Variations of one opening for one colour, in move-tree order, with progress.
-pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<Vec<VariationGroup>, String> {
+pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<FamilyDetail, String> {
     let progress = db.opening_progress(color)?;
+    let rel = relevance::get(db, color, family);
     let now = now_ms();
-    let rep = if color == "white" {
-        Repertoire { white: vec![family.to_string()], black: vec![] }
-    } else {
-        Repertoire { white: vec![], black: vec![family.to_string()] }
-    };
-    let mut lines = trainable(&rep, color);
+    let mut lines = family_lines(color, family);
     lines.sort_by_cached_key(|l| main_line_key(l));
     let mut groups: Vec<VariationGroup> = Vec::new();
+    let mut rare: Vec<LineInfo> = Vec::new();
     for l in lines {
         let p = progress.get(&l.id);
+        let r = rel.as_ref().and_then(|r| r.lines.get(&l.id));
         let info = LineInfo {
             id: l.id.clone(),
             name: l.short_name().to_string(),
@@ -589,7 +627,13 @@ pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<Vec<Variation
             box_level: p.map_or(0, |p| p.box_),
             due: p.is_some_and(|p| p.due <= now),
             due_at: p.map_or(0, |p| p.due),
+            reach: r.and_then(|r| r.reach),
+            in_games: r.is_some_and(|r| r.in_games),
         };
+        if p.is_none() && !relevance::is_common(rel.as_ref(), &l.id) {
+            rare.push(info);
+            continue;
+        }
         let idx = match groups.iter().position(|g| g.name == l.variation()) {
             Some(i) => i,
             None => {
@@ -604,18 +648,19 @@ pub fn family_detail(db: &Db, color: &str, family: &str) -> Result<Vec<Variation
         g.due += info.due as usize;
         g.lines.push(info);
     }
-    Ok(groups)
+    rare.sort_by(|a, b| b.reach.unwrap_or(0.0).total_cmp(&a.reach.unwrap_or(0.0)));
+    Ok(FamilyDetail {
+        groups,
+        rare,
+        ratings: rel.as_ref().map(|r| r.ratings.clone()).unwrap_or_default(),
+        complete: rel.is_some_and(|r| r.complete),
+    })
 }
 
 /// Start an opening over: every line of the family (for this colour) is new again.
 /// The opening stays in the repertoire.
 pub fn reset(db: &Db, color: &str, family: &str) -> Result<Status, String> {
-    let rep = if color == "white" {
-        Repertoire { white: vec![family.to_string()], black: vec![] }
-    } else {
-        Repertoire { white: vec![], black: vec![family.to_string()] }
-    };
-    let ids: Vec<String> = trainable(&rep, color).into_iter().map(|l| l.id.clone()).collect();
+    let ids: Vec<String> = family_lines(color, family).into_iter().map(|l| l.id.clone()).collect();
     db.reset_opening_progress(&ids, color)?;
     status(db)
 }
@@ -767,9 +812,53 @@ mod tests {
     }
 
     #[test]
+    fn rare_lines_stay_out_of_the_course() {
+        let db = Db::in_memory();
+        let lines = family_lines("black", "Caro-Kann Defense");
+        let mut sorted = lines.clone();
+        sorted.sort_by_cached_key(|l| main_line_key(l));
+        let common: Vec<String> = sorted.iter().take(2).map(|l| l.id.clone()).collect();
+        let rare_line = sorted.last().unwrap().id.clone();
+        let rel = relevance::Relevance {
+            ratings: "1600–2000".into(),
+            complete: true,
+            cleaned: true,
+            lines: lines
+                .iter()
+                .map(|l| {
+                    let reach = if common.contains(&l.id) { 0.5 } else { 0.001 };
+                    (l.id.clone(), relevance::LineRel { reach: Some(reach), in_games: false })
+                })
+                .collect(),
+        };
+        db.set_opening_relevance("black", "Caro-Kann Defense", &serde_json::to_string(&rel).unwrap(), 0).unwrap();
+
+        let focus = Focus { color: "black".into(), family: "Caro-Kann Defense".into(), variation: None, line: None };
+        for _ in 0..2 {
+            let d = next(&db, &[], &[], Mode::Repertoire, Some(&focus)).unwrap().unwrap();
+            assert!(common.contains(&d.id) && d.status == "new", "{}", d.id);
+            record(&db, &d.id, "black", true).unwrap();
+        }
+        let d = next(&db, &[], &[], Mode::Repertoire, Some(&focus)).unwrap().unwrap();
+        assert_eq!(d.status, "early", "no rare line is taught on its own");
+
+        // Picked on purpose, a rare line is taught.
+        let pick = Focus { line: Some(rare_line.clone()), ..focus };
+        assert_eq!(next(&db, &[], &[], Mode::Repertoire, Some(&pick)).unwrap().unwrap().id, rare_line);
+
+        let detail = family_detail(&db, "black", "Caro-Kann Defense").unwrap();
+        assert_eq!(detail.groups.iter().map(|g| g.total).sum::<usize>(), 2);
+        assert_eq!(detail.rare.len(), lines.len() - 2);
+        assert_eq!(family_progress(&db).unwrap()["black|Caro-Kann Defense"].lines, 2);
+        save(&db, &Repertoire { white: vec![], black: vec!["Caro-Kann Defense".into()] }).unwrap();
+        let s = status(&db).unwrap();
+        assert_eq!((s.black.lines, s.black.new), (2, 0));
+    }
+
+    #[test]
     fn variations_are_grouped_and_focusable() {
         let db = Db::in_memory();
-        let groups = family_detail(&db, "black", "Caro-Kann Defense").unwrap();
+        let groups = family_detail(&db, "black", "Caro-Kann Defense").unwrap().groups;
         let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
         assert!(names.contains(&"Advance Variation") && names.contains(&openings::MAIN_LINE), "{names:?}");
         let advance = groups.iter().find(|g| g.name == "Advance Variation").unwrap();
@@ -867,7 +956,7 @@ mod tests {
     #[test]
     fn main_lines_come_before_sidelines() {
         let db = Db::in_memory();
-        let groups = family_detail(&db, "white", "Sicilian Defense").unwrap();
+        let groups = family_detail(&db, "white", "Sicilian Defense").unwrap().groups;
         let first: Vec<&str> = groups.iter().take(3).map(|g| g.name.as_str()).collect();
         assert!(!first.iter().any(|n| n.contains("Mengarini") || n.contains("Myers")), "{first:?}");
         // The base line (1. e4 c5) is still the very first one.

@@ -17,6 +17,7 @@ mod opening_texts;
 mod openings;
 mod pgn;
 mod puzzles;
+mod relevance;
 mod repertoire;
 mod stats;
 mod theory;
@@ -721,9 +722,16 @@ async fn opening_own_count(app: AppHandle, accounts: Vec<Account>, last: Option<
     with_db(app, move |db, _| repertoire::own_due_count(db, &accounts, &window(db, &accounts, last)?)).await
 }
 
+/// How often the lines of an opening come up at your level (Lichess explorer,
+/// your games): fetches what's missing, then the course knows its main lines.
+#[tauri::command]
+async fn opening_relevance_prepare(app: AppHandle, accounts: Vec<Account>, color: String, family: String) -> Result<relevance::Prepared, String> {
+    relevance::prepare(app, accounts, color, family).await
+}
+
 /// Variations of an opening for one colour, with learning progress.
 #[tauri::command]
-fn opening_family_detail(db: State<DbState>, color: String, family: String) -> Result<Vec<repertoire::VariationGroup>, String> {
+fn opening_family_detail(db: State<DbState>, color: String, family: String) -> Result<repertoire::FamilyDetail, String> {
     repertoire::family_detail(&db.0.lock().unwrap(), &color, &family)
 }
 
@@ -1118,6 +1126,7 @@ pub fn run() {
             opening_record,
             opening_progress,
             opening_family_detail,
+            opening_relevance_prepare,
             sound_available,
             sound_register,
             sound_play,

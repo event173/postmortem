@@ -6,10 +6,14 @@
 // - learning: a guided lesson – intro, then move by move ("Weiter" shows the
 //   opponent's move, you play your own after the green arrow), each with its
 //   Wikibooks explanation; then the line is consolidated without arrows until
-//   it works twice in a row, and comes back with spaced repetition
-// - while learning one opening, its variations are listed and can be chosen
+//   it works twice in a row, and comes back with spaced repetition – it enters
+//   the flashcard box only after one run without arrows and without mistakes
+// - while learning one opening, its variations are listed and can be chosen;
+//   the course has the lines that come up at your level (Lichess explorer, your
+//   games – see relevance.rs), rare sidelines are listed apart
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Api } from "chessground/api";
 import type { DrawShape } from "chessground/draw";
 import type { Key } from "chessground/types";
@@ -132,6 +136,32 @@ interface LineInfo {
   due: boolean;
   /** When it comes back (ms; 0 = not seen yet). */
   dueAt: number;
+  /** Share of games at your level that reach the line (Lichess), if known. */
+  reach: number | null;
+  /** The line came up in your own games. */
+  inGames: boolean;
+}
+
+interface FamilyDetail {
+  /** The course: common lines and the ones you've started. */
+  groups: VariationGroup[];
+  /** Rare sidelines, most frequent first. */
+  rare: LineInfo[];
+  /** Rating groups of the Lichess numbers ("" = none yet). */
+  ratings: string;
+  complete: boolean;
+}
+
+/** Result of fetching the numbers of one opening (see relevance.rs). */
+interface Prepared {
+  state: "ready" | "partial" | "noToken";
+  ratings: string;
+  requests: number;
+  common: number;
+  total: number;
+  /** Rare lines taken out of the flashcards now. */
+  removed: number;
+  error: string | null;
 }
 
 interface VariationGroup {
@@ -202,8 +232,13 @@ let verdict: MoveReview | null = null;
 let wrongTry: PlayedMove | null = null;
 let resultDue: number | null = null;
 let resultBox: number | null = null;
-/** Consolidating a just-learned line: replay it without arrows. */
-let consolidate: { line: Drill; clean: number; runs: number } | null = null;
+/** Consolidating a just-learned line: replay it without arrows. `recorded`:
+ *  the line is in the flashcard box (after the first clean run). */
+let consolidate: { line: Drill; clean: number; runs: number; recorded: boolean } | null = null;
+/** The last consolidation run put the line into the flashcard box. */
+let enteredBox = false;
+/** The consolidation that just ended left the line in the flashcard box. */
+let endedInBox = false;
 /** Positions before each move of the current drill (for "Zurück"). */
 let history: { fen: string; lastMove?: string; step: number }[] = [];
 /** Bumped by "Zurück": moves still in flight from before are dropped. */
@@ -221,7 +256,19 @@ let families: Family[] = [];
 let played: Record<string, { white: number; black: number }> = {};
 let progress: Record<string, FamilyProgress> = {};
 let variations: VariationGroup[] = [];
+let rareLines: LineInfo[] = [];
+let detailRatings = "";
+let rareOpen = false;
 let expanded = new Set<string>();
+/** Numbers of an opening fetched this session ("color|family"). */
+const prepared = new Map<string, Prepared>();
+const preparing = new Map<string, Promise<Prepared | null>>();
+/** One opening at a time (Lichess takes one request at a time anyway). */
+let prepareQueue: Promise<unknown> = Promise.resolve();
+/** Fetching right now: which opening and how many positions so far. */
+let fetching: { key: string; done: number; waiting: boolean } | null = null;
+/** Rare lines taken out of the flashcards this session (home note). */
+let removedRare = 0;
 
 // choices
 let trainMode: TrainMode = "learn";
@@ -253,6 +300,10 @@ export function initOpenings(d: OpeningDeps) {
     }),
   );
   $("op-search").addEventListener("input", renderList);
+  listen<{ color: Color; family: string; done: number; waiting: boolean }>("relevance-progress", (e) => {
+    fetching = { key: `${e.payload.color}|${e.payload.family}`, done: e.payload.done, waiting: e.payload.waiting };
+    if (phase === "loading") renderText();
+  });
 }
 
 export function isOpeningMode(): boolean {
@@ -328,7 +379,10 @@ function setView(v: View) {
   }
   if (v === "home") {
     renderHome();
-    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards()]).then(renderHome);
+    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards()]).then(() => {
+      renderHome();
+      prepareStarted();
+    });
   } else if (v === "browse") {
     renderList();
     Promise.all([loadProgress(), loadRepertoire()]).then(renderList);
@@ -389,9 +443,61 @@ async function loadPlayed() {
 async function loadVariations() {
   if (!focus) {
     variations = [];
+    rareLines = [];
+    detailRatings = "";
     return;
   }
-  variations = await invoke<VariationGroup[]>("opening_family_detail", { color: focus.color, family: focus.family });
+  const d = await invoke<FamilyDetail>("opening_family_detail", { color: focus.color, family: focus.family });
+  variations = d.groups;
+  rareLines = d.rare;
+  detailRatings = d.ratings;
+}
+
+/**
+ * Which lines of an opening come up at your level: fetched from Lichess once
+ * per session and opening (answers are stored, so later it's quick). Null if
+ * it failed altogether – then the course simply has every line.
+ */
+function prepareRelevance(color: Color, family: string): Promise<Prepared | null> {
+  const key = `${color}|${family}`;
+  const done = prepared.get(key);
+  if (done) return Promise.resolve(done);
+  const running = preparing.get(key);
+  if (running) return running;
+  const p = prepareQueue.then(async () => {
+    try {
+      const r = await invoke<Prepared>("opening_relevance_prepare", { accounts: deps.accounts(), color, family });
+      prepared.set(key, r);
+      removedRare += r.removed;
+      return r;
+    } catch (e) {
+      console.error(e);
+      return null;
+    } finally {
+      preparing.delete(key);
+      if (fetching?.key === key) fetching = null;
+    }
+  });
+  preparing.set(key, p);
+  prepareQueue = p;
+  return p;
+}
+
+/** In the background: the numbers for the openings you've started (this also
+ *  takes rare, barely started lines out of the flashcards once). */
+async function prepareStarted() {
+  const keys = Object.entries(progress)
+    .filter(([key, p]) => p.started > 0 && !prepared.has(key))
+    .map(([key]) => key);
+  let changed = false;
+  for (const key of keys) {
+    const [color, family] = key.split("|") as [Color, string];
+    const r = await prepareRelevance(color, family);
+    changed ||= !!r && (r.removed > 0 || r.state !== "noToken");
+  }
+  if (!changed) return;
+  await Promise.all([loadRepertoire(), loadProgress()]);
+  renderHome();
 }
 
 /** Add a family to the repertoire (also used by "Üben" in the statistics). */
@@ -412,7 +518,20 @@ async function removeFromRepertoire(color: Color, family: string) {
 async function setFocus(f: Focus | null) {
   focus = f;
   consolidate = null;
-  if (f) await addToRepertoire(f.color, f.family);
+  if (f) {
+    await addToRepertoire(f.color, f.family);
+    if (!prepared.has(`${f.color}|${f.family}`)) {
+      // First time this session: which lines are common at your level?
+      const ready = prepareRelevance(f.color, f.family);
+      token++;
+      drill = null;
+      phase = "loading";
+      renderSidebar();
+      render();
+      await ready;
+      if (focus !== f) return;
+    }
+  }
   await Promise.all([loadVariations(), loadProgress()]);
   renderSidebar();
   loadNext();
@@ -499,6 +618,15 @@ function renderHome() {
         <span>${t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess.")}</span>
       </button>
     </div>
+    ${
+      removedRare
+        ? `<p class="op-home-note">${tn(
+            removedRare,
+            "1 seltene Nebenvariante, die du nur kurz angeschaut hattest, ist aus dem Karteikasten genommen. Du findest sie beim Lernen unter „Seltene Abweichungen“.",
+            "{n} seltene Nebenvarianten, die du nur kurz angeschaut hattest, sind aus dem Karteikasten genommen. Du findest sie beim Lernen unter „Seltene Abweichungen“.",
+          )}</p>`
+        : ""
+    }
     <div class="op-home-mine">
       <h3>${t("Deine Eröffnungen")}</h3>
       ${
@@ -759,7 +887,7 @@ function renderSidebar() {
 
   const p = progress[`${focus.color}|${focus.family}`];
   const sub = focus.line
-    ? variations.flatMap((g) => g.lines).find((l) => l.id === focus!.line)?.name
+    ? [...variations.flatMap((g) => g.lines), ...rareLines].find((l) => l.id === focus!.line)?.name
     : focus.variation;
   focusEl.innerHTML = `
     <div class="op-focus-top">
@@ -768,6 +896,7 @@ function renderSidebar() {
         ${sub ? `<div class="op-focus-sub">${t("nur:")} ${esc(varName(sub))} <button id="op-focus-all" class="link">${t("alle Varianten")}</button></div>` : ""}</div>
     </div>
     ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${cardSummary(p.lines, p.started, p.learned, p.due)}</span></div>` : ""}
+    ${courseInfo()}
     <p class="panel-sub op-box-help">${BOX_HELP()}</p>
     ${p?.started ? `<button id="op-focus-reset" class="link">${t("Lernstand zurücksetzen")}</button>` : ""}`;
   document.getElementById("op-focus-reset")?.addEventListener("click", async () => {
@@ -795,17 +924,33 @@ function renderSidebar() {
               ? `<div class="var-lines">${g.lines
                   .map((l) => {
                     const where = l.boxLevel ? t("Fach {n} von 5", { n: l.boxLevel }) : t("noch nicht gelernt");
-                    return `<button class="var-line ${l.id === current ? "current" : ""} ${focus!.line === l.id ? "selected" : ""}" data-line="${esc(l.id)}" title="${t("Nur diese Linie lernen")} · ${where} · ${t("{n} Züge", { n: Math.ceil(l.plies / 2) })}">
-                      ${pips(l.boxLevel)}
-                      <span class="line-name">${esc(varName(l.name))}</span>
-                      <span class="line-state">${lineState(l)}</span></button>`;
+                    return lineButton(l, current, `${t("Nur diese Linie lernen")} · ${where} · ${t("{n} Züge", { n: Math.ceil(l.plies / 2) })}`, lineState(l));
                   })
                   .join("")}</div>`
               : ""
           }
         </div>`;
       })
-      .join("")}`;
+      .join("")}
+    ${
+      rareLines.length
+        ? `<div class="var-rare">
+            <button class="var-rare-toggle">${rareOpen ? "▾" : "▸"} ${t("Seltene Abweichungen ({n})", { n: rareLines.length })}</button>
+            ${
+              rareOpen
+                ? `<p class="panel-sub">${t("Kommen auf deinem Niveau in weniger als 3 von 100 Partien vor und gehören deshalb nicht zum Kurs. Klick auf eine, um sie trotzdem zu lernen.")}</p>
+                   <div class="var-lines">${rareLines
+                     .map((l) => lineButton(l, current, `${t("Diese seltene Linie trotzdem lernen")} · ${t("{n} Züge", { n: Math.ceil(l.plies / 2) })}`, l.reach != null ? pct(l.reach) : ""))
+                     .join("")}</div>`
+                : ""
+            }
+          </div>`
+        : ""
+    }`;
+  varsEl.querySelector(".var-rare-toggle")?.addEventListener("click", () => {
+    rareOpen = !rareOpen;
+    renderSidebar();
+  });
   varsEl.querySelectorAll<HTMLElement>(".var-toggle").forEach((b) =>
     b.addEventListener("click", () => {
       const g = b.dataset.group!;
@@ -827,6 +972,38 @@ function renderSidebar() {
 
 // ---------------------------------------------------------------------------
 // drills
+
+/** "2,5 %" – how often a line comes up at your level. */
+function pct(reach: number): string {
+  const v = reach * 100;
+  return `${v.toLocaleString(undefined, { maximumFractionDigits: v < 1 ? 1 : 0 })} %`;
+}
+
+/** One line in the variation list (also the rare ones). */
+function lineButton(l: LineInfo, current: string | null, title: string, state: string): string {
+  const how = [
+    l.reach != null ? t("auf deinem Niveau in {p} der Partien", { p: pct(l.reach) }) : "",
+    l.inGames ? t("kam in deinen Partien vor") : "",
+  ].filter(Boolean);
+  return `<button class="var-line ${l.id === current ? "current" : ""} ${focus!.line === l.id ? "selected" : ""}" data-line="${esc(l.id)}" title="${esc([title, ...how].join(" · "))}">
+    ${pips(l.boxLevel)}
+    <span class="line-name">${esc(varName(l.name))}${l.inGames ? ` <span class="line-games" title="${t("kam in deinen Partien vor")}">●</span>` : ""}</span>
+    <span class="line-state">${state}</span></button>`;
+}
+
+/** Where the course's lines come from (under the progress bar). */
+function courseInfo(): string {
+  if (!focus) return "";
+  const r = prepared.get(`${focus.color}|${focus.family}`);
+  if (detailRatings) {
+    const note = r?.state === "partial" && r.error ? ` <span class="muted">${esc(r.error)}</span>` : "";
+    return `<p class="panel-sub op-course-info">${t("Der Kurs enthält die Linien, die auf deinem Niveau (Lichess {ratings}) häufig vorkommen, und die aus deinen Partien.", { ratings: esc(detailRatings) })}${note}</p>`;
+  }
+  if (r?.state === "noToken") {
+    return `<p class="panel-sub op-course-info">${t("Tipp: Mit einem Lichess-Schlüssel (Einstellungen) lernst du zuerst die Linien, die auf deinem Niveau wirklich gespielt werden – seltene Nebenvarianten kommen dann nicht mehr in den Kurs.")}</p>`;
+  }
+  return "";
+}
 
 /** A variation group's state in a few words. */
 function groupState(g: VariationGroup): string {
@@ -1027,23 +1204,46 @@ async function finish(tk: number) {
   if (finished) return render();
   finished = true;
 
+  enteredBox = false;
   if (d.status === "practice" && consolidate) {
-    // Consolidation run: count clean runs in a row; nothing is recorded.
+    // Consolidation run: count clean runs in a row. The first one without a
+    // mistake puts a new line into the flashcard box; nothing else is recorded.
     consolidate.runs++;
     consolidate.clean = failed ? 0 : consolidate.clean + 1;
-    if (consolidate.clean >= CONSOLIDATE_RUNS || consolidate.runs >= CONSOLIDATE_MAX) consolidate = null;
+    const enter = !failed && !consolidate.recorded;
+    if (enter) consolidate.recorded = enteredBox = true;
+    if (consolidate.clean >= CONSOLIDATE_RUNS || consolidate.runs >= CONSOLIDATE_MAX) {
+      // Without a single clean run the line stays new (comes again with arrows).
+      endedInBox = consolidate.recorded;
+      consolidate = null;
+    }
     render();
+    if (!enter) return;
+    await record(d, true, tk);
+    await Promise.all([loadProgress(), loadVariations()]);
+    if (tk !== token) return;
+    renderSidebar();
+    renderText();
     return;
   }
 
   render();
+  // A new line only counts once you've played it without arrows (above);
+  // a forgotten one goes back to box 1 right away.
+  if (d.status !== "new") await record(d, d.status === "relearn" ? false : !failed, tk);
+  if (tk !== token) return;
+  // A line was just taught: consolidate it right away (without arrows).
+  if (learning()) consolidate = { line: { ...d, status: "new" }, clean: 0, runs: 0, recorded: d.status === "relearn" };
+  await Promise.all([loadProgress(), loadVariations()]);
+  if (tk !== token) return;
+  renderSidebar();
+  renderText();
+}
+
+/** Store a drill's result (Leitner box) and show where the card went. */
+async function record(d: Drill, success: boolean, tk: number) {
   try {
-    const r = await invoke<{ boxLevel: number; due: number; status: Status }>("opening_record", {
-      id: d.id,
-      color: d.color,
-      // Learning a forgotten line again: the card goes back to box 1.
-      success: d.status === "relearn" ? false : !failed,
-    });
+    const r = await invoke<{ boxLevel: number; due: number; status: Status }>("opening_record", { id: d.id, color: d.color, success });
     if (tk !== token) return;
     resultBox = r.boxLevel;
     resultDue = r.due;
@@ -1051,12 +1251,6 @@ async function finish(tk: number) {
   } catch (e) {
     console.error(e);
   }
-  // A line was just taught: consolidate it right away (without arrows).
-  if (learning()) consolidate = { line: { ...d, status: "new" }, clean: 0, runs: 0 };
-  await Promise.all([loadProgress(), loadVariations()]);
-  if (tk !== token) return;
-  renderSidebar();
-  renderText();
 }
 
 /** Forgotten the line: start it over with arrows (the card goes back to box 1). */
@@ -1239,6 +1433,19 @@ function renderText(error?: string) {
   const d = drill;
 
   if (phase === "loading") {
+    const key = focus ? `${focus.color}|${focus.family}` : "";
+    if (focus && preparing.has(key)) {
+      // First lesson of an opening this session: the numbers from Lichess.
+      const f = fetching?.key === key ? fetching : null;
+      head.innerHTML = `<span class="coach-title">${t("Was wird auf deinem Niveau gespielt?")}</span>`;
+      text.innerHTML = f?.waiting
+        ? t("Lichess bittet um eine kurze Pause – in einer Minute geht es weiter …")
+        : `${t("Ich frage bei Lichess nach, welche Antworten deine Gegner hier wirklich spielen. Beim ersten Mal dauert das etwas, danach geht es sofort.")}${
+            f ? `<br><span class="muted">${tn(f.done, "1 Stellung geholt", "{n} Stellungen geholt")}</span>` : ""
+          }`;
+      actions.innerHTML = "";
+      return;
+    }
     head.innerHTML = `<span class="muted">${t("Bereite die nächste Variante vor …")}</span>`;
     text.innerHTML = "";
     actions.innerHTML = "";
@@ -1328,10 +1535,17 @@ function renderText(error?: string) {
         text.innerHTML = consolidate
           ? failed
             ? t("Noch nicht ganz – <b>nochmal</b>. Zweimal fehlerfrei hintereinander, dann hast du sie drin.")
-            : t("<b class=\"ok\">Fehlerfrei!</b> Noch einmal, dann hast du sie drin.")
-          : t("<b class=\"ok\">Eingeprägt.</b> Die Karte liegt jetzt in Fach 1 deines Karteikastens und kommt in 10 Minuten wieder.");
+            : enteredBox
+              ? t("<b class=\"ok\">Fehlerfrei!</b> Die Variante liegt jetzt in Fach 1 deines Karteikastens. Noch einmal zum Festigen.")
+              : t("<b class=\"ok\">Fehlerfrei!</b> Noch einmal, dann hast du sie drin.")
+          : endedInBox
+            ? t("<b class=\"ok\">Eingeprägt.</b> Die Karte liegt jetzt in Fach 1 deines Karteikastens und kommt in 10 Minuten wieder.")
+            : t("<b>Noch nicht drin.</b> Die Variante kommt noch nicht in den Karteikasten – beim nächsten Mal lernst du sie noch einmal mit Pfeilen.");
       } else if (learning()) {
-        text.innerHTML = t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander klappt.");
+        text.innerHTML =
+          d.status === "new"
+            ? t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile. Klappt sie einmal ohne Fehler, kommt sie in den Karteikasten.")
+            : t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander klappt.");
       } else {
         const when = resultDue ? relDays(resultDue) : "";
         text.innerHTML = failed

@@ -76,7 +76,7 @@ pub struct LichessMove {
     pub black: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LichessData {
     pub total: u64,
@@ -200,17 +200,22 @@ impl Explorer {
         if let Some(hit) = self.cache.lock().unwrap().get(&key) {
             return Ok(Some(hit.clone()));
         }
+        let data = self.fetch(fen, &token, &ratings).await.map_err(FetchError::message)?;
+        self.cache.lock().unwrap().insert(key, data.clone());
+        Ok(Some(data))
+    }
+
+    /// One explorer request – one at a time, and none during the pause after a 429.
+    pub async fn fetch(&self, fen: &str, token: &str, ratings: &[u32]) -> Result<LichessData, FetchError> {
         let _one_at_a_time = self.busy.lock().await;
-        if let Some(hit) = self.cache.lock().unwrap().get(&key) {
-            return Ok(Some(hit.clone()));
-        }
         if now_ms() < *self.cooldown_until.lock().unwrap() {
-            return Err(tr!("Lichess bremst gerade die Anfragen – in einer Minute geht es weiter.", "Lichess is rate-limiting – try again in a minute."));
+            return Err(FetchError::RateLimited);
         }
         let list = ratings.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-        let resp = crate::lichess::client()?
+        let resp = crate::lichess::client()
+            .map_err(FetchError::Other)?
             .get(EXPLORER)
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .query(&[
                 ("variant", "standard"),
                 ("speeds", "blitz,rapid,classical"),
@@ -222,36 +227,53 @@ impl Explorer {
             ])
             .send()
             .await
-            .map_err(|e| tr!("Lichess nicht erreichbar: {e}", "Lichess not reachable: {e}"))?;
+            .map_err(|e| FetchError::Other(tr!("Lichess nicht erreichbar: {e}", "Lichess not reachable: {e}")))?;
         match resp.status().as_u16() {
             200 => {}
-            401 => return Err(tr!("Der Lichess-Schlüssel gilt nicht (mehr). Trag in den Einstellungen einen neuen ein.", "The Lichess token is not valid (any more). Enter a new one in the settings.")),
+            401 => {
+                return Err(FetchError::Other(tr!(
+                    "Der Lichess-Schlüssel gilt nicht (mehr). Trag in den Einstellungen einen neuen ein.",
+                    "The Lichess token is not valid (any more). Enter a new one in the settings."
+                )))
+            }
             429 => {
                 *self.cooldown_until.lock().unwrap() = now_ms() + 61_000;
-                return Err(tr!("Lichess bremst gerade die Anfragen – in einer Minute geht es weiter.", "Lichess is rate-limiting – try again in a minute."));
+                return Err(FetchError::RateLimited);
             }
-            code => return Err(tr!("Lichess antwortete mit Fehler {code}.", "Lichess answered with error {code}.")),
+            code => return Err(FetchError::Other(tr!("Lichess antwortete mit Fehler {code}.", "Lichess answered with error {code}."))),
         }
-        let raw: RawExplorer = resp.json().await.map_err(|e| e.to_string())?;
-        let data = LichessData {
-            total: raw.white + raw.draws + raw.black,
-            moves: raw.moves,
-            ratings: label(&ratings),
-        };
-        self.cache.lock().unwrap().insert(key, data.clone());
-        Ok(Some(data))
+        let raw: RawExplorer = resp.json().await.map_err(|e| FetchError::Other(e.to_string()))?;
+        Ok(LichessData { total: raw.white + raw.draws + raw.black, moves: raw.moves, ratings: label(ratings) })
+    }
+}
+
+#[derive(Debug)]
+pub enum FetchError {
+    /// Lichess asked for a pause (a minute).
+    RateLimited,
+    Other(String),
+}
+
+impl FetchError {
+    pub fn message(self) -> String {
+        match self {
+            FetchError::RateLimited => {
+                tr!("Lichess bremst gerade die Anfragen – in einer Minute geht es weiter.", "Lichess is rate-limiting – try again in a minute.")
+            }
+            FetchError::Other(m) => m,
+        }
     }
 }
 
 /// Your rating group and the one above (e.g. 1700 -> 1600, 1800).
-fn buckets(rating: Option<u32>) -> Vec<u32> {
+pub(crate) fn buckets(rating: Option<u32>) -> Vec<u32> {
     let Some(r) = rating else { return vec![1400, 1600, 1800] };
     let i = BUCKETS.iter().rposition(|&b| b <= r).unwrap_or(0);
     BUCKETS[i..(i + 2).min(BUCKETS.len())].to_vec()
 }
 
 /// "1600–2000": from the lowest group to the start of the next one above.
-fn label(ratings: &[u32]) -> String {
+pub(crate) fn label(ratings: &[u32]) -> String {
     let lo = ratings.first().copied().unwrap_or(0);
     let hi = ratings.last().and_then(|l| BUCKETS.iter().find(|&&b| b > *l)).copied();
     match hi {

@@ -2719,6 +2719,48 @@ button.link:hover {
   margin: 6px 0 0;
 }
 
+.op-course-info {
+  margin: 6px 0 0;
+}
+
+/* Rare sidelines: below the course, folded away. */
+.var-rare {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-2);
+}
+
+.var-rare-toggle {
+  border: none;
+  background: none;
+  padding: 3px 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.var-rare-toggle:hover {
+  color: var(--text);
+}
+
+.var-rare .var-lines {
+  padding-left: 12px;
+}
+
+/* The line came up in your own games. */
+.line-games {
+  color: var(--accent);
+  font-size: 9px;
+  vertical-align: middle;
+}
+
+.op-home-note {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(124, 173, 63, 0.1);
+  font-size: 13px;
+}
+
 .line-dot {
   flex: none;
   width: 8px;
