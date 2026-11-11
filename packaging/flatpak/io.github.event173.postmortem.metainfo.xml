@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.6.1" date="2026-11-11">
+      <description>
+        <p>In the review, "Show best move" goes back before your mistake and shows Stockfish's move; step through its line move by move, and "Got it" takes you back to your mistake. Optionally the solution stays hidden until you tried yourself. Shortcuts B, V and Shift+N. Background analyses are quick ones (depth 10); the deep analysis is offered when you open a game. The game list shows the kind of game with an icon and can be dragged wider.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-11-11">
       <description>
         <p>A daily plan picks what's worth doing today: due flashcards, your most costly opening problem (a weak repertoire move or where dropping out of theory costs you), mistakes from your games, a new line in the opening that pays off most, and puzzles. Items count as done once they really are. New: how many of your repertoire moves you play on average in your recent games, compared with the games before. Only serious games (no bots, no bullet) are compared with your repertoire, switchable. More opening texts in German.</p>

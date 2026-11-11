@@ -155,7 +155,8 @@ button.accent:hover {
 .layout {
   height: calc(100% - 56px);
   display: grid;
-  grid-template-columns: var(--games-w, 290px) minmax(0, 1fr) var(--side-w, 380px);
+  /* --games-w-user: the width you dragged the game list to (wins over the defaults). */
+  grid-template-columns: var(--games-w-user, var(--games-w, 290px)) minmax(0, 1fr) var(--side-w, 380px);
   /* One row that never grows past the window: columns scroll inside instead of
      overflowing the page (which then got scrolled by the browser and moved the board). */
   grid-template-rows: minmax(0, 1fr);
@@ -180,6 +181,7 @@ p.empty {
 /* --- game list ---------------------------------------------------------- */
 
 .games {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1501,6 +1503,17 @@ button.icon {
   }
 }
 
+/* A width you dragged the list to decides instead of the window (set in main.ts,
+   no container queries – WebKitGTK lays those out a frame late). */
+.layout.games-narrow .source-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.layout.games-wide .source-switch {
+  display: flex;
+}
+
 .platform {
   position: absolute;
   left: 30px;
@@ -1990,8 +2003,10 @@ button.icon {
 }
 
 /* "Zeig mir, was passiert" in the review coach */
-.why-btn {
-  display: block;
+.why-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 10px;
 }
 
@@ -3127,6 +3142,7 @@ body[data-board] cg-board {
 
 .layout.games-collapsed {
   --games-w: 40px;
+  --games-w-user: 40px !important;
 }
 
 .layout.games-collapsed .games > :not(.games-head),
@@ -4388,4 +4404,64 @@ body[data-board] cg-board {
   display: block;
   margin-top: 10px;
   font-size: 12px;
+}
+
+.sf-steps {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sf-steps button {
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
+.sf-steps .sf-next {
+  flex: 1;
+  font-weight: 600;
+  border-color: #5b8dd6;
+}
+
+.sf-steps button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sf-done {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
+.sf-hint {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.speed-icon {
+  margin-right: 3px;
+}
+
+/* the grip at the right edge of the game list */
+.games-resizer {
+  position: absolute;
+  top: 0;
+  right: -9px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  border-radius: 4px;
+}
+
+.games-resizer:hover,
+.games-resizer:active {
+  background: rgba(124, 173, 63, 0.35);
+}
+
+.layout.games-collapsed .games-resizer {
+  display: none;
 }

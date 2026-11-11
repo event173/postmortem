@@ -175,6 +175,8 @@ export interface VarNode {
   error?: string;
   /** Played by the engine (continuation shown after a mistake), not by you. */
   engine?: boolean;
+  /** Part of the best line instead of the move played ("Besten Zug zeigen"). */
+  best?: boolean;
 }
 
 /** A move of an engine line, with the position after it. */

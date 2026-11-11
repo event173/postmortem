@@ -10,7 +10,7 @@ import "chessground/assets/chessground.cburnett.css";
 import "./styles.css";
 import "./pieces.css";
 import { lang, locale, playerName, t, tn } from "./i18n";
-import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedLabel, store } from "./util";
+import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedIcon, speedLabel, store } from "./util";
 import { openingName } from "./opening-names";
 import { autoAnalyse, initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
@@ -18,7 +18,7 @@ import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzl
 import { enterPlay, initPlay, isPlayMode, leavePlay, playHome, playMove } from "./play";
 import { bindCardButton, type CardRequest } from "./cards";
 import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, openingsHome, showTheoryExits, startFocus } from "./openings";
-import { autoAnalysePref, displayPrefs, initSettings, refinePref } from "./settings";
+import { autoAnalysePref, displayPrefs, hideSolutionPref, initSettings, refinePref } from "./settings";
 
 import {
   BAD,
@@ -56,7 +56,12 @@ const state = {
   ply: 0,
   orientation: "white" as Color,
   /** Side line the user played on the board, branching off after `basePly`. */
-  variation: null as { basePly: number; nodes: VarNode[] } | null,
+  variation: null as {
+    basePly: number;
+    nodes: VarNode[];
+    /** Where the engine line was asked for: the mistake in the game (ply), or your try in the variation (index). */
+    from?: { ply: number } | { varIndex: number };
+  } | null,
   /** Whether the board currently shows the variation, and how far into it (0 = branch point). */
   inVar: false,
   varIndex: 0,
@@ -398,7 +403,6 @@ async function openGameAt(gameId: string, ply: number) {
 
 initStats({
   accounts,
-  depth: () => Number(($("depth") as HTMLSelectElement).value),
   openGame: openGameAt,
   onGamesAnalysed: () => showStoredGames(),
   practiceOpening: (color, family) => {
@@ -559,7 +563,8 @@ function renderGames() {
       ? `${me === "white" ? "♙" : "♟"} ${t("vs {name}", { name: esc(playerName(opp.name)) })}${opp.rating ? ` <span class="muted">(${opp.rating})</span>` : ""}`
       : `${esc(playerName(g.white.name))} – ${esc(playerName(g.black.name))}`;
     const date = new Date(g.createdAt).toLocaleDateString(locale, { day: "2-digit", month: "2-digit", year: "2-digit" });
-    const speed = [speedLabel(g.speed), g.timeControl].filter(Boolean).join(" ");
+    const icon = speedIcon(g.speed);
+    const speed = `${icon ? `<span class="speed-icon" aria-hidden="true">${icon}</span>` : ""}${esc([speedLabel(g.speed), g.timeControl].filter(Boolean).join(" "))}`;
 
     const btn = document.createElement("button");
     btn.className = "game" + (state.game?.id === g.id ? " active" : "");
@@ -645,7 +650,10 @@ async function selectGame(game: GameInfo, startPly = 0) {
     const depth = Number(($("depth") as HTMLSelectElement).value);
     // Already analysed at the chosen depth? Then it's there instantly. Otherwise
     // a quick preview first, refined in the background.
-    const stored = await invoke<GameReview | null>("stored_review", { gameId: game.id, depth });
+    // Else the quick one from the background (then the deep one is offered).
+    const stored =
+      (await invoke<GameReview | null>("stored_review", { gameId: game.id, depth })) ??
+      (await invoke<GameReview | null>("stored_review", { gameId: game.id, depth: Math.min(PREVIEW_DEPTH, depth) }));
     if (token !== analysisToken) return;
     const first = stored ?? (await invoke<GameReview>("analyse_game", { game, depth: Math.min(PREVIEW_DEPTH, depth) }));
     if (token !== analysisToken) return;
@@ -817,20 +825,6 @@ function showVarStep(index: number) {
   renderPosition();
 }
 
-/** Step through the variation up to `target`, animated. */
-function playVarTo(target: number) {
-  stopPlayback();
-  const step = () => {
-    if (!state.variation || state.varIndex >= target) {
-      playback = null;
-      return;
-    }
-    showVarStep(state.varIndex + 1);
-    playback = { timer: window.setTimeout(step, animMs + 450), target, kind: "var" };
-  };
-  playback = { timer: window.setTimeout(step, 400), target, kind: "var" };
-}
-
 /** Position before the n-th variation move (1-based). */
 function varFenBefore(index: number): string {
   const v = state.variation!;
@@ -838,7 +832,7 @@ function varFenBefore(index: number): string {
 }
 
 /**
- * "Zeig mir, was passiert": append the engine's best continuation after the
+ * "Folgezüge anzeigen": append the engine's best continuation after the
  * bad move on the board as a variation and play it.
  */
 async function showConsequence() {
@@ -878,16 +872,81 @@ async function showConsequence() {
     return;
   }
   if (!state.inVar) {
-    state.variation = { basePly: state.ply, nodes: [] };
+    state.variation = { basePly: state.ply, nodes: [], from: { ply: state.ply } };
     state.inVar = true;
     state.varIndex = 0;
+  } else {
+    state.variation!.from = { varIndex: state.varIndex };
   }
   const v = state.variation!;
   v.nodes.length = state.varIndex;
   for (const m of continuation) v.nodes.push({ fen: m.fen, san: m.san, uci: m.uci, check: m.check, engine: true });
   renderMoveList();
-  showVarStep(state.varIndex);
-  playVarTo(v.nodes.length);
+  // Only the first reply – then step through with → to follow along.
+  showVarStep(state.varIndex + 1);
+}
+
+/**
+ * "Besten Zug zeigen": from the position before the bad move, play Stockfish's
+ * move and how it goes on, as a variation.
+ */
+async function showBestLine() {
+  const r = state.review;
+  if (!r) return;
+  stopPlayback();
+  const node = currentVarNode();
+  let fenBefore: string;
+  let bestUci: string | null | undefined;
+  if (node?.review) {
+    fenBefore = varFenBefore(state.varIndex);
+    bestUci = node.review.bestUci;
+  } else if (!state.inVar && r.moves[state.ply - 1]) {
+    fenBefore = r.fens[state.ply - 1];
+    bestUci = r.moves[state.ply - 1].bestUci;
+  } else {
+    return;
+  }
+  if (!bestUci) return;
+  if (!state.inVar) revealed.add(solutionKey(state.ply));
+  const btn = document.getElementById("btn-best") as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = t("Rechne …");
+  }
+  const where = { inVar: state.inVar, ply: state.ply, varIndex: state.varIndex, variation: state.variation };
+  let line: Refutation;
+  try {
+    // The engine's line after its own move: that move first, then the continuation.
+    line = await invoke<Refutation>("refutation", { fen: fenBefore, uci: bestUci });
+  } catch (e) {
+    if (btn) btn.textContent = String(e);
+    return;
+  }
+  if (where.inVar !== state.inVar || where.ply !== state.ply || where.varIndex !== state.varIndex || where.variation !== state.variation) return;
+  if (!state.inVar) {
+    // Branch off before the move played.
+    state.variation = { basePly: state.ply - 1, nodes: [], from: { ply: state.ply } };
+    state.inVar = true;
+    state.varIndex = 0;
+  } else {
+    // Replace the variation move with the best one (your try goes; back to the position before it).
+    state.varIndex -= 1;
+    state.variation!.from = { varIndex: state.varIndex };
+  }
+  const v = state.variation!;
+  v.nodes.length = state.varIndex;
+  for (const m of line.moves) v.nodes.push({ fen: m.fen, san: m.san, uci: m.uci, check: m.check, engine: true, best: true });
+  renderMoveList();
+  // Only the best move – then step through the line with → to follow along.
+  showVarStep(state.varIndex + 1);
+}
+
+/** "Verstanden": back to the mistake the engine line was shown for. */
+function backToMistake() {
+  const from = state.variation?.from;
+  if (from && "ply" in from) return goto(from.ply);
+  if (from) return showVar(from.varIndex);
+  backToGame();
 }
 
 function backToGame() {
@@ -940,9 +999,29 @@ function mainPly(): number {
 
 const NOT_BAD: Class[] = ["best", "brilliant", "great", "book", "forced"];
 
-function moveShapes(m: { uci: string; classification: Class; bestUci: string | null }): DrawShape[] {
+/** Main-line moves whose solution has been shown (with "Lösung erst auf Klick"), by "game:ply". */
+const revealed = new Set<string>();
+const solutionKey = (ply: number) => `${state.game?.id ?? ""}:${ply}`;
+
+/** A main-line move whose better move is still hidden (setting on, not yet tried or asked). */
+function solutionHidden(ply: number, m: { uci: string; classification: Class; bestUci: string | null }): boolean {
+  return hideSolutionPref() && !!m.bestUci && m.bestUci !== m.uci && !NOT_BAD.includes(m.classification) && !revealed.has(solutionKey(ply));
+}
+
+function revealSolution(ply: number) {
+  revealed.add(solutionKey(ply));
+  renderPosition();
+}
+
+/** "Selbst versuchen": back to the position before the move – play yours on the board. */
+function trySelf(ply: number) {
+  stopPlayback();
+  goto(ply - 1);
+}
+
+function moveShapes(m: { uci: string; classification: Class; bestUci: string | null }, hide = false): DrawShape[] {
   const shapes: DrawShape[] = [{ orig: m.uci.slice(2, 4) as Key, customSvg: { html: badgeSvg(m.classification) } }];
-  if (m.bestUci && m.bestUci !== m.uci && !NOT_BAD.includes(m.classification)) {
+  if (!hide && m.bestUci && m.bestUci !== m.uci && !NOT_BAD.includes(m.classification)) {
     shapes.push({ orig: m.bestUci.slice(0, 2) as Key, dest: m.bestUci.slice(2, 4) as Key, brush: "green" });
   }
   return shapes;
@@ -974,12 +1053,20 @@ function renderPosition() {
     const mainMove = r.moves[state.variation!.basePly - 1];
     lastUci = node?.uci ?? mainMove?.uci;
     check = node ? node.check : !!mainMove && /[+#]$/.test(mainMove.san);
-    baseShapes = node?.review ? moveShapes(node.review) : !node && mainMove ? moveShapes(mainMove) : [];
+    baseShapes = node?.review
+      ? moveShapes(node.review)
+      : !node && mainMove
+        ? moveShapes(mainMove, solutionHidden(state.variation!.basePly, mainMove))
+        : [];
+    // You tried a move where the game went wrong: now the solution may show.
+    const tried = state.variation!.nodes[0];
+    const next = r.moves[state.variation!.basePly];
+    if (tried?.review && next && state.varIndex >= 1) revealed.add(solutionKey(next.ply));
   } else {
     const move = r.moves[state.ply - 1];
     lastUci = move?.uci;
     check = !!move && /[+#]$/.test(move.san);
-    baseShapes = move ? moveShapes(move) : [];
+    baseShapes = move ? moveShapes(move, solutionHidden(state.ply, move)) : [];
   }
   liveShapes = [];
   if (fen !== drawnFen) board.setShapes([]);
@@ -1248,10 +1335,29 @@ function renderCoach() {
   const node = currentVarNode();
   const tag = state.inVar ? `<span class="var-tag">${t("Variante")}</span>` : "";
   if (node?.engine) {
-    head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span><span class="var-tag engine">${t("Engine-Fortsetzung")}</span>`;
-    head.style.setProperty("--c", "#5b8dd6");
-    text.innerHTML = t("So würde es nach dem Fehler weitergehen – die besten Züge laut Stockfish.");
-    best.innerHTML = `<span class="muted">${t("Mit Esc oder „↩ Zur Partie“ geht es zurück. Du kannst von hier aus auch selbst weiterziehen.")}</span>`;
+    head.innerHTML = `<span class="coach-title"><b>${esc(fig(node.san))}</b></span><span class="var-tag engine">${node.best ? t("Beste Variante") : t("Engine-Fortsetzung")}</span>`;
+    head.style.setProperty("--c", node.best ? "#7cad3f" : "#5b8dd6");
+    const nodes = state.variation?.nodes ?? [];
+    const line = nodes.filter((x) => x.engine);
+    const at = line.indexOf(node) + 1;
+    const step = line.length > 1 ? ` <span class="muted">(${t("{at} von {n}", { at, n: line.length })})</span>` : "";
+    text.innerHTML =
+      (node.best
+        ? nodes[0] === node
+          ? t("Das hätte Stockfish hier gespielt.")
+          : t("So ginge es mit dem besten Zug weiter – laut Stockfish.")
+        : t("So würde es nach dem Fehler weitergehen – die besten Züge laut Stockfish.")) +
+      step;
+    const first = nodes.indexOf(line[0]) + 1;
+    best.innerHTML = `<div class="sf-steps">
+        <button id="sf-prev" ${at <= 1 ? "disabled" : ""} title="${t("Den vorigen Stockfish-Zug zeigen")} (←)">◀ ${t("Zurück")}</button>
+        <button id="sf-next" class="sf-next" ${at >= line.length ? "disabled" : ""} title="${t("Den nächsten Zug dieser Stockfish-Variante zeigen")} (→)">${t("Nächster Stockfish-Zug")} ▶</button>
+      </div>
+      <button id="sf-done" class="primary sf-done">✓ ${t("Verstanden – zurück zu deinem Fehler")}</button>
+      <div class="muted sf-hint">${t("Du kannst von hier aus auch selbst weiterziehen.")}</div>`;
+    $("sf-prev").addEventListener("click", () => showVar(Math.max(first, state.varIndex - 1)));
+    $("sf-next").addEventListener("click", () => showVar(state.varIndex + 1));
+    $("sf-done").addEventListener("click", backToMistake);
     return;
   }
   if (node && !node.review) {
@@ -1266,7 +1372,7 @@ function renderCoach() {
     head.style.setProperty("--c", "var(--border)");
     const g = state.game!;
     head.innerHTML = `<span class="coach-title">${t("Partie-Review")}</span>`;
-    const howTo = t("Mit → gehst du Zug für Zug durch die Partie, mit N springst du zu deinem nächsten Fehler.");
+    const howTo = t("Mit → gehst du Zug für Zug durch die Partie, mit N springst du zu deinem nächsten Fehler (Umschalt+N: voriger). Bei einem Fehler zeigt B den besten Zug, V die Folgezüge.");
     text.textContent = g.opening ? `${openingName(g.opening.name)} (${g.opening.eco}). ${howTo}` : howTo;
     best.innerHTML = `<span class="muted">${t("Analysiert mit Stockfish, Tiefe {d}", { d: r.depth })}</span>`;
     return;
@@ -1282,12 +1388,31 @@ function renderCoach() {
   const mine = !!node || userColor(state.game!) === move.color;
   text.innerHTML = esc(fig(commentOf(move, mine)));
   const showBest = move.bestSan && move.bestUci !== move.uci && !NOT_BAD.includes(move.classification);
+  // Solution hidden: try it yourself first, or ask for it.
+  const ply = mainPly();
+  if (!node && showBest && solutionHidden(ply, move)) {
+    best.innerHTML = `<span class="best-label">${t("Bester Zug")}</span> <span class="muted">${t("verdeckt – such ihn erst selbst.")}</span>
+      <div class="why-btns">
+        <button id="btn-try" class="primary" title="${t("Einen Zug zurück – dann zieh deinen Zug auf dem Brett")}">${t("Selbst versuchen")}</button>
+        <button id="btn-reveal">${t("Lösung zeigen")}</button>
+        ${BAD.includes(move.classification) ? `<button id="btn-why">${t("Folgezüge anzeigen")}</button>` : ""}
+      </div>`;
+    $("btn-try").addEventListener("click", () => trySelf(ply));
+    $("btn-reveal").addEventListener("click", () => revealSolution(ply));
+    document.getElementById("btn-why")?.addEventListener("click", showConsequence);
+    return;
+  }
   best.innerHTML = showBest
     ? `<span class="best-label">${t("Bester Zug")}</span> <b>${esc(fig(move.bestSan!))}</b>${move.bestLine ? `<div class="best-line">${esc(fig(move.bestLine))}</div>` : ""}`
     : "";
-  if (BAD.includes(move.classification)) {
-    best.innerHTML += `<button id="btn-why" class="why-btn">${t("Zeig mir, was passiert")}</button>`;
-    $("btn-why").addEventListener("click", showConsequence);
+  const buttons = [
+    showBest ? `<button id="btn-best" class="primary" title="${t("Zurück vor deinen Zug und Stockfishs Zug mit Fortsetzung auf dem Brett zeigen")} (B)">💡 ${t("Besten Zug zeigen")}</button>` : "",
+    BAD.includes(move.classification) ? `<button id="btn-why" title="${t("Wie es nach deinem Zug weitergehen würde – auf dem Brett")} (V)">${t("Folgezüge anzeigen")}</button>` : "",
+  ].filter(Boolean);
+  if (buttons.length) {
+    best.innerHTML += `<div class="why-btns">${buttons.join("")}</div>`;
+    document.getElementById("btn-best")?.addEventListener("click", showBestLine);
+    document.getElementById("btn-why")?.addEventListener("click", showConsequence);
   }
 }
 
@@ -1727,7 +1852,7 @@ function renderTraining() {
   actions.innerHTML =
     tr.phase === "solved"
       ? `<button data-act="exit">${t("Beenden")}</button><button data-act="next" class="primary">${last ? t("Ergebnis") : t("Weiter")} →</button>`
-      : `${tr.phase === "wrong" && tr.attempt ? `<button data-act="why" class="primary">${t("Zeig mir, was passiert")}</button>` : ""}
+      : `${tr.phase === "wrong" && tr.attempt ? `<button data-act="why" class="primary">${t("Folgezüge anzeigen")}</button>` : ""}
          <button data-act="hint" ${tr.hint || tr.phase === "checking" ? "disabled" : ""}>${t("Tipp")}</button>
          <button data-act="solution" ${tr.phase === "checking" ? "disabled" : ""}>${t("Lösung zeigen")}</button>
          <button data-act="skip">${t("Überspringen")}</button>
@@ -1877,6 +2002,31 @@ function nextMistake() {
   if (next) playTo(next.ply);
 }
 
+/** Your previous mistake (Shift+N). */
+function prevMistake() {
+  const r = state.review;
+  if (!r) return;
+  stopPlayback();
+  const from = mainPly();
+  const me = (state.game && userColor(state.game)) ?? state.orientation;
+  const prevOne = [...r.moves].reverse().find((m) => m.ply < from && m.color === me && ["mistake", "miss", "blunder"].includes(m.classification));
+  if (prevOne) goto(prevOne.ply);
+}
+
+/** B: the best move instead of the one played (where there is a better one). */
+function keyBest() {
+  const r = state.review;
+  const m = currentVarNode()?.review ?? (!state.inVar ? r?.moves[state.ply - 1] : undefined);
+  if (m?.bestUci && m.bestUci !== m.uci && !NOT_BAD.includes(m.classification)) showBestLine();
+}
+
+/** V: how it goes on after a bad move. */
+function keyConsequence() {
+  const r = state.review;
+  const m = currentVarNode()?.review ?? (!state.inVar ? r?.moves[state.ply - 1] : undefined);
+  if (m && BAD.includes(m.classification)) showConsequence();
+}
+
 function flip() {
   state.orientation = state.orientation === "white" ? "black" : "white";
   board.set({ orientation: state.orientation });
@@ -1933,6 +2083,9 @@ document.addEventListener("keydown", (e) => {
     End: () => goto(Infinity),
     f: flip,
     n: nextMistake,
+    N: prevMistake,
+    b: keyBest,
+    v: keyConsequence,
     t: startTraining,
   };
   const action = actions[e.key];
@@ -1976,6 +2129,9 @@ initOpenings({
 });
 
 initSettings({
+  onHideSolution: () => {
+    if (state.review) renderPosition();
+  },
   applyDisplay: (prefs) => {
     animMs = prefs.animMs;
     board.set({ animation: { enabled: animMs > 0, duration: animMs }, coordinates: prefs.coordinates });
@@ -2044,6 +2200,46 @@ $("games-toggle").addEventListener("click", () =>
   setGamesCollapsed(!document.querySelector(".layout")!.classList.contains("games-collapsed")),
 );
 setGamesCollapsed(store.get("games-collapsed") === "1");
+
+// Drag the right edge of the game list to make it wider (double click: back to normal).
+{
+  const layout = document.querySelector<HTMLElement>(".layout")!;
+  const grip = document.createElement("div");
+  grip.className = "games-resizer";
+  grip.title = t("Ziehen, um die Partieliste breiter zu machen – Doppelklick: Standardbreite");
+  document.querySelector(".games")!.appendChild(grip);
+  const MIN = 200;
+  const MAX = 560;
+  // From this width on, the four sources fit in one row.
+  const ONE_ROW = 290;
+  const apply = (w: number | null) => {
+    if (w == null) layout.style.removeProperty("--games-w-user");
+    else layout.style.setProperty("--games-w-user", `${w}px`);
+    layout.classList.toggle("games-narrow", w != null && w < ONE_ROW);
+    layout.classList.toggle("games-wide", w != null && w >= ONE_ROW);
+    window.dispatchEvent(new Event("resize"));
+  };
+  const saved = Number(store.get("games-w"));
+  if (saved >= MIN && saved <= MAX) apply(saved);
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const left = document.querySelector<HTMLElement>(".games")!.getBoundingClientRect().left;
+    const move = (ev: PointerEvent) => apply(Math.round(Math.max(MIN, Math.min(MAX, ev.clientX - left))));
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      const w = parseInt(layout.style.getPropertyValue("--games-w-user"));
+      if (w) store.set("games-w", String(w));
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+  grip.addEventListener("dblclick", () => {
+    store.set("games-w", "");
+    apply(null);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // PGN import / export

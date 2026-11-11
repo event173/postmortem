@@ -114,7 +114,7 @@
           <button id="btn-flip" title="Brett drehen (F)" aria-label="Brett drehen"><svg class="ctl-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.5 2 5.5h2.2v8h1.6v-8H8L5 2.5Z"/><path d="M11 13.5l3-3h-2.2v-8h-1.6v8H8l3 3Z"/></svg></button>
           </span>
           <span class="ctl-extra">
-          <button id="btn-mistake" class="accent" title="Nächster eigener Fehler (N)">Nächster Fehler</button>
+          <button id="btn-mistake" class="accent" title="Nächster eigener Fehler (N) – voriger: Umschalt+N">Nächster Fehler</button>
           <button id="btn-back" title="Zurück zur Partie (Esc)" hidden>↩ Zur Partie</button>
           <button id="btn-train" hidden>Aus Fehlern lernen</button>
           <button id="btn-card" hidden title="Diese Stellung als Lernkarte üben – Stockfish sucht die besten Züge">＋ In den Karteikasten</button>
@@ -328,8 +328,12 @@
           </select>
         </label>
         <label class="row">
-          <span>Neue Partien automatisch analysieren<small>Nach dem Synchronisieren im Hintergrund, höchstens 20 auf einmal – damit Statistik und Puzzles aktuell bleiben.</small></span>
+          <span>Neue Partien automatisch analysieren<small>Nach dem Synchronisieren im Hintergrund als Schnellanalyse (Tiefe 10), höchstens 20 auf einmal – genug für Statistik, Puzzles und Eröffnungen. Tief analysiert wird erst, wenn du eine Partie öffnest.</small></span>
           <input id="pref-auto" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Bei Fehlern die Lösung erst auf Klick zeigen<small>In der Review bleiben der grüne Pfeil und der beste Zug verdeckt – so kannst du ihn erst selbst suchen.</small></span>
+          <input id="pref-hide" type="checkbox" />
         </label>
         <label class="row">
           <span>Live-Engine beim Start an<small>Zeigt die besten Varianten zur Stellung auf dem Brett.</small></span>

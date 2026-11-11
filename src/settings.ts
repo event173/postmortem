@@ -51,6 +51,8 @@ export interface SettingsDeps {
   onEngineChanged: () => void;
   /** The "live engine on" preference changed. */
   onLiveDefault: (on: boolean) => void;
+  /** The "hide the solution" setting changed (redraw the review). */
+  onHideSolution: () => void;
 }
 
 let deps: SettingsDeps;
@@ -85,6 +87,11 @@ export function autoAnalysePref(): boolean {
   return store.get("auto-analyse") !== "0";
 }
 
+/** In the review, a mistake's best move stays hidden until you tried or asked for it. */
+export function hideSolutionPref(): boolean {
+  return store.get("hide-solution") === "1";
+}
+
 export function refinePref(): RefinePref {
   const v = store.get("refine");
   return v === "always" || v === "never" ? v : "ask";
@@ -117,6 +124,13 @@ export function initSettings(d: SettingsDeps) {
   const auto = $("pref-auto") as HTMLInputElement;
   auto.checked = autoAnalysePref();
   auto.addEventListener("change", () => store.set("auto-analyse", auto.checked ? "1" : "0"));
+
+  const hide = $("pref-hide") as HTMLInputElement;
+  hide.checked = hideSolutionPref();
+  hide.addEventListener("change", () => {
+    store.set("hide-solution", hide.checked ? "1" : "0");
+    deps.onHideSolution();
+  });
 
   const live = $("pref-live") as HTMLInputElement;
   live.checked = store.get("live") !== "0";

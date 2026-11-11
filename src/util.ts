@@ -81,6 +81,21 @@ const SPEEDS: Record<string, string> = {
 
 export const speedLabel = (speed: string) => SPEEDS[speed] ?? speed;
 
+const SPEED_ICONS: Record<string, string> = {
+  ultraBullet: "🚀",
+  bullet: "🚀",
+  blitz: "⚡",
+  rapid: "⏱️",
+  classical: "🐢",
+  correspondence: "📅",
+  daily: "📅",
+  import: "📋",
+  bot: "🤖",
+};
+
+/** A small picture for the kind of game (⚡ blitz, ⏱️ rapid …), empty if unknown. */
+export const speedIcon = (speed: string) => SPEED_ICONS[speed] ?? "";
+
 const PLATFORMS: Record<Platform, string> = { lichess: "Lichess", chesscom: "chess.com", local: t("Eigene") };
 
 export const platformLabel = (p: Platform) => PLATFORMS[p] ?? p;

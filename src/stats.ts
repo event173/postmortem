@@ -30,7 +30,6 @@ export function setGameWindow(w: GameWindow) {
 export interface StatsDeps {
   /** The accounts the statistics are about (depends on the platform switch). */
   accounts: () => Account[];
-  depth: () => number;
   /** Open a game in the review view at the given ply. */
   openGame: (gameId: string, ply: number) => void;
   /** Called after the batch analysed a game (to refresh "analysed" markers). */
@@ -861,6 +860,9 @@ export function autoAnalyse(count: number) {
 
 /** At most this many games are analysed automatically after one sync. */
 const AUTO_LIMIT = 20;
+/** Background analyses are quick ones – enough for statistics, puzzles and the
+ *  openings; the deep analysis is offered when you open a game. */
+const BATCH_DEPTH = 10;
 
 async function runBatch(limit: number) {
   const accounts = deps.accounts();
@@ -868,7 +870,7 @@ async function runBatch(limit: number) {
   batch = { done: 0, total: limit, current: null, finished: false };
   renderBatch();
   try {
-    await invoke<number>("analyse_all", { accounts, depth: deps.depth(), limit });
+    await invoke<number>("analyse_all", { accounts, depth: BATCH_DEPTH, limit });
   } catch (e) {
     $("batch").innerHTML = `<span class="error">${esc(String(e))}</span>`;
   } finally {

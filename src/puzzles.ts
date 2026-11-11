@@ -876,7 +876,7 @@ function renderText(error?: string) {
       <button data-act="back" class="primary">${t("Zurück zur Aufgabe")}</button>`;
   } else {
     const busy = phase === "opponent" || phase === "checking";
-    const why = phase === "wrong" && lastTry ? `<button data-act="why" class="primary">${t("Zeig mir, was passiert")}</button>` : "";
+    const why = phase === "wrong" && lastTry ? `<button data-act="why" class="primary">${t("Folgezüge anzeigen")}</button>` : "";
     const game = p.own
       ? `<button data-act="game" title="${t("Die Partie in der Review öffnen (das Puzzle wird abgebrochen)")}">${t("Partie öffnen")}</button>`
       : "";
