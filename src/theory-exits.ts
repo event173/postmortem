@@ -81,8 +81,8 @@ function theoryRow(p: TheoryExit): string {
       <div class="theory-verdict">${verdict}</div>
     </div>
     <div class="theory-actions">
+      <button class="primary" data-learn-line="${esc(p.gameId)}" data-ply="${p.ply}" data-color="${p.color}" data-family="${esc(p.family ?? "")}" title="${t("Die Eröffnungslinie bis zu dieser Stellung von Anfang an lernen")}">${t("Linie lernen")}</button>
       <button data-open="${p.gameId}" data-ply="${p.ply}" title="${t("Letzte Partie mit dieser Stellung öffnen")}">${t("Ansehen")}</button>
-      <button data-learn-line="${esc(p.gameId)}" data-ply="${p.ply}" data-color="${p.color}" data-family="${esc(p.family ?? "")}" title="${t("Die Eröffnungslinie bis zu dieser Stellung von Anfang an lernen")}">${t("Linie lernen")}</button>
     </div>
   </div>`;
 }

@@ -763,6 +763,70 @@ fn rep_set_move(db: State<DbState>, color: String, path: Vec<String>, uci: Strin
     tree::set_move(&db.0.lock().unwrap(), &color, &path, &uci)
 }
 
+/// Play another move in a position of your repertoire (`dry`: only count
+/// the moves that would go with the old one).
+#[tauri::command]
+fn rep_change_move(db: State<DbState>, color: String, path: Vec<String>, uci: String, dry: bool) -> Result<usize, String> {
+    tree::change_move(&db.0.lock().unwrap(), &color, &path, &uci, dry)
+}
+
+/// Let Stockfish check your moves (whole repertoire or one opening) it hasn't seen yet.
+#[tauri::command]
+async fn rep_check_quality(app: AppHandle, accounts: Vec<Account>, color: String, family: Option<String>) -> Result<tree::TreeView, String> {
+    let root = tree_root(&color, family.as_deref());
+    tree::check_quality(app, accounts, color, root).await
+}
+
+/// Your short idea behind a repertoire move.
+#[tauri::command]
+fn rep_set_note(db: State<DbState>, color: String, epd: String, note: String) -> Result<(), String> {
+    let note: String = note.trim().chars().take(300).collect();
+    db.0.lock().unwrap().set_rep_note(&color, &epd, &note).map(|_| ())
+}
+
+/// Your ideas behind your moves of one colour, by position (for the flashcards).
+#[tauri::command]
+fn rep_notes(db: State<DbState>, color: String) -> Result<std::collections::HashMap<String, String>, String> {
+    Ok(db.0.lock().unwrap().rep_moves(&color)?.into_values().filter(|m| !m.note.is_empty()).map(|m| (m.epd, m.note)).collect())
+}
+
+/// Up to which move gaps and coverage count (0 = no limit).
+#[tauri::command]
+fn rep_set_depth(db: State<DbState>, depth: usize) -> Result<(), String> {
+    tree::set_depth(&db.0.lock().unwrap(), depth)
+}
+
+/// The moves of a line played in "Erkunden" into your repertoire.
+#[tauri::command]
+fn rep_add_line(db: State<DbState>, color: String, moves: Vec<String>) -> Result<tree::Added, String> {
+    tree::add_manual(&db.0.lock().unwrap(), &color, &moves)
+}
+
+/// Remove your move in a position and what only follows from it (`dry`: only count).
+#[tauri::command]
+fn rep_delete_move(db: State<DbState>, color: String, path: Vec<String>, dry: bool) -> Result<usize, String> {
+    tree::delete_move(&db.0.lock().unwrap(), &color, &path, dry)
+}
+
+/// Remove the moves of one opening from your repertoire (`dry`: only count).
+#[tauri::command]
+fn rep_delete_family(db: State<DbState>, color: String, family: String, dry: bool) -> Result<usize, String> {
+    tree::delete_family(&db.0.lock().unwrap(), &color, &family, dry)
+}
+
+/// Compare new games with your repertoire; where you played something else,
+/// that card is due again. Returns those moments.
+#[tauri::command]
+async fn rep_check_games(app: AppHandle, accounts: Vec<Account>) -> Result<Vec<tree::Deviation>, String> {
+    with_db(app, move |db, _| tree::check_new_games(db, &accounts)).await
+}
+
+/// Where your games left your repertoire, newest first.
+#[tauri::command]
+async fn rep_deviations(app: AppHandle, accounts: Vec<Account>, limit: usize) -> Result<Vec<tree::GameReport>, String> {
+    with_db(app, move |db, _| tree::deviations(db, &accounts, limit)).await
+}
+
 /// What your games say about your openings ("Für dich", "Deine Eröffnungen").
 #[tauri::command]
 async fn opening_recommendations(app: AppHandle, accounts: Vec<Account>) -> Result<Vec<recommend::Insight>, String> {
@@ -1183,6 +1247,16 @@ pub fn run() {
             rep_tree,
             rep_tree_prepare,
             rep_set_move,
+            rep_change_move,
+            rep_add_line,
+            rep_set_note,
+            rep_check_quality,
+            rep_notes,
+            rep_set_depth,
+            rep_delete_move,
+            rep_delete_family,
+            rep_check_games,
+            rep_deviations,
             rep_summaries,
             sound_available,
             sound_register,

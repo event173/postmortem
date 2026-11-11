@@ -82,6 +82,12 @@ const MIGRATIONS: &[&str] = &[
         added_at INTEGER NOT NULL,
         PRIMARY KEY (color, epd)
      );",
+    // 11: games already compared with your repertoire (see tree::check_new_games)
+    "CREATE TABLE rep_checked (game_id TEXT PRIMARY KEY, checked_at INTEGER NOT NULL);",
+    // 12: your short idea behind a repertoire move
+    "ALTER TABLE rep_moves ADD COLUMN note TEXT NOT NULL DEFAULT '';",
+    // 13: Stockfish's verdict on moves ("<epd>|<uci>", see tree::check_quality)
+    "CREATE TABLE move_evals (key TEXT PRIMARY KEY, data TEXT NOT NULL, at INTEGER NOT NULL);",
 ];
 
 /// Spaced-repetition state of one opening line for one colour.
@@ -543,7 +549,7 @@ impl Db {
     pub fn rep_moves(&self, color: &str) -> Result<std::collections::HashMap<String, crate::tree::RepMove>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT epd, uci, san, path, source, added_at FROM rep_moves WHERE color = ?1")
+            .prepare("SELECT epd, uci, san, path, source, added_at, note FROM rep_moves WHERE color = ?1")
             .map_err(sql_err)?;
         let rows = stmt
             .query_map([color], |r| {
@@ -556,6 +562,7 @@ impl Db {
                     path: path.split_whitespace().map(String::from).collect(),
                     source: r.get(4)?,
                     added_at: r.get(5)?,
+                    note: r.get(6)?,
                 })
             })
             .map_err(sql_err)?;
@@ -573,6 +580,64 @@ impl Db {
             )
             .map_err(sql_err)?;
         Ok(())
+    }
+
+    /// Stockfish's verdicts on moves, by "<epd>|<uci>".
+    pub fn move_evals(&self) -> Result<std::collections::HashMap<String, crate::analysis::MoveReview>, String> {
+        let mut stmt = self.conn.prepare("SELECT key, data FROM move_evals").map_err(sql_err)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(sql_err)?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (k, data) = row.map_err(sql_err)?;
+            if let Ok(r) = serde_json::from_str(&data) {
+                out.insert(k, r);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn set_move_eval(&self, key: &str, review: &crate::analysis::MoveReview, at: i64) -> Result<(), String> {
+        let data = serde_json::to_string(review).map_err(|e| e.to_string())?;
+        self.conn
+            .execute(
+                "INSERT INTO move_evals (key, data, at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET data = excluded.data, at = excluded.at",
+                params![key, data, at],
+            )
+            .map_err(sql_err)?;
+        Ok(())
+    }
+
+    /// Your idea behind your move in a position ("" removes it).
+    pub fn set_rep_note(&self, color: &str, epd: &str, note: &str) -> Result<usize, String> {
+        self.conn
+            .execute("UPDATE rep_moves SET note = ?3 WHERE color = ?1 AND epd = ?2", params![color, epd, note])
+            .map_err(sql_err)
+    }
+
+    /// Remove your moves in these positions, with their cards.
+    pub fn delete_rep_moves(&self, color: &str, epds: &[String]) -> Result<(), String> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_err)?;
+        for e in epds {
+            tx.execute("DELETE FROM rep_moves WHERE color = ?1 AND epd = ?2", params![color, e]).map_err(sql_err)?;
+            tx.execute("DELETE FROM opening_progress WHERE color = ?1 AND line_id = ?2", params![color, crate::tree::card_id(e)])
+                .map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)
+    }
+
+    /// Games already compared with your repertoire.
+    pub fn rep_checked(&self) -> Result<std::collections::HashSet<String>, String> {
+        let mut stmt = self.conn.prepare("SELECT game_id FROM rep_checked").map_err(sql_err)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(sql_err)?;
+        rows.collect::<Result<_, _>>().map_err(sql_err)
+    }
+
+    pub fn add_rep_checked(&self, ids: &[String], now: i64) -> Result<(), String> {
+        let tx = self.conn.unchecked_transaction().map_err(sql_err)?;
+        for id in ids {
+            tx.execute("INSERT OR IGNORE INTO rep_checked (game_id, checked_at) VALUES (?1, ?2)", params![id, now]).map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)
     }
 
     pub fn line_extension(&self, line_id: &str) -> Result<Option<Vec<String>>, String> {

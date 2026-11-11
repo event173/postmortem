@@ -71,15 +71,22 @@ pub fn play_move(fen: &str, from: &str, to: &str, promotion: Option<&str>) -> Re
 
 /// Analyse the position before and after a move and classify it like a game move.
 pub fn evaluate_move(fen: &str, uci: &str, depth: u32) -> Result<MoveReview, String> {
+    let mut sf = start_engine()?;
+    evaluate_with(&mut sf, fen, uci, depth)
+}
+
+/// A Stockfish for several evaluations in a row.
+pub fn start_engine() -> Result<engine::Engine, String> {
+    let path = engine::find_stockfish().ok_or_else(crate::i18n::no_stockfish)?;
+    engine::Engine::start(&path, engine::threads(true), 64, 2)
+}
+
+/// `evaluate_move` with an engine that is already running.
+pub fn evaluate_with(sf: &mut engine::Engine, fen: &str, uci: &str, depth: u32) -> Result<MoveReview, String> {
     let before = analysis::parse_fen(fen)?;
     let m = coach::parse_uci(&before, uci).ok_or_else(|| crate::tr!("Illegaler Zug", "Illegal move"))?;
     let mut after = before.clone();
     after.play_unchecked(m);
-
-    let path = engine::find_stockfish()
-        .ok_or_else(crate::i18n::no_stockfish)?;
-    let threads = engine::threads(true);
-    let mut sf = engine::Engine::start(&path, threads, 64, 2)?;
     let mut eval = |p: &shakmaty::Chess| match analysis::terminal_eval(p) {
         Some(l) => Ok(l),
         None => sf.analyse(&analysis::fen(p), depth),

@@ -97,6 +97,29 @@ let names: (string | null)[] = [null];
 let inBook = true;
 
 let moves: Moves | null = null;
+/** Result of "Ins Repertoire" for the moves on the board (cleared when they change). */
+let repNote: string | null = null;
+
+interface Added {
+  added: number;
+  conflict: string | null;
+}
+
+/** Your moves of the line on the board into your repertoire (up to where you play something else). */
+async function addToRepertoire() {
+  const ucis = line.slice(0, cursor).map((m) => m.uci);
+  try {
+    const r = await invoke<Added>("rep_add_line", { color, moves: ucis });
+    repNote = r.added
+      ? `✓ ${tn(r.added, "1 Zug übernommen", "{n} Züge übernommen")}${r.conflict ? ` · ${t("ab {move} spielst du anders", { move: fig(r.conflict) })}` : ""}`
+      : r.conflict
+        ? t("Dort spielst du {move}", { move: fig(r.conflict) })
+        : `✓ ${t("Schon in deinem Repertoire")}`;
+  } catch (e) {
+    repNote = esc(String(e));
+  }
+  renderPanel();
+}
 let lichess: LichessData | null = null;
 let lichessState: "off" | "loading" | "ok" | "error" = "off";
 let lichessError = "";
@@ -187,6 +210,7 @@ function reset() {
  */
 async function load(auto = false) {
   const g = ++gen;
+  repNote = null;
   clearTimeout(timer);
   lichess = null;
   lichessState = "loading";
@@ -371,6 +395,9 @@ function renderPanel() {
       </div>
       <button id="ex-reset" ${line.length ? "" : "disabled"}>${t("Neu")}</button>
       <span id="ex-card-slot"></span>
+      <button id="ex-rep" ${line.slice(0, cursor).some((_, i) => (i % 2 === 0) === (color === "white")) ? "" : "disabled"} title="${t(
+        "Deine Züge dieser Folge in dein Repertoire übernehmen – jeder wird eine Karte im Karteikasten",
+      )}">${repNote ?? t("Ins Repertoire")}</button>
     </div>
     <label class="ex-opt"><input type="checkbox" id="ex-realistic" ${realistic ? "checked" : ""}/> ${t("Gegner zieht realistisch")}
       <small>${t("Die App wählt die Züge deines Gegners nach Häufigkeit.")}</small></label>
@@ -406,6 +433,7 @@ function renderPanel() {
     }),
   );
   $("ex-reset").addEventListener("click", reset);
+  $("ex-rep").addEventListener("click", addToRepertoire);
   $("ex-card-slot").appendChild(cardButton());
   ($("ex-realistic") as HTMLInputElement).addEventListener("change", (e) => {
     realistic = (e.target as HTMLInputElement).checked;

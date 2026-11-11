@@ -26,7 +26,7 @@ import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
 import { openingName } from "./opening-names";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 import { explorerKey, explorerMove, explorerNav, startExplorer, stopExplorer } from "./explorer";
-import { bindTheoryList, theoryListHtml, type TheoryReport } from "./theory-exits";
+import { bindTheoryList, theoryListHtml, type TheoryExit, type TheoryReport } from "./theory-exits";
 
 type Color = "white" | "black";
 
@@ -206,6 +206,37 @@ interface TreeSuggestion {
   san: string;
   share: number | null;
   book: boolean;
+  /** How often you played it here in your games. */
+  games: number;
+}
+
+/** What you played in your games instead of your repertoire move. */
+interface TreeStray {
+  played: string;
+  uci: string;
+  times: number;
+  gameId: string;
+  ply: number;
+  since: boolean;
+}
+
+/** Where one of your games left your repertoire (see tree.rs). */
+interface GameReport {
+  color: Color;
+  kind: "deviation" | "gap";
+  epd: string;
+  path: string[];
+  played: string | null;
+  playedUci: string | null;
+  mine: string | null;
+  opp: string | null;
+  gameId: string;
+  ply: number;
+  createdAt: number;
+  since: boolean;
+  opening: string | null;
+  family: string | null;
+  times: number;
 }
 
 /** A position of your repertoire in which you are to move (see tree.rs). */
@@ -230,6 +261,19 @@ interface TreeNode {
   alts: TreeSuggestion[];
   hasChildren: boolean;
   opening: string | null;
+  games: number;
+  strays: TreeStray[];
+  note: string;
+  recommended: string | null;
+  verdict: Verdict | null;
+}
+
+/** Stockfish's verdict on one of your repertoire moves. */
+interface Verdict {
+  class: Class;
+  best: string | null;
+  bestUci: string | null;
+  weak: boolean;
 }
 
 interface TreeView {
@@ -243,6 +287,9 @@ interface TreeView {
   ratings: string;
   complete: boolean;
   error: string | null;
+  depth: number;
+  weak: number;
+  checked: number;
 }
 
 interface VariationGroup {
@@ -281,8 +328,8 @@ export interface OpeningDeps {
 }
 
 /** What the board is used for: learning (one opening), the due reviews, or your own mistakes. */
-type TrainMode = "learn" | "due" | "own" | "explore" | "tree";
-type View = "home" | "browse" | "train";
+type TrainMode = "learn" | "due" | "own" | "explore" | "tree" | "spar";
+type View = "home" | "browse" | "train" | "opening";
 type Sort = "popular" | "mine" | "learning" | "az";
 /** "intro": lesson start, "next": waiting for "Weiter" before the opponent's move (lesson). */
 type Phase = "loading" | "empty" | "intro" | "next" | "opponent" | "solve" | "checking" | "wrong" | "done";
@@ -365,7 +412,15 @@ let insightOf: Record<string, Insight> = {};
 /** "Deine Karten" unfolded on the home view. */
 let cardsOpen = false;
 /** Your openings as repertoire trees in a few numbers, by "color|family" (home view). */
-let summaries: Record<string, { coverage: number | null; gaps: number; cards: number; due: number }> = {};
+let summaries: Record<string, { coverage: number | null; gaps: number; cards: number; due: number; weak: number }> = {};
+/** The opening page: which opening, its part of your repertoire, and Stockfish checking it. */
+let page: { color: Color; family: string } | null = null;
+let pageTree: TreeView | null = null;
+let pageHarmless = false;
+/** Training started from the opening page: "← back" goes there. */
+let fromPage = false;
+/** Stockfish checking your moves: progress by colour. */
+let quality: { color: Color; done: number; total: number } | null = null;
 /** Where you leave theory (home view), all of it shown, and scroll there once loaded. */
 let theory: TheoryReport | null = null;
 let theoryAll = false;
@@ -383,6 +438,27 @@ let treeSel: string | null = null;
 const treeOpen = new Set<string>();
 /** Fetching the numbers from Lichess right now. */
 let treeFetching = false;
+/** A position to select once the tree is there (from "Abgleich mit deinen Partien"). */
+let treeWant: string | null = null;
+/** Choosing another move for the selected position on the board. */
+let treeEditing = false;
+/** "Andere Möglichkeiten" unfolded for the selected gap. */
+let treeAltsOpen = false;
+/** Stockfish's verdict on candidate moves in the tree, by "fen|uci" (null: no verdict). */
+const treeEvals = new Map<string, MoveReview | null>();
+const treeEvalRuns = new Map<string, Promise<MoveReview | null>>();
+/** One evaluation at a time. */
+let treeEvalQueue: Promise<unknown> = Promise.resolve();
+/** Classes worth a warning before a move goes into the repertoire. */
+const WEAK: Class[] = ["inaccuracy", "mistake", "miss", "blunder"];
+/** Where your games left your repertoire, and the new ones since the app started. */
+let reports: GameReport[] = [];
+let reportsAll = false;
+let freshDeviations = 0;
+const REPORTS_FOLDED = 4;
+/** Your ideas behind your repertoire moves, by colour and position (for the flashcards). */
+let notes: Record<Color, Record<string, string>> = { white: {}, black: {} };
+const DEPTHS = [8, 10, 12, 15, 0];
 let treeToken = 0;
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -413,6 +489,11 @@ export function initOpenings(d: OpeningDeps) {
     }),
   );
   $("op-search").addEventListener("input", renderList);
+  listen<{ color: Color; done: number; total: number }>("rep-quality-progress", (e) => {
+    quality = e.payload.done < e.payload.total ? e.payload : null;
+    if (trainMode === "tree" && view === "train") renderTreePanel();
+    else if (view === "opening") renderPage();
+  });
   listen<{ color: Color; family: string; done: number; waiting: boolean }>("relevance-progress", (e) => {
     fetching = { key: `${e.payload.color}|${e.payload.family}`, done: e.payload.done, waiting: e.payload.waiting };
     if (trainMode === "tree" && view === "train") renderTreePanel();
@@ -464,6 +545,13 @@ export function openingNav(dir: "first" | "prev" | "next" | "last"): boolean {
 export function openingKey(e: KeyboardEvent): boolean {
   if (view !== "train") return false;
   if (trainMode === "explore") return explorerKey(e);
+  if (trainMode === "spar") {
+    if (e.key === "Enter" && spar?.phase === "end") {
+      startSpar();
+      return true;
+    }
+    return false;
+  }
   if ((e.key === "Enter" || e.key === "ArrowRight") && (phase === "intro" || phase === "next")) {
     advance();
     return true;
@@ -489,6 +577,7 @@ function setView(v: View) {
   // The repertoire tree needs a wide column.
   layout.classList.toggle("tree-mode", v === "train" && active && trainMode === "tree");
   $("op-home").hidden = !(v === "home" && active);
+  $("op-opening").hidden = !(v === "opening" && active);
   $("op-browse-view").hidden = !(v === "browse" && active);
   $("openings").hidden = !(v === "train" && active);
   if (v !== "train") {
@@ -500,9 +589,14 @@ function setView(v: View) {
     consolidate = null;
     showTheory(null);
   }
-  if (v === "home") {
+  if (v === "home") fromPage = false;
+  if (v === "opening") {
+    renderPage();
+    loadPage();
+  } else if (v === "home") {
     renderHome();
-    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards(), loadRecs(), loadTheory()])
+    checkGames()
+      .then(() => Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards(), loadRecs(), loadTheory(), loadReports()]))
       .then(loadSummaries)
       .then(() => {
         renderHome();
@@ -522,6 +616,7 @@ function setView(v: View) {
     renderTop();
     renderSidebar();
     render();
+    loadNotes();
   }
 }
 
@@ -553,6 +648,23 @@ async function loadRecs() {
 async function loadSummaries() {
   const keys = myOpenings().map((o) => [o.color, o.family]);
   summaries = await invoke<typeof summaries>("rep_summaries", { accounts: deps.accounts(), keys }).catch(() => ({}));
+}
+
+/** Compare new games with your repertoire (cards you played differently become due). */
+async function checkGames() {
+  const found = await invoke<GameReport[]>("rep_check_games", { accounts: deps.accounts() }).catch(() => []);
+  freshDeviations += found.length;
+}
+
+async function loadReports() {
+  reports = await invoke<GameReport[]>("rep_deviations", { accounts: deps.accounts(), limit: 20 }).catch(() => []);
+}
+
+async function loadNotes() {
+  const [white, black] = await Promise.all(
+    (["white", "black"] as Color[]).map((color) => invoke<Record<string, string>>("rep_notes", { color }).catch(() => ({}))),
+  );
+  notes = { white, black };
 }
 
 async function loadTheory() {
@@ -728,6 +840,7 @@ const ICON = {
   learn: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2z"/><path d="M4 20a2 2 0 0 0 2 2h13v-4"/><path d="M9 8h6M9 11h4"/></svg>`,
   due: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="14" height="13" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-2"/><path d="M7 13l2 2 4-4"/></svg>`,
   own: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>`,
+  tree: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="4.5" r="2"/><circle cx="5" cy="19.5" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="19" cy="19.5" r="2"/><path d="M12 6.5V17.5M12 11c-4 0-7 2-7 6.5M12 11c4 0 7 2 7 6.5"/></svg>`,
   explore: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
 };
 
@@ -759,6 +872,7 @@ function renderHome() {
       ${tile("own", ICON.own, t("Fehler aus deinen Partien"), ownText, t("Stellungen aus deinen Partien, in denen du in der Eröffnung danebengegriffen hast."), { off: !ownCount })}
       ${tile("learn", ICON.learn, t("Eröffnungen lernen"), learnText, t("Eröffnung und Farbe aussuchen. Dann Zug für Zug, mit Erklärung zu jedem Zug."))}
       ${tile("explore", ICON.explore, t("Erkunden"), t("Züge ausprobieren"), t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess."))}
+      ${tile("tree", ICON.tree, t("Mein Repertoire"), t("Baum, Lücken, eigene Züge"), t("Für Fortgeschrittene: dein ganzes Repertoire als Baum – Lücken füllen, Züge ändern, Stockfish prüft deine Züge."))}
     </div>
     ${
       removedRare
@@ -769,16 +883,25 @@ function renderHome() {
           )}</p>`
         : ""
     }
+    ${
+      freshDeviations
+        ? `<p class="op-home-note">${tn(
+            freshDeviations,
+            "In einer neuen Partie hast du anders gespielt als in deinem Repertoire – diese Karte ist wieder fällig.",
+            "In {n} neuen Partien hast du anders gespielt als in deinem Repertoire – diese Karten sind wieder fällig.",
+          )}</p>`
+        : ""
+    }
     <div class="op-home-mine">
       <h3>${t("Deine Eröffnungen")}</h3>
       ${
         mine.length
-          ? `<p class="panel-sub">${t("Was du lernst und was du spielst (ab 3 Partien). Oben steht, wo sich Lernen am meisten lohnt. Ein Klick öffnet dein Repertoire in dieser Eröffnung.")}
-               <span class="op-whole">${t("Ganzes Repertoire:")} <button class="link" data-whole="white">${t("Weiß")}</button> · <button class="link" data-whole="black">${t("Schwarz")}</button></span></p>
+          ? `<p class="panel-sub">${t("Was du lernst und was du spielst (ab 3 Partien). Oben steht, wo sich Lernen am meisten lohnt. Ein Klick öffnet die Eröffnung zum Lernen.")}</p>
              <div class="op-mine-list">${mine.map(openingRow).join("")}</div>`
           : `<p class="muted">${t("Noch keine. Wähl oben „Eröffnungen lernen“.")}</p>`
       }
     </div>
+    ${reportsHtml()}
     ${theoryHtml()}
     <div class="op-home-mine op-home-cards">
       <button class="op-cards-toggle" ${cards.length ? "" : "disabled"}>${cards.length ? (cardsOpen ? "▾" : "▸") : ""} ${t("Deine Karten ({n})", { n: cards.length })}</button>
@@ -815,6 +938,17 @@ function renderHome() {
       theoryEl.scrollIntoView({ block: "start" });
     }
   }
+  home.querySelectorAll<HTMLElement>("[data-report]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const r = reports[Number(b.dataset.report)];
+      if (b.dataset.act === "game") deps.openGame(r.gameId, r.ply);
+      else openTree(r.color, r.family, r.epd);
+    }),
+  );
+  home.querySelector(".op-reports-more")?.addEventListener("click", () => {
+    reportsAll = !reportsAll;
+    renderHome();
+  });
   home.querySelector(".op-cards-toggle")?.addEventListener("click", () => {
     cardsOpen = !cardsOpen;
     renderHome();
@@ -823,15 +957,15 @@ function renderHome() {
     b.addEventListener("click", () => {
       const go = b.dataset.go;
       if (go === "learn") setView("browse");
+      else if (go === "tree") openTree("white", null);
       else startTrain(go as TrainMode, null);
     }),
   );
   home.querySelectorAll<HTMLElement>(".op-mine-row[data-family]").forEach((row) => {
-    const go = () => openTree(row.dataset.color as Color, row.dataset.family!);
+    const go = () => openPage(row.dataset.color as Color, row.dataset.family!);
     row.addEventListener("click", go);
     row.addEventListener("keydown", (e) => e.key === "Enter" && go());
   });
-  home.querySelectorAll<HTMLElement>("[data-whole]").forEach((b) => b.addEventListener("click", () => openTree(b.dataset.whole as Color, null)));
   home.querySelectorAll<HTMLElement>(".op-card-row").forEach((row) => {
     const go = (e: Event) => {
       if ((e.target as HTMLElement).closest(".op-card-del")) return;
@@ -853,13 +987,15 @@ function renderHome() {
 
 /** Start an opening over after asking; true if it was reset. */
 async function resetOpening(color: Color, family: string): Promise<boolean> {
+  const moves = await invoke<number>("rep_delete_family", { color, family, dry: true }).catch(() => 0);
   const ok = confirm(
-    t("Lernstand für {family} als {side} zurücksetzen? Alle Varianten fangen wieder bei „neu“ an – die Eröffnung bleibt in deiner Liste.", {
+    `${t("{family} als {side} zurücksetzen? Der Kurs fängt wieder bei „neu“ an – die Eröffnung bleibt in deiner Liste.", {
       family: openingName(family),
       side: SIDE[color],
-    }),
+    })}${moves ? ` ${tn(moves, "Dazu kommt 1 Zug aus deinem Repertoire (mit Karte).", "Dazu kommen {n} Züge aus deinem Repertoire (mit Karten).")}` : ""}`,
   );
   if (!ok) return false;
+  if (moves) await invoke("rep_delete_family", { color, family, dry: false });
   status = await invoke<Status>("opening_reset", { color, family });
   await loadProgress();
   return true;
@@ -887,6 +1023,10 @@ function renderTop() {
       ? treeFamily
         ? t("Mein Repertoire: {family} als {side}", { family: esc(openingName(treeFamily)), side: SIDE[treeColor] })
         : t("Mein Repertoire als {side}", { side: SIDE[treeColor] })
+      : trainMode === "spar"
+      ? treeFamily
+        ? t("Sparring: {family} als {side}", { family: esc(openingName(treeFamily)), side: SIDE[treeColor] })
+        : t("Sparring als {side}", { side: SIDE[treeColor] })
       : trainMode === "due"
       ? t("Karteikasten")
       : trainMode === "own"
@@ -894,8 +1034,9 @@ function renderTop() {
         : focus
           ? t("Lernen: {family} als {side}", { family: esc(openingName(focus.family)), side: SIDE[focus.color] })
           : t("Lernen");
-  $("op-top").innerHTML = `<button id="op-home-btn">← ${t("Übersicht")}</button><span class="op-top-title">${title}</span>`;
-  $("op-home-btn").addEventListener("click", () => setView("home"));
+  const back = fromPage && page ? openingName(page.family) : t("Übersicht");
+  $("op-top").innerHTML = `<button id="op-home-btn">← ${esc(back)}</button><span class="op-top-title">${title}</span>`;
+  $("op-home-btn").addEventListener("click", () => setView(fromPage && page ? "opening" : "home"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,7 +1160,7 @@ function renderList() {
 
 function renderSidebar() {
   if (!active || view !== "train") return;
-  if (trainMode === "explore" || trainMode === "tree") {
+  if (trainMode === "explore" || trainMode === "tree" || trainMode === "spar") {
     $("op-focus").hidden = true;
     $("op-variations").hidden = true;
     return;
@@ -1119,13 +1260,16 @@ function renderSidebar() {
 // your repertoire as a tree
 
 /** Open the tree of an opening (or of the whole repertoire for a colour). */
-export async function openTree(color: Color, family: string | null) {
+export async function openTree(color: Color, family: string | null, select: string | null = null, home: string | null = family) {
   trainMode = "tree";
   focus = null;
   treeColor = color;
-  treeFamily = treeHome = family;
+  treeFamily = family;
+  treeHome = home;
   tree = null;
   treeSel = null;
+  treeWant = select;
+  treeEditing = false;
   treeOpen.clear();
   setView("train");
   await loadTree(true);
@@ -1156,10 +1300,23 @@ async function loadTree(fetch: boolean) {
       renderTreePanel();
     }
   }
+  if (tk === treeToken && trainMode === "tree") checkQuality(treeColor, treeFamily, tk);
+  // The wanted position isn't in this opening's part: show the whole repertoire.
+  if (tk === treeToken && treeWant && treeFamily) {
+    treeFamily = null;
+    tree = null;
+    treeOpen.clear();
+    renderTop();
+    await loadTree(true);
+  }
 }
 
 function setTree(v: TreeView) {
   tree = v;
+  if (treeWant && v.nodes.some((n) => n.id === treeWant)) {
+    treeSel = treeWant;
+    treeWant = null;
+  }
   if (!treeSel || !v.nodes.some((n) => n.id === treeSel)) treeSel = v.nodes[0]?.id ?? null;
   if (!treeOpen.size) v.nodes.filter((n) => n.depth === 0).forEach((n) => treeOpen.add(n.id));
   openPathTo(treeSel);
@@ -1182,6 +1339,8 @@ function openPathTo(id: string | null) {
 
 function selectNode(id: string) {
   treeSel = id;
+  treeEditing = false;
+  treeAltsOpen = false;
   openPathTo(id);
   renderTree();
 }
@@ -1221,7 +1380,9 @@ function renderTreePanel() {
           : `${t("Hole bei Lichess, was auf deinem Niveau gespielt wird …")}${f ? ` ${tn(f.done, "1 Stellung geholt", "{n} Stellungen geholt")}` : ""}`
       }</p>`
     : v.error
-      ? `<p class="tree-status muted">${esc(v.error)}</p>`
+      ? `<p class="tree-status muted">${esc(v.error)}${
+          v.ratings ? "" : ` <button class="link" id="tree-token">${t("Lichess-Schlüssel eintragen")}</button><br>${t("Ohne ihn siehst du deine Züge und die Lücken aus deinen Partien, aber keine Abdeckung.")}`
+        }</p>`
       : "";
   const byId = new Map(v.nodes.map((n) => [n.id, n]));
   const visible = (n: TreeNode) => {
@@ -1239,12 +1400,20 @@ function renderTreePanel() {
           ? `<span class="tree-bar"><i class="${n.gap ? "gap" : ""}" style="width:${Math.min(100, n.reach * 100)}%"></i></span><span class="tree-pct">${pct(n.reach)}</span>`
           : `<span class="tree-pct muted">–</span>`;
       const state = n.gap
-        ? `<span class="tree-state gap">${t("keine Antwort")}</span>`
+        ? `<span class="tree-state gap">${n.games ? tn(n.games, "1× in deinen Partien", "{n}× in deinen Partien") : t("keine Antwort")}</span>`
         : `${pips(n.boxLevel)}<span class="tree-state ${n.due ? "due" : n.isNew ? "new" : ""}">${n.isNew ? t("neu") : n.due ? t("fällig") : n.boxLevel >= 3 ? t("sitzt") : t("im Lernen")}</span>`;
-      return `<div class="tree-row ${n.id === treeSel ? "selected" : ""}" style="padding-left:${n.depth * 14}px">
+      return `<div class="tree-row ${n.id === treeSel ? "selected" : ""} ${n.verdict?.weak ? "weak" : ""}" style="padding-left:${n.depth * 14}px">
         ${n.hasChildren ? `<button class="tree-caret" data-toggle="${esc(n.id)}" aria-label="${open ? t("Zuklappen") : t("Aufklappen")}">${open ? "▾" : "▸"}</button>` : `<span class="tree-caret"></span>`}
         <button class="tree-move" data-sel="${esc(n.id)}">${n.opp ? `<span class="tree-opp">${esc(fig(n.opp))}</span>` : ""}${
-          n.gap ? `<span class="tree-gap">? ${t("Lücke")}</span>` : `<b>${esc(fig(n.mine ?? ""))}</b>`
+          n.gap ? `<span class="tree-gap">+ ${t("Antwort fehlt")}</span>` : `<b>${esc(fig(n.mine ?? ""))}</b>`
+ }${
+          n.verdict?.weak
+            ? `<span class="tree-weak" style="--c:${CLASSES[n.verdict.class].color}" title="${t("Stockfish hält diesen Zug für schwach")}">${CLASSES[n.verdict.class].symbol} ${CLASSES[n.verdict.class].label}</span>`
+            : ""
+        }${
+          !n.gap && n.strays.length
+            ? `<span class="tree-stray" title="${t("So oft hast du hier in deinen Partien etwas anderes gespielt")}">≠ ${n.strays.reduce((a, x) => a + x.times, 0)}×</span>`
+            : ""
         }${exit ? `<span class="tree-exit" title="${t("Hier weichst du in deinen Partien ab und machst kurz danach einen Fehler")}">⚠ ${exit.times}×</span>` : ""}</button>
         <span class="tree-reach">${reach}</span>
         <span class="tree-card">${state}</span>
@@ -1255,15 +1424,27 @@ function renderTreePanel() {
     ? `<button class="link" id="tree-scope">${t("Ganzes Repertoire als {side}", { side: SIDE[treeColor] })}</button>`
     : treeHome
       ? `<button class="link" id="tree-scope">${t("Nur {family}", { family: esc(openingName(treeHome)) })}</button>`
+      : `<span class="segmented tree-colors">${(["white", "black"] as Color[])
+          .map((c) => `<button data-tree-color="${c}" class="${c === treeColor ? "active" : ""}">${SIDE[c]}</button>`)
+          .join("")}</span>`;
+  const q = quality?.color === treeColor ? quality : null;
+  const qualityLine = q
+    ? `<p class="tree-status muted">${t("Stockfish prüft deine Züge … {done} von {total}", { done: q.done, total: q.total })}</p>`
+    : v.weak
+      ? `<p class="tree-status op-weak">${tn(v.weak, "Stockfish hält 1 deiner Züge für schwach.", "Stockfish hält {n} deiner Züge für schwach.")}</p>`
       : "";
   el.innerHTML = `
     <div class="tree-head">
       <div class="tree-cov-row"><span>${t("Abdeckung auf deinem Niveau")}</span><b>${cov != null ? pct(cov) : "–"}</b></div>
       <div class="tree-cov"><i style="width:${(cov ?? 0) * 100}%"></i></div>
-      <div class="muted tree-counts">${tn(v.gaps, "1 Lücke", "{n} Lücken")} · ${tn(v.cards, "1 Karte", "{n} Karten")} · ${t("{n} fällig", { n: v.due })}${v.ratings ? ` · Lichess ${esc(v.ratings)}` : ""}</div>
+      <div class="muted tree-counts"><label class="tree-depth" title="${t("Lücken und Abdeckung zählen bis zu diesem Zug. Deine eigenen Züge danach bleiben im Baum.")}">${t("Bis Zug")}
+        <select id="tree-depth">${DEPTHS.map((d) => `<option value="${d}" ${d === v.depth ? "selected" : ""}>${d ? d : t("alle")}</option>`).join("")}</select></label> · ${tn(v.gaps, "1 Lücke", "{n} Lücken")} · ${tn(v.cards, "1 Karte", "{n} Karten")} · ${t("{n} fällig", { n: v.due })}${v.ratings ? ` · Lichess ${esc(v.ratings)}` : ""}</div>
       ${status}
+      ${qualityLine}
       <div class="tree-actions">
         ${v.gaps ? `<button class="primary" id="tree-next-gap">${t("Nächste Lücke")} →</button>` : `<span class="tree-ok">${t("Keine Lücken über 3 % ✓")}</span>`}
+        ${v.weak ? `<button id="tree-next-weak" class="tree-weak-btn">${t("Schwacher Zug")} →</button>` : ""}
+        ${v.cards ? `<button id="tree-spar" title="${t("Der Gegner spielt nach Häufigkeit durch deinen Baum, du antwortest mit deinen Zügen")}">${t("Sparring")} ▶</button>` : ""}
         ${treeHome ? `<button id="tree-course" title="${t("Die Eröffnung Zug für Zug mit Erklärungen lernen – was du lernst, kommt in dein Repertoire")}">${t("Mit dem Kurs lernen")}</button>` : ""}
         ${other}
       </div>
@@ -1273,8 +1454,8 @@ function renderTreePanel() {
     ${
       treeHome
         ? `<div class="tree-foot">${
-            progress[`${treeColor}|${treeHome}`]?.started
-              ? `<button class="link" id="tree-reset">${t("Kurs-Lernstand zurücksetzen")}</button>`
+            progress[`${treeColor}|${treeHome}`]?.started || v.cards
+              ? `<button class="link" id="tree-reset">${t("Eröffnung zurücksetzen")}</button>`
               : ""
           }${repertoire[treeColor].includes(treeHome) ? `<button class="link" id="tree-remove">${t("Aus „Deine Eröffnungen“ nehmen")}</button>` : ""}</div>`
         : ""
@@ -1292,9 +1473,28 @@ function renderTreePanel() {
     const gaps = v.nodes.filter((n) => n.gap).sort((a, b) => (b.reach ?? -1) - (a.reach ?? -1));
     if (gaps[0]) selectNode(gaps[0].id);
   });
+  document.getElementById("tree-spar")?.addEventListener("click", startSpar);
+  document.getElementById("tree-next-weak")?.addEventListener("click", () => {
+    // The next weak move after the selected one (round the tree).
+    const weak = v.nodes.filter((n) => n.verdict?.weak);
+    const at = weak.findIndex((n) => n.id === treeSel);
+    const next = weak[(at + 1) % weak.length];
+    if (next) selectNode(next.id);
+  });
+  el.querySelectorAll<HTMLElement>("[data-tree-color]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (b.dataset.treeColor !== treeColor) openTree(b.dataset.treeColor as Color, null);
+    }),
+  );
+  document.getElementById("tree-depth")?.addEventListener("change", async (e) => {
+    const depth = Number((e.target as HTMLSelectElement).value);
+    await invoke("rep_set_depth", { depth }).catch(console.error);
+    await loadTree(true);
+  });
+  document.getElementById("tree-token")?.addEventListener("click", () => document.getElementById("btn-settings")?.click());
   document.getElementById("tree-course")?.addEventListener("click", () => treeHome && startFocus(treeColor, treeHome));
   document.getElementById("tree-reset")?.addEventListener("click", async () => {
-    if (treeHome && (await resetOpening(treeColor, treeHome))) renderTreePanel();
+    if (treeHome && (await resetOpening(treeColor, treeHome))) await loadTree(false);
   });
   document.getElementById("tree-remove")?.addEventListener("click", async () => {
     if (!treeHome) return;
@@ -1331,24 +1531,57 @@ function renderTreeDetail() {
   head.innerHTML = `<span class="pz-tag op-review">${t("Dein Repertoire")}</span><span class="op-name">${n.opening ? esc(openingName(n.opening)) : ""}</span>`;
   const path = treePath(n);
   if (n.gap) {
-    text.innerHTML = `${
-      n.reach != null
-        ? t("Nach {moves} kommt das in {p} der Partien auf deinem Niveau – du hast noch keine Antwort.", { moves: `<b>${esc(path)}</b>`, p: pct(n.reach) })
-        : t("Nach {moves} hast du noch keine Antwort.", { moves: `<b>${esc(path)}</b>` })
-    } <b>${t("Was spielst du hier?")}</b> ${t("Spiel den Zug auf dem Brett oder wähl einen Vorschlag.")}`;
-    extra.innerHTML = n.suggestions.length
-      ? `<div class="tree-suggs">${n.suggestions
-          .map(
-            (s) =>
-              `<button class="tree-sugg" data-uci="${esc(s.uci)}"><b>${esc(fig(s.san))}</b><span class="muted">${[
-                s.share != null ? t("{p} der Partien", { p: pct(s.share) }) : "",
-                s.book ? t("Theorie") : "",
-              ]
-                .filter(Boolean)
-                .join(" · ")}</span></button>`,
-          )
-          .join("")}</div>`
+    text.innerHTML = n.reach != null
+      ? t("Nach {moves} kommt das in {p} der Partien auf deinem Niveau – du hast noch keine Antwort.", { moves: `<b>${esc(path)}</b>`, p: pct(n.reach) })
+      : t("Nach {moves} hast du noch keine Antwort.", { moves: `<b>${esc(path)}</b>` });
+    const facts = (s: TreeSuggestion) =>
+      [
+        s.book ? t("Theorie") : "",
+        s.share != null ? t("{p} der Partien", { p: pct(s.share) }) : "",
+        s.games ? tn(s.games, "deine Partien: 1×", "deine Partien: {n}×") : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    // Theory decides; outside theory, Stockfish's pick among the moves played here.
+    let rec = n.suggestions.find((s) => s.uci === n.recommended) ?? null;
+    let recWhy = t("Der Theoriezug – am häufigsten auf deinem Niveau gespielt");
+    if (!rec) {
+      n.suggestions.forEach((s) => treeEval(n.fen, s.uci));
+      const scored = n.suggestions.map((s) => ({ s, r: treeEvals.get(`${n.fen}|${s.uci}`) })).filter((x) => x.r);
+      if (n.suggestions.length && scored.length === n.suggestions.length) {
+        scored.sort((x, y) => y.r!.winAfter - x.r!.winAfter || (y.s.share ?? 0) - (x.s.share ?? 0));
+        rec = scored[0].s;
+        recWhy = t("Keine Theorie mehr – Stockfishs Wahl unter den Zügen, die hier gespielt werden");
+      }
+    } else {
+      treeEval(n.fen, rec.uci);
+    }
+    const others = n.suggestions.filter((s) => s !== rec);
+    if (treeAltsOpen) others.forEach((s) => treeEval(n.fen, s.uci));
+    const recHtml = rec
+      ? `<div class="tree-rec">
+          <span class="tree-rec-label">${t("Empfohlen")}</span>
+          <span class="tree-rec-move"><b>${esc(fig(rec.san))}</b> ${evalBadge(n.fen, rec.uci)}</span>
+          <span class="muted tree-rec-why">${recWhy}${facts(rec) ? ` · ${facts(rec)}` : ""}</span>
+          <button class="primary" data-take="${esc(rec.uci)}">${t("Übernehmen")}</button>
+        </div>`
+      : n.suggestions.length
+        ? `<p class="muted">${t("Stockfish prüft die Möglichkeiten …")}</p>`
+        : `<p class="muted">${t("Hier gibt es keine Vorschläge – spiel deinen Zug auf dem Brett, Stockfish prüft ihn.")}</p>`;
+    const othersHtml = others.length
+      ? `<button class="link tree-alts-toggle">${treeAltsOpen ? "▾" : "▸"} ${t("Andere Möglichkeiten ({n})", { n: others.length })}</button>${
+          treeAltsOpen
+            ? `<div class="tree-suggs">${others
+                .map(
+                  (s) =>
+                    `<button class="tree-sugg" data-take="${esc(s.uci)}"><b>${esc(fig(s.san))}</b> ${evalBadge(n.fen, s.uci)}<span class="muted">${facts(s)}</span></button>`,
+                )
+                .join("")}</div>
+               <p class="muted tree-own-hint">${t("Oder spiel einen eigenen Zug auf dem Brett – Stockfish prüft ihn, bevor er ins Repertoire kommt.")}</p>`
+            : ""
+        }`
       : "";
+    extra.innerHTML = recHtml + othersHtml;
     const gapExit = treeExits().get(n.id);
     if (gapExit) {
       extra.insertAdjacentHTML(
@@ -1361,7 +1594,34 @@ function renderTreeDetail() {
         )}</p>`,
       );
     }
-    extra.querySelectorAll<HTMLElement>("[data-uci]").forEach((b) => b.addEventListener("click", () => setTreeMove(b.dataset.uci!)));
+    extra.querySelector(".tree-alts-toggle")?.addEventListener("click", () => {
+      treeAltsOpen = !treeAltsOpen;
+      renderTreeDetail();
+    });
+    extra.querySelectorAll<HTMLElement>("[data-take]").forEach((b) => b.addEventListener("click", () => takeTreeMove(n, b.dataset.take!)));
+    return;
+  }
+  if (treeEditing) {
+    text.innerHTML = `${t("Statt {mine}: Spiel deinen neuen Zug auf dem Brett oder wähl einen hier.", { mine: `<b>${esc(fig(n.mine ?? ""))}</b>` })} <span class="muted">${t(
+      "Er bekommt eine neue Karte. Was nur nach dem alten Zug kam, fällt aus deinem Repertoire.",
+    )}</span>`;
+    const options: { uci: string; san: string; note: string }[] = [];
+    for (const x of n.strays) options.push({ uci: x.uci, san: x.played, note: tn(x.times, "1× in deinen Partien", "{n}× in deinen Partien") });
+    for (const a of n.alts) if (!options.some((o) => o.uci === a.uci)) options.push({ uci: a.uci, san: a.san, note: t("{p} der Partien", { p: pct(a.share ?? 0) }) });
+    options.forEach((o) => treeEval(n.fen, o.uci));
+    extra.innerHTML = `${
+      options.length
+        ? `<div class="tree-suggs">${options
+            .map((o) => `<button class="tree-sugg" data-uci="${esc(o.uci)}"><b>${esc(fig(o.san))}</b> ${evalBadge(n.fen, o.uci)}<span class="muted">${o.note}</span></button>`)
+            .join("")}</div>`
+        : ""
+    }<p class="muted tree-own-hint">${t("Stockfish prüft jeden Zug, bevor er ins Repertoire kommt.")}</p>`;
+    extra.querySelectorAll<HTMLElement>("[data-uci]").forEach((b) => b.addEventListener("click", () => takeTreeMove(n, b.dataset.uci!)));
+    actions.innerHTML = `<button data-tree="cancel">${t("Abbrechen")}</button>`;
+    actions.querySelector("[data-tree=cancel]")!.addEventListener("click", () => {
+      treeEditing = false;
+      renderTree();
+    });
     return;
   }
   const card = n.isNew
@@ -1373,7 +1633,9 @@ function renderTreeDetail() {
     n.opp
       ? t("Auf {opp} spielst du {mine}.", { opp: `<b>${esc(fig(n.opp))}</b>`, mine: `<b>${esc(fig(n.mine ?? ""))}</b>` })
       : t("Du spielst {mine}.", { mine: `<b>${esc(fig(n.mine ?? ""))}</b>` })
-  }<br><span class="muted">${card}${n.reach != null && n.depth > 0 ? ` · ${t("hierher kommen {p} der Partien", { p: pct(n.reach) })}` : ""}</span>`;
+  }<br><span class="muted">${card}${n.reach != null && n.depth > 0 ? ` · ${t("hierher kommen {p} der Partien", { p: pct(n.reach) })}` : ""}${
+    n.games ? ` · ${tn(n.games, "1× in deinen Partien", "{n}× in deinen Partien")}` : ""
+  }</span>`;
   const parts: string[] = [];
   const exit = treeExits().get(n.id);
   if (exit) {
@@ -1386,6 +1648,21 @@ function renderTreeDetail() {
       )}${n.mine ? ` ${t("Dein Repertoire-Zug ist {mine}.", { mine: `<b>${esc(fig(n.mine))}</b>` })}` : ""}</p>`,
     );
   }
+  if (n.verdict?.weak) {
+    const v = n.verdict;
+    parts.push(
+      `<p class="tree-weak-note">${t("Stockfish hält {mine} für {phrase}.", { mine: `<b>${esc(fig(n.mine ?? ""))}</b>`, phrase: CLASSES[v.class].phrase })}${
+        v.best ? ` ${t("Besser ist {best}.", { best: `<b>${esc(fig(v.best))}</b>` })} <button data-tree="best">${t("Zu {best} ändern", { best: esc(fig(v.best)) })}</button>` : ""
+      }</p>`,
+    );
+  }
+  if (n.strays.length) {
+    parts.push(
+      `<p class="tree-stray-note">≠ ${t("In deinen Partien hast du hier auch gespielt: {moves}.", {
+        moves: n.strays.map((x) => `<b>${esc(fig(x.played))}</b> (${x.times}×)`).join(", "),
+      })} <button class="link" data-tree="stray-game">${t("Letzte Partie")}</button></p>`,
+    );
+  }
   if (n.alts.length) {
     parts.push(
       `<span class="muted">${t("Andere Züge hier: {moves} – nicht in deinem Repertoire.", {
@@ -1393,17 +1670,43 @@ function renderTreeDetail() {
       })}</span>`,
     );
   }
+  parts.push(`<label class="op-idea op-idea-edit"><span class="op-idea-label">${t("Deine Idee zu diesem Zug")}</span>
+    <input type="text" id="tree-note" maxlength="300" value="${esc(n.note)}" placeholder="${t("Warum dieser Zug? Ein Satz reicht – z. B. „Läufer raus, bevor e6 ihn einsperrt“")}" /></label>`);
   extra.innerHTML = parts.join("");
-  actions.innerHTML = `${exit ? `<button data-tree="game">${t("Partie ansehen")}</button>` : ""}<button data-tree="practise" class="primary">${t("Diese Karte üben")}</button>`;
+  const noteInput = extra.querySelector<HTMLInputElement>("#tree-note")!;
+  noteInput.addEventListener("change", async () => {
+    const v = noteInput.value.trim();
+    n.note = v;
+    notes[treeColor][n.id] = v;
+    await invoke("rep_set_note", { color: treeColor, epd: n.id, note: v }).catch(console.error);
+  });
+  noteInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") noteInput.blur();
+  });
+  extra.querySelector("[data-tree=best]")?.addEventListener("click", () => n.verdict?.bestUci && changeTreeMove(n.verdict.bestUci));
+  extra.querySelector("[data-tree=stray-game]")?.addEventListener("click", () => {
+    const x = n.strays[0];
+    deps.openGame(x.gameId, x.ply);
+  });
+  actions.innerHTML = `${exit ? `<button data-tree="game">${t("Partie ansehen")}</button>` : ""}
+    <button data-tree="change" title="${t("In dieser Stellung einen anderen Zug spielen")}">${t("Zug ändern")}</button>
+    <button data-tree="delete" title="${t("Diesen Zug und alles, was nur danach kommt, aus deinem Repertoire nehmen")}">${t("Zweig löschen")}</button>
+    <button data-tree="practise" class="primary">${t("Diese Karte üben")}</button>`;
   actions.querySelector("[data-tree=practise]")!.addEventListener("click", () => practiseMove(n));
   actions.querySelector("[data-tree=game]")?.addEventListener("click", () => exit && deps.openGame(exit.gameId, exit.ply - 1));
+  actions.querySelector("[data-tree=change]")!.addEventListener("click", () => {
+    treeEditing = true;
+    renderTree();
+  });
+  actions.querySelector("[data-tree=delete]")!.addEventListener("click", () => deleteTreeMove(n));
 }
 
 function renderTreeBoard() {
   const n = treeNode(treeSel);
   if (!n) return;
-  const shown = n.gap ? n.fen : (n.fenAfter ?? n.fen);
-  const last = n.gap ? n.oppUci : n.mineUci;
+  const open = n.gap || treeEditing;
+  const shown = open ? n.fen : (n.fenAfter ?? n.fen);
+  const last = open ? n.oppUci : n.mineUci;
   deps.board.set({
     fen: shown,
     orientation: treeColor,
@@ -1413,11 +1716,11 @@ function renderTreeBoard() {
     movable: { color: undefined, dests: new Map() },
   });
   deps.board.setAutoShapes([]);
-  if (n.gap) {
-    // A gap: play your answer on the board.
+  if (open) {
+    // A gap (or another move): play your answer on the board.
     const id = n.id;
     invoke<PositionInfo>("position_info", { fen: n.fen }).then((info) => {
-      if (trainMode !== "tree" || treeSel !== id) return;
+      if (trainMode !== "tree" || treeSel !== id || !(n.gap || treeEditing)) return;
       deps.board.set({ movable: { color: treeColor, dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
     });
   }
@@ -1425,14 +1728,89 @@ function renderTreeBoard() {
 
 async function treeMove(orig: Key, dest: Key, promotion?: string) {
   const n = treeNode(treeSel);
-  if (!n?.gap) return renderTreeBoard();
+  if (!n?.gap && !treeEditing) return renderTreeBoard();
   try {
-    const played = await invoke<PlayedMove>("play_move", { fen: n.fen, from: orig, to: dest, promotion });
+    const played = await invoke<PlayedMove>("play_move", { fen: n!.fen, from: orig, to: dest, promotion });
     moveSound(played.san);
-    await setTreeMove(played.uci);
+    await takeTreeMove(n!, played.uci);
   } catch {
     renderTreeBoard();
   }
+}
+
+/** Let Stockfish check the moves of the tree it hasn't seen yet (in the background). */
+async function checkQuality(color: Color, family: string | null, tk: number) {
+  try {
+    const v = await invoke<TreeView>("rep_check_quality", { accounts: deps.accounts(), color, family });
+    if (trainMode === "tree" && tk === treeToken && view === "train") {
+      // Keep what's on screen (numbers from Lichess) – only the verdicts are new.
+      if (tree) {
+        const byId = new Map(v.nodes.map((n) => [n.id, n.verdict]));
+        tree.nodes.forEach((n) => (n.verdict = byId.get(n.id) ?? n.verdict));
+        tree.weak = tree.nodes.filter((n) => n.verdict?.weak).length;
+        tree.checked = tree.nodes.filter((n) => n.verdict).length;
+      }
+      quality = null;
+      renderTree();
+    }
+    return v;
+  } catch (e) {
+    console.error(e);
+    return null;
+  } finally {
+    quality = null;
+  }
+}
+
+/** Stockfish's verdict on a move (once per position and move; the detail redraws when it's there). */
+function treeEval(fen: string, uci: string): Promise<MoveReview | null> {
+  const key = `${fen}|${uci}`;
+  if (treeEvals.has(key)) return Promise.resolve(treeEvals.get(key)!);
+  let run = treeEvalRuns.get(key);
+  if (!run) {
+    run = treeEvalQueue.then(() =>
+      invoke<MoveReview>("evaluate_move", { fen, uci })
+        .catch(() => null)
+        .then((r) => {
+          treeEvals.set(key, r);
+          treeEvalRuns.delete(key);
+          const n = treeNode(treeSel);
+          if (n && n.fen === fen && trainMode === "tree" && view === "train") renderTreeDetail();
+          return r;
+        }),
+    );
+    treeEvalQueue = run;
+    treeEvalRuns.set(key, run);
+  }
+  return run;
+}
+
+/** The verdict as a small badge ("…" while Stockfish thinks). */
+function evalBadge(fen: string, uci: string): string {
+  const key = `${fen}|${uci}`;
+  if (!treeEvals.has(key)) return treeEvalRuns.has(key) ? `<span class="muted tree-eval">…</span>` : "";
+  const r = treeEvals.get(key);
+  if (!r) return "";
+  const c = CLASSES[r.classification];
+  return `<span class="tree-eval" style="color:${c.color}" title="${t("Stockfish: {label}", { label: c.label })}">${c.symbol} ${c.label}</span>`;
+}
+
+/** A move for the selected position – a gap or another move – after Stockfish had a look (asks if it's weak). */
+async function takeTreeMove(n: TreeNode, uci: string) {
+  const known = n.suggestions.find((s) => s.uci === uci);
+  if (!known?.book) {
+    const r = await treeEval(n.fen, uci);
+    if (r && WEAK.includes(r.classification)) {
+      const ok = confirm(
+        t("Stockfish hält {move} für {phrase}.", { move: fig(r.san), phrase: CLASSES[r.classification].phrase }) +
+          (r.bestSan && r.bestSan !== r.san ? ` ${t("Besser ist {best}.", { best: fig(r.bestSan) })}` : "") +
+          ` ${t("Trotzdem in dein Repertoire übernehmen?")}`,
+      );
+      if (!ok) return renderTreeBoard();
+    }
+  }
+  if (n.gap) await setTreeMove(uci);
+  else await changeTreeMove(uci);
 }
 
 /** Your answer for the selected gap: into the repertoire, as a new card. */
@@ -1447,6 +1825,431 @@ async function setTreeMove(uci: string) {
   }
   // The numbers after your new move may be missing: fetch them too.
   await loadTree(true);
+}
+
+/** Another move for the selected position (asks first if moves after the old one go). */
+async function changeTreeMove(uci: string) {
+  const n = treeNode(treeSel);
+  if (!n || n.gap) return;
+  if (uci === n.mineUci) {
+    treeEditing = false;
+    return renderTree();
+  }
+  if (!(await changeMoveAt(treeColor, n, uci))) return renderTreeBoard();
+  treeEditing = false;
+  await loadTree(true);
+}
+
+/** Another move in one of your positions (asks first if moves after the old one go); true if changed. */
+async function changeMoveAt(color: Color, n: TreeNode, uci: string): Promise<boolean> {
+  const args = { color, path: n.path, uci };
+  try {
+    const gone = await invoke<number>("rep_change_move", { ...args, dry: true });
+    if (
+      gone &&
+      !confirm(
+        tn(
+          gone,
+          "Nach {mine} hast du noch 1 weiteren Zug im Repertoire. Er fällt mit weg. Trotzdem ändern?",
+          "Nach {mine} hast du noch {n} weitere Züge im Repertoire. Sie fallen mit weg. Trotzdem ändern?",
+          { mine: fig(n.mine ?? "") },
+        ),
+      )
+    ) {
+      return false;
+    }
+    await invoke("rep_change_move", { ...args, dry: false });
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
+/** Take the selected move and what only follows from it out of the repertoire. */
+async function deleteTreeMove(n: TreeNode) {
+  const args = { color: treeColor, path: n.path };
+  const gone = await invoke<number>("rep_delete_move", { ...args, dry: true }).catch(() => 0);
+  if (!gone) return;
+  const ok = confirm(
+    gone > 1
+      ? t("{mine} und {n} Züge danach aus deinem Repertoire nehmen? Ihre Karten werden gelöscht.", { mine: fig(n.mine ?? ""), n: gone - 1 })
+      : t("{mine} aus deinem Repertoire nehmen? Die Karte wird gelöscht.", { mine: fig(n.mine ?? "") }),
+  );
+  if (!ok) return;
+  await invoke("rep_delete_move", { ...args, dry: false });
+  await loadTree(false);
+}
+
+// ---------------------------------------------------------------------------
+// sparring: the opponent plays through your tree (by how often moves come up
+// at your level), you answer with your moves
+
+interface Spar {
+  /** Your position now (null before the first move). */
+  at: TreeNode | null;
+  fen: string;
+  lastMove?: string;
+  phase: "opp" | "you" | "wrong" | "end";
+  /** How the run ended: a reply you have no answer to, or the end of your repertoire. */
+  end: "gap" | "leaf" | null;
+  right: number;
+  wrong: number;
+  /** Your moves played wrong in this run (shown at the end). */
+  missed: TreeNode[];
+  tried: string | null;
+}
+
+let spar: Spar | null = null;
+
+/** Start a sparring run through the tree on screen. */
+function startSpar() {
+  if (!tree?.nodes.length) return;
+  trainMode = "spar";
+  spar = { at: null, fen: START_FEN, phase: "opp", end: null, right: 0, wrong: 0, missed: [], tried: null };
+  setView("train");
+  sparNext(null);
+}
+
+/** The opponent's reply after your move in `parent` (null: from the root), by how often it comes up. */
+function sparNext(parent: string | null) {
+  const sp = spar!;
+  const kids = tree!.nodes.filter((n) => n.parent === parent);
+  if (!kids.length) {
+    sp.phase = "end";
+    sp.end = "leaf";
+    successSound();
+    return render();
+  }
+  // The tree starts in your own position: no opponent move first.
+  const root = kids.find((n) => !n.opp);
+  if (root) {
+    sp.at = root;
+    sp.fen = root.fen;
+    sp.lastMove = undefined;
+    sp.phase = "you";
+    return render();
+  }
+  const known = kids.map((n) => n.reach).filter((r): r is number => r != null && r > 0);
+  const floor = known.length ? Math.min(...known) : 1;
+  const weights = kids.map((n) => (n.reach != null && n.reach > 0 ? n.reach : floor));
+  let pick = Math.random() * weights.reduce((a, b) => a + b, 0);
+  let node = kids[kids.length - 1];
+  for (let i = 0; i < kids.length; i++) {
+    pick -= weights[i];
+    if (pick <= 0) {
+      node = kids[i];
+      break;
+    }
+  }
+  sp.phase = "opp";
+  render();
+  const tk = token;
+  timer = window.setTimeout(() => {
+    if (tk !== token || spar !== sp) return;
+    sp.at = node;
+    sp.fen = node.fen;
+    sp.lastMove = node.oppUci ?? undefined;
+    if (node.opp) moveSound(node.opp);
+    if (node.gap) {
+      sp.phase = "end";
+      sp.end = "gap";
+    } else {
+      sp.phase = "you";
+    }
+    render();
+  }, Math.max(350, deps.animMs() + 150));
+}
+
+async function sparMove(orig: Key, dest: Key, promotion?: string) {
+  const sp = spar;
+  const n = sp?.at;
+  if (!sp || !n || (sp.phase !== "you" && sp.phase !== "wrong")) return render();
+  const tk = token;
+  let played: PlayedMove;
+  try {
+    played = await invoke<PlayedMove>("play_move", { fen: n.fen, from: orig, to: dest, promotion });
+  } catch {
+    return render();
+  }
+  if (tk !== token || spar !== sp) return;
+  if (played.uci !== n.mineUci) {
+    errorSound();
+    sp.tried = played.san;
+    if (sp.phase === "you") {
+      // A mistake sends the card back to box 1 (once per move and run).
+      sp.wrong++;
+      sp.missed.push(n);
+      sp.phase = "wrong";
+      invoke("opening_record", { id: `m:${n.id}`, color: treeColor, success: false }).catch(console.error);
+    }
+    return render();
+  }
+  moveSound(played.san);
+  if (sp.phase === "you") sp.right++;
+  sp.fen = n.fenAfter ?? played.fen;
+  sp.lastMove = played.uci;
+  sp.tried = null;
+  sparNext(n.id);
+}
+
+function renderSpar() {
+  const sp = spar;
+  if (!sp) return;
+  const n = sp.at;
+  const shapes: DrawShape[] = [];
+  if (sp.phase === "wrong" && n?.mineUci) shapes.push({ orig: sq(n.mineUci, true), dest: sq(n.mineUci, false), brush: "green" });
+  deps.board.set({
+    fen: sp.fen,
+    orientation: treeColor,
+    turnColor: sideOf(sp.fen),
+    lastMove: sp.lastMove ? [sq(sp.lastMove, true), sq(sp.lastMove, false)] : undefined,
+    check: false,
+    movable: { color: undefined, dests: new Map() },
+  });
+  deps.board.setAutoShapes(shapes);
+  if ((sp.phase === "you" || sp.phase === "wrong") && n) {
+    const tk = token;
+    invoke<PositionInfo>("position_info", { fen: n.fen }).then((info) => {
+      if (tk !== token || spar !== sp || (sp.phase !== "you" && sp.phase !== "wrong")) return;
+      deps.board.set({ movable: { color: treeColor, dests: new Map(Object.entries(info.dests) as [Key, Key[]][]) } });
+    });
+  }
+  renderSparText();
+}
+
+function renderSparText() {
+  const sp = spar;
+  if (!sp) return;
+  const head = $("op-head");
+  const text = $("op-text");
+  const extra = $("op-extra");
+  const actions = $("op-actions");
+  const n = sp.at;
+  head.innerHTML = `<span class="pz-tag op-review">${t("Sparring")}</span><span class="op-name">${n?.opening ? esc(openingName(n.opening)) : ""}</span>
+    <span class="muted op-spar-score">✓ ${sp.right} · ✗ ${sp.wrong}</span>`;
+  extra.innerHTML = "";
+  const moves = n ? treePath(n) : "";
+  switch (sp.phase) {
+    case "opp":
+      text.innerHTML = `<span class="muted">${t("Der Gegner zieht …")}</span>`;
+      break;
+    case "you":
+      text.innerHTML = `${moves ? `${esc(moves)}<br>` : ""}<b>${t("Du bist dran.")}</b> ${t("Was spielst du hier?")}`;
+      break;
+    case "wrong":
+      text.innerHTML = `${esc(moves)}<br>${t("{move} ist nicht dein Zug. Dein Repertoire-Zug ist {mine} – spiel ihn nach.", {
+        move: `<b>${esc(fig(sp.tried ?? ""))}</b>`,
+        mine: `<b>${esc(fig(n?.mine ?? ""))}</b>`,
+      })} <span class="muted">${t("Die Karte geht zurück in Fach 1.")}</span>`;
+      if (n?.note) extra.innerHTML = `<p class="op-idea"><span class="op-idea-label">${t("Deine Idee:")}</span> ${esc(n.note)}</p>`;
+      break;
+    case "end": {
+      const result = t("{right} Züge richtig, {wrong} falsch.", { right: sp.right, wrong: sp.wrong });
+      text.innerHTML =
+        sp.end === "gap" && n
+          ? `${esc(moves)}<br>${t("Hier hast du noch <b>keine Antwort</b> – das war das Ende dieser Runde.")} ${result}`
+          : `${t("<b class=\"ok\">Ende deines Repertoires</b> in dieser Linie.")} ${result}`;
+      if (sp.missed.length) {
+        extra.innerHTML = `<span class="muted">${t("Daneben:")}</span> ${sp.missed.map((m) => `${esc(fig(m.opp ?? ""))} → <b>${esc(fig(m.mine ?? ""))}</b>`).join(" · ")}`;
+      }
+      break;
+    }
+  }
+  actions.innerHTML =
+    sp.phase === "end"
+      ? `${sp.end === "gap" ? `<button data-spar="gap">${t("Lücke füllen")}</button>` : ""}<button data-spar="tree">${t("Zum Baum")}</button><button data-spar="again" class="primary end">${t("Nochmal")} →</button>`
+      : `<button data-spar="tree" class="end">${t("Beenden")}</button>`;
+  actions.querySelector("[data-spar=again]")?.addEventListener("click", startSpar);
+  actions.querySelector("[data-spar=tree]")?.addEventListener("click", () => openTree(treeColor, treeFamily, sp.at?.id ?? null, treeHome));
+  actions.querySelector("[data-spar=gap]")?.addEventListener("click", () => openTree(treeColor, treeFamily, n?.id ?? null, treeHome));
+}
+
+// ---------------------------------------------------------------------------
+// the opening page: learn first – your costly exits from theory, then practice
+
+export function openPage(color: Color, family: string) {
+  page = { color, family };
+  pageTree = null;
+  pageHarmless = false;
+  setView("opening");
+}
+
+/** The opening's part of your repertoire, then Stockfish's verdicts on it. */
+async function loadPage() {
+  const p = page;
+  if (!p) return;
+  const args = { accounts: deps.accounts(), color: p.color, family: p.family };
+  await Promise.all([loadProgress(), theory ? null : loadTheory(), insights.length ? null : loadRecs()]);
+  try {
+    pageTree = await invoke<TreeView>("rep_tree", args);
+  } catch (e) {
+    console.error(e);
+  }
+  if (page !== p || view !== "opening") return;
+  renderPage();
+  if (pageTree?.cards) {
+    const v = await invoke<TreeView>("rep_check_quality", args).catch(() => null);
+    quality = null;
+    if (v && page === p) {
+      pageTree = v;
+      if (view === "opening") renderPage();
+    }
+  }
+}
+
+/** Theory exits of this opening: those that cost you something, and the rest. */
+function pageExits(): { costly: TheoryExit[]; harmless: TheoryExit[] } {
+  const all = (theory?.positions ?? []).filter((x) => page && x.color === page.color && x.family === page.family);
+  // Like the verdict in the list: anything but "Hält" (analysed games only).
+  const costly = all.filter((x) => x.analysed > 0 && (x.errorsAfter > 0 || (x.avgLoss ?? 0) >= COSTLY_LOSS));
+  return { costly, harmless: all.filter((x) => !costly.includes(x)) };
+}
+
+/** Average loss of winning chances (percentage points) from which leaving theory counts as bad. */
+const COSTLY_LOSS = 3;
+
+function renderPage() {
+  if (!active || view !== "opening" || !page) return;
+  const { color, family } = page;
+  const key = `${color}|${family}`;
+  const p = progress[key];
+  const sum = summaries[key];
+  const ins = insightOf[key];
+  const v = pageTree;
+  const begun = (p?.started ?? 0) > 0;
+  const facts = [
+    p?.lines ? t("{learned} von {lines} Linien gelernt", { learned: p.learned, lines: p.lines }) : "",
+    sum?.coverage != null ? t("{p} abgedeckt", { p: pct(sum.coverage) }) : "",
+    ins ? tn(ins.games, "1 Partie", "{n} Partien") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const { costly, harmless } = pageExits();
+  const weak = v?.nodes.filter((n) => n.verdict?.weak) ?? [];
+  const q = quality?.color === color ? quality : null;
+  const due = v?.due ?? 0;
+  $("op-opening").innerHTML = `
+    <div class="op-home-head opn-head">
+      <button id="opn-back">← ${t("Übersicht")}</button>
+      <h2>${esc(openingName(family))} <span class="muted">${t("als {side}", { side: SIDE[color] })}</span></h2>
+    </div>
+    ${facts ? `<p class="muted opn-facts">${facts}</p>` : ""}
+    <div class="opn-main">
+      <button class="opn-big primary" id="opn-learn">
+        <b>${begun ? t("Weiterlernen") : t("Eröffnung lernen")} →</b>
+        <span>${t("Die nächste wichtige Linie, Zug für Zug mit Erklärungen. Was du kannst, kommt in deinen Karteikasten.")}</span>
+      </button>
+      <button class="opn-big" id="opn-spar" ${v?.cards ? "" : "disabled"}>
+        <b>${t("Sparring")} ▶</b>
+        <span>${v?.cards ? t("Der Gegner spielt, was auf deinem Niveau kommt – du antwortest mit deinen Zügen.") : t("Sobald du die ersten Linien kannst.")}</span>
+      </button>
+      ${
+        due
+          ? `<button class="opn-big" id="opn-due"><b>${t("Karteikasten")}</b><span>${tn(due, "1 Karte aus dieser Eröffnung ist fällig.", "{n} Karten aus dieser Eröffnung sind fällig.")}</span></button>`
+          : ""
+      }
+    </div>
+    ${
+      weak.length
+        ? `<div class="op-home-mine opn-weak">
+            <h3>${t("Schwache Züge in deinem Repertoire")}</h3>
+            <div class="op-mine-list">${weak
+              .map(
+                (n) => `<div class="op-mine-row">
+                  <span class="op-mine-name">${esc(treePathIn(v!, n))} <b>${esc(fig(n.mine ?? ""))}</b><br>
+                    <span class="muted">${t("Stockfish: {label}", { label: CLASSES[n.verdict!.class].label })}${n.verdict!.best ? ` · ${t("besser {best}", { best: esc(fig(n.verdict!.best)) })}` : ""}</span></span>
+                  ${n.verdict!.bestUci ? `<button data-weak="${esc(n.id)}" class="primary">${t("Zu {best} ändern", { best: esc(fig(n.verdict!.best ?? "")) })}</button>` : ""}
+                </div>`,
+              )
+              .join("")}</div>
+          </div>`
+        : ""
+    }
+    <div class="op-home-mine" id="opn-exits">
+      <h3>${t("Hier fällst du aus der Theorie")}</h3>
+      ${
+        costly.length
+          ? `<p class="panel-sub">${t("Stellen aus deinen Partien, an denen du die Theorie verlassen hast und es dich etwas gekostet hat – Stockfish fand deinen Zug schwach, oder kurz danach kam ein Fehler. Lern die Linie dahinter.")}</p>${theoryListHtml(costly)}`
+          : `<p class="muted">${
+              (theory?.positions ?? []).some((x) => x.color === color && x.family === family)
+                ? t("Keine teuren Stellen – wo du die Theorie verlässt, hat es dich bisher nichts gekostet.")
+                : t("In deinen analysierten Partien fällst du hier nicht aus der Theorie.")
+            }</p>`
+      }
+      ${
+        harmless.length
+          ? `<button class="link opn-harmless">${pageHarmless ? "▾" : "▸"} ${tn(harmless.length, "1 weitere Abweichung (hält oder noch nicht analysiert)", "{n} weitere Abweichungen (halten oder noch nicht analysiert)")}</button>${pageHarmless ? theoryListHtml(harmless) : ""}`
+          : ""
+      }
+    </div>
+    <div class="opn-foot">
+      ${q ? `<span class="muted">${t("Stockfish prüft deine Züge … {done} von {total}", { done: q.done, total: q.total })}</span>` : v?.cards && !weak.length && v.checked ? `<span class="muted">✓ ${t("Stockfish hat deine Züge geprüft – keine schwachen dabei.")}</span>` : ""}
+      <button class="link" id="opn-tree">${t("Repertoire-Baum ansehen")}</button>
+      ${begun || v?.cards ? `<button class="link" id="opn-reset">${t("Eröffnung zurücksetzen")}</button>` : ""}
+      ${repertoire[color].includes(family) ? `<button class="link" id="opn-remove">${t("Aus „Deine Eröffnungen“ nehmen")}</button>` : ""}
+    </div>`;
+  const el = $("op-opening");
+  $("opn-back").addEventListener("click", () => setView("home"));
+  $("opn-learn").addEventListener("click", () => {
+    fromPage = true;
+    startFocus(color, family);
+  });
+  document.getElementById("opn-spar")?.addEventListener("click", () => {
+    if (!v) return;
+    fromPage = true;
+    tree = v;
+    treeColor = color;
+    treeFamily = treeHome = family;
+    startSpar();
+  });
+  document.getElementById("opn-due")?.addEventListener("click", () => {
+    fromPage = true;
+    startTrain("due", null);
+  });
+  const exitsEl = $("opn-exits");
+  bindTheoryList(exitsEl, {
+    openGame: deps.openGame,
+    learnLine: (g, ply, c, f) => {
+      fromPage = true;
+      learnLineForGame(g, ply, c, f);
+    },
+  });
+  exitsEl.querySelector(".opn-harmless")?.addEventListener("click", () => {
+    pageHarmless = !pageHarmless;
+    renderPage();
+  });
+  el.querySelectorAll<HTMLElement>("[data-weak]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const n = v?.nodes.find((x) => x.id === b.dataset.weak);
+      if (!n?.verdict?.bestUci) return;
+      if (await changeMoveAt(color, n, n.verdict.bestUci)) loadPage();
+    }),
+  );
+  $("opn-tree").addEventListener("click", () => {
+    fromPage = true;
+    openTree(color, family);
+  });
+  document.getElementById("opn-reset")?.addEventListener("click", async () => {
+    if (await resetOpening(color, family)) loadPage();
+  });
+  document.getElementById("opn-remove")?.addEventListener("click", async () => {
+    await removeFromRepertoire(color, family);
+    await loadProgress();
+    setView("home");
+  });
+}
+
+/** The moves to a node of a tree: "1.e4 c6 2.d4 d5 3.e5" (your move not included). */
+function treePathIn(v: TreeView, n: TreeNode): string {
+  const byId = new Map(v.nodes.map((x) => [x.id, x]));
+  const chain: TreeNode[] = [];
+  for (let x: TreeNode | undefined = n; x; x = x.parent ? byId.get(x.parent) : undefined) chain.unshift(x);
+  return chain
+    .flatMap((x) => (x === n ? [x.opp] : [x.opp, x.mine]))
+    .filter((m): m is string => !!m)
+    .map((m) => fig(m))
+    .join(" ");
 }
 
 /** Practise one move of your repertoire now (afterwards "Weiter" goes on with what's due). */
@@ -1493,6 +2296,50 @@ function gamesCell(color: Color, family: string): string {
     ? ` · <span class="${g.theoryErrors >= 2 ? "op-games-bad" : ""}" title="${t("Analysierte Partien, in denen du zuerst die Theorie verlassen und kurz danach einen Fehler gemacht hast")}">${t("{n}× aus der Theorie gefallen", { n: g.theoryErrors })}</span>`
     : "";
   return `<span class="op-games muted">${tn(g.games, "1 Partie", "{n} Partien")}${errors}</span>`;
+}
+
+/** "Abgleich mit deinen Partien": where your games left your repertoire. */
+function reportsHtml(): string {
+  if (!reports.length) return "";
+  const shown = reportsAll ? reports : reports.slice(0, REPORTS_FOLDED);
+  const rows = shown
+    .map((r, i) => {
+      const what =
+        r.kind === "deviation"
+          ? t("{opp}: du hast {played} gespielt, dein Zug ist {mine}.", {
+              opp: `<b>${esc(fig(r.opp ?? "–"))}</b>`,
+              played: `<b>${esc(fig(r.played ?? ""))}</b>`,
+              mine: `<b>${esc(fig(r.mine ?? ""))}</b>`,
+            })
+          : t("Auf {opp} hast du noch keine Antwort (gespielt: {played}).", {
+              opp: `<b>${esc(fig(r.opp ?? "–"))}</b>`,
+              played: esc(fig(r.played ?? "–")),
+            });
+      return `<div class="op-mine-row op-report">
+        <span class="pdot ${r.color}"></span>
+        <span class="op-mine-name">${r.opening ? `<b>${esc(openingName(r.opening))}</b> ` : ""}<span class="muted">${t("als {side}", { side: SIDE[r.color] })}</span><br><span class="op-report-what">${what}</span></span>
+        <span class="op-games muted">${tn(r.times, "1 Partie", "{n} Partien")} · ${relAgo(r.createdAt)}</span>
+        <button data-report="${i}" data-act="tree">${r.kind === "gap" ? t("Lücke füllen") : t("Im Baum")}</button>
+        <button data-report="${i}" data-act="game" class="link">${t("Partie")}</button>
+      </div>`;
+    })
+    .join("");
+  const more =
+    reports.length > REPORTS_FOLDED
+      ? `<button class="link op-reports-more">${reportsAll ? t("Weniger zeigen") : t("Alle {n} zeigen", { n: reports.length })}</button>`
+      : "";
+  return `<div class="op-home-mine">
+      <h3>${t("Abgleich mit deinen Partien")}</h3>
+      <p class="panel-sub">${t("Wo deine Partien dein Repertoire verlassen: ein anderer Zug als deiner, oder ein Gegnerzug, auf den du noch keine Antwort hast. Spielst du in einer neuen Partie anders, ist die Karte wieder fällig.")}</p>
+      <div class="op-mine-list">${rows}</div>
+      ${more}
+    </div>`;
+}
+
+/** "vor 3 Tagen" for a past time. */
+function relAgo(ms: number): string {
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  return days <= 0 ? t("heute") : days === 1 ? t("gestern") : t("vor {n} Tagen", { n: days });
 }
 
 /** "Hier verlässt du die Theorie": the positions where you keep leaving the known lines. */
@@ -1560,10 +2407,11 @@ function openingRow({ color, family, recommended }: MyOpening): string {
         cov != null ? t("{p} abgedeckt", { p: pct(cov) }) : tn(sum.cards, "1 Zug", "{n} Züge"),
         sum.gaps ? tn(sum.gaps, "1 Lücke", "{n} Lücken") : "",
         sum.due ? `<b>${t("{n} fällig", { n: sum.due })}</b>` : "",
+        sum.weak ? `<span class="op-weak">${tn(sum.weak, "1 schwacher Zug", "{n} schwache Züge")}</span>` : "",
       ]
         .filter(Boolean)
         .join(" · ");
-  return `<div class="op-mine-row op-open ${recommended ? "recommended" : ""}" data-color="${color}" data-family="${esc(family)}" role="button" tabindex="0" title="${t("Dein Repertoire in dieser Eröffnung öffnen")}">
+  return `<div class="op-mine-row op-open ${recommended ? "recommended" : ""}" data-color="${color}" data-family="${esc(family)}" role="button" tabindex="0" title="${t("Diese Eröffnung lernen")}">
     <span class="pdot ${color}"></span>
     <span class="op-mine-name"><b>${esc(openingName(family))}</b> <span class="muted">${t("als {side}", { side: SIDE[color] })}</span>${
       recommended ? ` <span class="op-badge" title="${t("Kommt in deinen Partien oft vor und du kennst noch wenig davon – oder du fällst hier oft aus der Theorie.")}">${t("Empfohlen")}</span>` : ""
@@ -1739,6 +2587,7 @@ function play(from: string, uci: string): Promise<PlayedMove> {
 export async function openingMove(orig: Key, dest: Key, promotion?: string) {
   if (trainMode === "explore") return explorerMove(orig, dest, promotion);
   if (trainMode === "tree") return treeMove(orig, dest, promotion);
+  if (trainMode === "spar") return sparMove(orig, dest, promotion);
   const d = drill;
   if (!d || (phase !== "solve" && phase !== "wrong")) return render();
   const tk = token;
@@ -1951,6 +2800,7 @@ function showTry(played: PlayedMove) {
 function render(error?: string) {
   if (!active || view !== "train" || trainMode === "explore") return;
   if (trainMode === "tree") return renderTree();
+  if (trainMode === "spar") return renderSpar();
   const d = drill;
   if (d && phase !== "loading" && phase !== "empty") {
     const shapes: DrawShape[] = [];
@@ -2032,6 +2882,7 @@ function bestMovesHtml(c: Card): string {
 function renderText(error?: string) {
   if (!active || view !== "train") return;
   if (trainMode === "tree") return renderTreeDetail();
+  if (trainMode === "spar") return renderSparText();
   const head = $("op-head");
   const text = $("op-text");
   const extra = $("op-extra");
@@ -2173,6 +3024,7 @@ function renderText(error?: string) {
       break;
     }
   }
+  if (d.kind === "move" && (phase === "done" || phase === "wrong")) ideaBox(d, extra);
 
   const game = d.own || d.card?.gameId ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
   // A mistake from your game: learn the whole opening line that leads there.
@@ -2195,6 +3047,30 @@ function renderText(error?: string) {
          ${game}
          <button data-act="skip" class="end">${t("Überspringen")}</button>`;
   bindActions(d);
+}
+
+/** Your idea behind a repertoire move: shown after its card, or a field to write one. */
+function ideaBox(d: Drill, el: HTMLElement) {
+  const epd = d.id.slice(2);
+  const note = notes[d.color][epd] ?? "";
+  if (note) {
+    el.innerHTML = `<p class="op-idea"><span class="op-idea-label">${t("Deine Idee:")}</span> ${esc(note)}</p>`;
+    return;
+  }
+  if (phase !== "done") return;
+  el.innerHTML = `<label class="op-idea op-idea-edit"><span class="op-idea-label">${t("Deine Idee zu diesem Zug")}</span>
+    <input type="text" maxlength="300" placeholder="${t("Warum dieser Zug? Ein Satz reicht – z. B. „Läufer raus, bevor e6 ihn einsperrt“")}" /></label>`;
+  const input = el.querySelector("input")!;
+  const save = async () => {
+    const v = input.value.trim();
+    if (!v || notes[d.color][epd] === v) return;
+    notes[d.color][epd] = v;
+    await invoke("rep_set_note", { color: d.color, epd, note: v }).catch(console.error);
+  };
+  input.addEventListener("change", save);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") input.blur();
+  });
 }
 
 function bindActions(d: Drill | null) {
