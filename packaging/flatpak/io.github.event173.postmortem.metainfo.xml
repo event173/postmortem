@@ -42,7 +42,7 @@
     <control>keyboard</control>
   </supports>
   <releases>
-    <release version="0.2.10" date="2026-11-11">
+    <release version="0.3.0" date="2026-11-11">
       <description>
         <p>German opening names when the interface is set to German (game list, review, coach, Learn, Explore, statistics), and a game list that fits small windows: the source switch and the sync buttons wrap instead of being squeezed.</p>
       </description>
