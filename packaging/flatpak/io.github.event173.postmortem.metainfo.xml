@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.2.10" date="2026-11-11">
+      <description>
+        <p>German opening names when the interface is set to German (game list, review, coach, Learn, Explore, statistics), and a game list that fits small windows: the source switch and the sync buttons wrap instead of being squeezed.</p>
+      </description>
+    </release>
     <release version="0.2.9" date="2026-11-10">
       <description>
         <p>Your own flashcards from reviews, explored positions and bot games, with Stockfish's best moves; the openings tab becomes "Learn" with Flashcards and Explore; three weaker bots from ~400 Elo; resetting an opening's progress; clicking the active tab returns to its start.</p>

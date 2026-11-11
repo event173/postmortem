@@ -18,6 +18,7 @@ import { windowLast } from "./stats";
 import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
 import { playerName, t, tn } from "./i18n";
 import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
+import { openingName } from "./opening-names";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 import { explorerKey, explorerMove, explorerNav, startExplorer, stopExplorer } from "./explorer";
 
@@ -177,8 +178,8 @@ type Phase = "loading" | "empty" | "intro" | "next" | "opponent" | "solve" | "ch
 
 const ACCEPTED: Class[] = ["brilliant", "great", "best", "excellent"];
 const SIDE: Record<Color, string> = { white: t("Weiß"), black: t("Schwarz") };
-/** The dataset's variation names are English; only "Hauptvariante" (main line) is ours. */
-const varName = (n: string) => (n === "Hauptvariante" ? t("Hauptvariante") : n);
+/** The dataset's variation names are English (shown translated); only "Hauptvariante" (main line) is ours. */
+const varName = (n: string) => (n === "Hauptvariante" ? t("Hauptvariante") : openingName(n));
 /** Clean runs in a row needed before a newly learned line counts as consolidated. */
 const CONSOLIDATE_RUNS = 2;
 const CONSOLIDATE_MAX = 5;
@@ -469,7 +470,7 @@ function renderHome() {
       const [color, family] = key.split("|") as [Color, string];
       return { color, family, p };
     })
-    .sort((a, b) => b.p.due - a.p.due || b.p.started - a.p.started || a.family.localeCompare(b.family));
+    .sort((a, b) => b.p.due - a.p.due || b.p.started - a.p.started || openingName(a.family).localeCompare(openingName(b.family)));
 
   $("op-home").innerHTML = `
     <div class="op-home-head">
@@ -507,7 +508,7 @@ function renderHome() {
                .map(
                  ({ color, family, p }) => `<div class="op-mine-row">
                    <span class="pdot ${color}"></span>
-                   <span class="op-mine-name"><b>${esc(family)}</b> <span class="muted">${t("als {side}", { side: SIDE[color] })}</span></span>
+                   <span class="op-mine-name"><b>${esc(openingName(family))}</b> <span class="muted">${t("als {side}", { side: SIDE[color] })}</span></span>
                    ${progressBar(p.lines, p.started, p.learned)}
                    <span class="op-progress-text">${cardSummary(p.lines, p.started, p.learned, p.due)}</span>
                    <button class="op-mine-go" data-color="${color}" data-family="${esc(family)}">${p.started ? t("Weiterlernen") : t("Anfangen")}</button>
@@ -585,7 +586,7 @@ function renderHome() {
 async function resetOpening(color: Color, family: string): Promise<boolean> {
   const ok = confirm(
     t("Lernstand für {family} als {side} zurücksetzen? Alle Varianten fangen wieder bei „neu“ an – die Eröffnung bleibt in deiner Liste.", {
-      family,
+      family: openingName(family),
       side: SIDE[color],
     }),
   );
@@ -618,7 +619,7 @@ function renderTop() {
       : trainMode === "own"
         ? t("Fehler aus deinen Partien")
         : focus
-          ? t("Lernen: {family} als {side}", { family: esc(focus.family), side: SIDE[focus.color] })
+          ? t("Lernen: {family} als {side}", { family: esc(openingName(focus.family)), side: SIDE[focus.color] })
           : t("Lernen");
   $("op-top").innerHTML = `<button id="op-home-btn">← ${t("Übersicht")}</button><span class="op-top-title">${title}</span>`;
   $("op-home-btn").addEventListener("click", () => setView("home"));
@@ -680,7 +681,8 @@ function renderList() {
   const q = ($("op-search") as HTMLInputElement).value.trim().toLowerCase();
   const mine = (f: Family) => (played[f.name]?.white ?? 0) + (played[f.name]?.black ?? 0);
   const learningCount = (f: Family) => (progress[`white|${f.name}`]?.started ?? 0) + (progress[`black|${f.name}`]?.started ?? 0);
-  let items = families.filter((f) => !q || f.name.toLowerCase().includes(q) || f.eco.toLowerCase() === q);
+  let items = families.filter((f) => !q || f.name.toLowerCase().includes(q) || openingName(f.name).toLowerCase().includes(q) || f.eco.toLowerCase() === q);
+  if (sort === "az") items = [...items].sort((a, b) => openingName(a.name).localeCompare(openingName(b.name)));
   if (sort === "popular") items = [...items].sort((a, b) => b.lines - a.lines);
   if (sort === "mine") items = items.filter((f) => mine(f) > 0).sort((a, b) => mine(b) - mine(a));
   if (sort === "learning") {
@@ -717,7 +719,7 @@ function renderList() {
       return `<div class="op-card">
         <div class="mini-board cg-wrap big" data-fen="${esc(f.fen)}"></div>
         <div class="op-card-body">
-          <div class="op-title" title="${esc(f.name)}">${esc(f.name)}</div>
+          <div class="op-title" title="${esc(openingName(f.name))}">${esc(openingName(f.name))}</div>
           <div class="op-moves">${esc(fig(f.moves))}</div>
           <div class="muted op-meta">${esc(f.eco)} · ${tn(f.lines, "1 Variante", "{n} Varianten")}</div>
           ${mineText}
@@ -762,7 +764,7 @@ function renderSidebar() {
   focusEl.innerHTML = `
     <div class="op-focus-top">
       <span class="pdot ${focus.color}"></span>
-      <div class="op-focus-title"><b>${esc(focus.family)}</b> <span class="muted">${t("als {side}", { side: SIDE[focus.color] })}</span>
+      <div class="op-focus-title"><b>${esc(openingName(focus.family))}</b> <span class="muted">${t("als {side}", { side: SIDE[focus.color] })}</span>
         ${sub ? `<div class="op-focus-sub">${t("nur:")} ${esc(varName(sub))} <button id="op-focus-all" class="link">${t("alle Varianten")}</button></div>` : ""}</div>
     </div>
     ${p ? `<div class="op-focus-progress">${progressBar(p.lines, p.started, p.learned)}<span class="muted">${cardSummary(p.lines, p.started, p.learned, p.due)}</span></div>` : ""}
@@ -1267,10 +1269,10 @@ function renderText(error?: string) {
         : d.status === "practice"
           ? `<span class="pz-tag op-practice-tag">${t("Festigen")} ${(consolidate?.clean ?? 0) + (phase === "done" ? 0 : 1)}/${CONSOLIDATE_RUNS}</span>`
           : `<span class="pz-tag op-review">${t("Wiederholung")}</span>`;
-  const shortName = d.name.includes(":") ? d.name.split(":").slice(1).join(":").trim() : varName(d.name);
+  const shortName = varName(d.name.includes(":") ? d.name.split(":").slice(1).join(":").trim() : d.name);
   head.innerHTML = d.card
     ? `${tag}<span class="op-name">${cardOrigin(d.card)}</span>`
-    : `${tag}<span class="op-name" title="${esc(d.name)}">${esc(focus ? shortName : d.name)}</span>`;
+    : `${tag}<span class="op-name" title="${esc(openingName(d.name))}">${esc(focus ? shortName : openingName(d.name))}</span>`;
 
   const side = SIDE[d.color];
   const expected = d.moves[step];

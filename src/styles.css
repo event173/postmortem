@@ -929,12 +929,16 @@ button:disabled {
 
 .games-head {
   align-items: center;
+  /* Narrow list: status and buttons move to a second line instead of sticking out. */
+  flex-wrap: wrap;
+  gap: 6px 8px;
 }
 
 .sync-box {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
   font-weight: 400;
 }
 
@@ -1472,7 +1476,8 @@ button.icon {
 }
 
 .source-switch button {
-  flex: 1;
+  flex: 1 1 auto;
+  white-space: nowrap;
   border: none;
   background: none;
   border-radius: 6px;
@@ -1485,6 +1490,15 @@ button.icon {
 .source-switch button.active {
   background: var(--panel-2);
   color: var(--text);
+}
+
+/* Narrow game list (--games-w 240px and less, see "smaller windows"): the four
+   sources as a 2×2 grid instead of squeezed in one row. */
+@media (max-width: 1440px) {
+  .source-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .platform {

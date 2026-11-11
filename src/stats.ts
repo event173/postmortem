@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { locale, playerName, t, tn } from "./i18n";
 import type { Account, BatchProgress, ClockBucket, Phase, PhaseStat, Platform, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
 import { $, badgeHtml, esc, fig, miniPieces, platformLabel, speedLabel, store } from "./util";
+import { openingName } from "./opening-names";
 
 /** Shared with the puzzle trainer: how many recent games to base things on. */
 export type GameWindow = "10" | "20" | "50" | "all";
@@ -361,7 +362,7 @@ function renderOpenings(list: OpeningStat[]) {
           const score = Math.round(((o.wins + o.draws / 2) / o.games) * 100);
           const errPct = Math.round((o.gamesWithError / o.games) * 100);
           return `<tr>
-            <td class="op-fam" title="${esc(o.family)}">${esc(o.family)}</td>
+            <td class="op-fam" title="${esc(openingName(o.family))}">${esc(openingName(o.family))}</td>
             <td class="num">${o.games}</td>
             <td class="num" title="${t("{w} Siege, {d} Remis, {l} Niederlagen", { w: o.wins, d: o.draws, l: o.losses })}">${score} %<span class="muted"> · ${o.wins}/${o.draws}/${o.losses}</span></td>
             <td class="num ${errPct >= 50 ? "bad" : ""}" title="${t("{e} Fehler in {g} von {n} Partien", { e: o.openingErrors, g: o.gamesWithError, n: o.games })}">${errPct} %</td>
@@ -867,9 +868,9 @@ function theoryRow(p: TheoryExit): string {
   }
   const best = p.best && !p.book.includes(p.best) ? ` · ${t("Engine: {m}", { m: `<b>${esc(fig(p.best))}</b>` })}` : "";
   return `<div class="theory-row">
-    <div class="mini-board cg-wrap" title="${esc(p.opening ?? "")}">${miniPieces(p.fen, p.color === "black")}</div>
+    <div class="mini-board cg-wrap" title="${esc(openingName(p.opening ?? ""))}">${miniPieces(p.fen, p.color === "black")}</div>
     <div class="theory-info">
-      <div class="theory-title">${esc(p.opening ?? t("Unbekannte Eröffnung"))}</div>
+      <div class="theory-title">${esc(p.opening ? openingName(p.opening) : t("Unbekannte Eröffnung"))}</div>
       <div>${t("Du spielst {moves}", { moves: played })} <span class="muted">· ${p.color === "white" ? t("als Weiß") : t("als Schwarz")} · ${tn(p.games, "1 Partie", "{n} Partien")} · ${p.wins}/${p.draws}/${p.losses}</span></div>
       <div class="muted">${t("Bekannte Linien: {moves}", { moves: `<span class="theory-book">${book}</span>` })}${best}</div>
       <div class="theory-verdict">${verdict}</div>

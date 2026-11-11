@@ -12,6 +12,7 @@ import { t, tn } from "./i18n";
 import { moveSound, setupSound } from "./sound";
 import type { Account, MoveReview, PlayedMove, PositionInfo } from "./types";
 import { $, badgeHtml, esc, fig, store } from "./util";
+import { openingName } from "./opening-names";
 import { bindCardButton, CARD_BUTTON_LABEL } from "./cards";
 
 type Color = "white" | "black";
@@ -330,8 +331,8 @@ function openingHeading(): string {
   let last: string | null = null;
   for (let i = 0; i <= cursor; i++) last = names[i] ?? last;
   if (!cursor) return `<div class="ex-opening"><span class="muted">${t("Grundstellung")}</span></div>`;
-  if (inBook) return `<div class="ex-opening"><b>${esc(last ?? t("Eröffnungstheorie"))}</b></div>`;
-  return `<div class="ex-opening"><span class="ex-offbook">${t("Außerhalb der bekannten Theorie")}</span>${last ? `<br><span class="muted">${t("zuletzt: {name}", { name: esc(last) })}</span>` : ""}</div>`;
+  if (inBook) return `<div class="ex-opening"><b>${esc(last ? openingName(last) : t("Eröffnungstheorie"))}</b></div>`;
+  return `<div class="ex-opening"><span class="ex-offbook">${t("Außerhalb der bekannten Theorie")}</span>${last ? `<br><span class="muted">${t("zuletzt: {name}", { name: esc(openingName(last)) })}</span>` : ""}</div>`;
 }
 
 function ownCell(o: OwnStats | null): string {
@@ -387,7 +388,7 @@ function renderPanel() {
                   <span class="ex-san">${esc(fig(r.san))}${evalCell(r)}</span>
                   <span class="ex-share">${r.lichess ? `<span class="ex-bar"><i style="width:${Math.max(2, r.share * 100)}%"></i></span>${Math.round(r.share * 100)} %` : `<span class="muted">–</span>`}</span>
                   <span class="ex-own">${ownCell(r.own)}</span>
-                  <span class="ex-book">${r.book ? `<span class="ex-booktag" title="${esc(r.name ?? "")}">${t("Buch")}</span>${r.name ? ` <span class="muted ex-name">${esc(r.name.split(":").slice(1).join(":").trim() || r.name)}</span>` : ""}` : ""}</span>
+                  <span class="ex-book">${r.book ? `<span class="ex-booktag" title="${esc(openingName(r.name ?? ""))}">${t("Buch")}</span>${r.name ? ` <span class="muted ex-name">${esc(openingName(r.name.split(":").slice(1).join(":").trim() || r.name))}</span>` : ""}` : ""}</span>
                 </div>`,
               )
               .join("")}

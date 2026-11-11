@@ -1,4 +1,5 @@
 import { lang, t } from "./i18n";
+import { openingInComment } from "./opening-names";
 import { CLASSES, type Class, type MoveReview, type Platform } from "./types";
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -92,5 +93,5 @@ type Comments = Pick<MoveReview, "comment" | "commentEn" | "commentOther" | "com
 export function commentOf(m: Comments, mine = true): string {
   const de = mine ? m.comment : (m.commentOther ?? m.comment);
   const en = mine ? m.commentEn : (m.commentOtherEn ?? m.commentEn);
-  return lang === "en" && en ? en : de;
+  return lang === "en" && en ? en : openingInComment(de);
 }

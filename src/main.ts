@@ -11,6 +11,7 @@ import "./styles.css";
 import "./pieces.css";
 import { lang, locale, playerName, t, tn } from "./i18n";
 import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedLabel, store } from "./util";
+import { openingName } from "./opening-names";
 import { autoAnalyse, initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
@@ -423,7 +424,7 @@ function matchesFilter(g: GameInfo): boolean {
   if (filter.analysis === "errors" && !((state.errors.get(g.id) ?? 0) > 0)) return false;
   if (filter.analysis === "pending" && state.cached.has(g.id)) return false;
   if (filter.q) {
-    const hay = `${g.white.name} ${g.black.name} ${g.opening?.name ?? ""}`.toLowerCase();
+    const hay = `${g.white.name} ${g.black.name} ${g.opening?.name ?? ""} ${openingName(g.opening?.name ?? "")}`.toLowerCase();
     if (!filter.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
   }
   return true;
@@ -564,7 +565,7 @@ function renderGames() {
       ${state.view === "all" ? `<span class="platform ${g.source ?? "lichess"}" title="${platformLabel(g.source ?? "lichess")}">${g.source === "chesscom" ? "C" : g.source === "local" ? t("E") : "L"}</span>` : ""}
       <span class="game-main">
         <span class="game-title">${title}</span>
-        <span class="game-sub">${esc(g.opening?.name ?? t("Unbekannte Eröffnung"))}</span>
+        <span class="game-sub">${esc(g.opening ? openingName(g.opening.name) : t("Unbekannte Eröffnung"))}</span>
         <span class="game-sub">${speed} · ${date} · ${tn(Math.ceil(g.moves.length / 2), "1 Zug", "{n} Züge")}</span>
         ${accuracyBar(g)}
       </span>
@@ -1262,7 +1263,7 @@ function renderCoach() {
     const g = state.game!;
     head.innerHTML = `<span class="coach-title">${t("Partie-Review")}</span>`;
     const howTo = t("Mit → gehst du Zug für Zug durch die Partie, mit N springst du zu deinem nächsten Fehler.");
-    text.textContent = g.opening ? `${g.opening.name} (${g.opening.eco}). ${howTo}` : howTo;
+    text.textContent = g.opening ? `${openingName(g.opening.name)} (${g.opening.eco}). ${howTo}` : howTo;
     best.innerHTML = `<span class="muted">${t("Analysiert mit Stockfish, Tiefe {d}", { d: r.depth })}</span>`;
     return;
   }
