@@ -538,10 +538,18 @@ export function openingsHome() {
   if (active && view !== "home") setView("home");
 }
 
-/** The buttons under the board, in "Erkunden" (false: not for us). */
+/**
+ * The buttons under the board while the Lernen tab is open (false: not for us).
+ * "Erkunden" steps through its moves, a course line goes one move back;
+ * everything else ignores them (they'd move the hidden game of the review).
+ */
 export function openingNav(dir: "first" | "prev" | "next" | "last"): boolean {
-  if (!active || view !== "train" || trainMode !== "explore") return false;
-  explorerNav(dir);
+  if (!active) return false;
+  if (view === "train" && trainMode === "explore") {
+    explorerNav(dir);
+  } else if (view === "train" && dir === "prev" && drill?.kind === "line" && phase !== "checking" && backTarget() >= 0) {
+    back();
+  }
   return true;
 }
 
@@ -816,6 +824,13 @@ async function startTrain(m: TrainMode, f: Focus | null) {
     });
     return;
   }
+  if (m === "due" && f) {
+    // The flashcards of one opening: no course to prepare.
+    consolidate = null;
+    renderSidebar();
+    loadNext();
+    return;
+  }
   await setFocus(f);
 }
 
@@ -982,7 +997,7 @@ function renderHome() {
 
 /** Start an opening over after asking; true if it was reset. */
 async function resetOpening(color: Color, family: string): Promise<boolean> {
-  const moves = await invoke<number>("rep_delete_family", { color, family, dry: true }).catch(() => 0);
+  const moves = await invoke<Changed>("rep_delete_family", { color, family, dry: true }).then((c) => c.count).catch(() => 0);
   const ok = confirm(
     `${t("{family} als {side} zurücksetzen? Der Kurs fängt wieder bei „neu“ an – die Eröffnung bleibt in deiner Liste.", {
       family: openingName(family),
@@ -1023,7 +1038,9 @@ function renderTop() {
         ? t("Sparring: {family} als {side}", { family: esc(openingName(treeFamily)), side: SIDE[treeColor] })
         : t("Sparring als {side}", { side: SIDE[treeColor] })
       : trainMode === "due"
-      ? t("Karteikasten")
+      ? focus
+        ? t("Karteikasten: {family} als {side}", { family: esc(openingName(focus.family)), side: SIDE[focus.color] })
+        : t("Karteikasten")
       : trainMode === "own"
         ? t("Fehler aus deinen Partien")
         : focus
@@ -1162,9 +1179,11 @@ function renderSidebar() {
   }
   const focusEl = $("op-focus");
   const varsEl = $("op-variations");
-  focusEl.hidden = !focus;
-  varsEl.hidden = !focus;
-  if (!focus) return;
+  // The course's sidebar – not for the flashcards of one opening.
+  const course = !!focus && trainMode !== "due";
+  focusEl.hidden = !course;
+  varsEl.hidden = !course;
+  if (!course || !focus) return;
 
   const p = progress[`${focus.color}|${focus.family}`];
   const sub = focus.line
@@ -1835,16 +1854,16 @@ async function changeTreeMove(uci: string) {
     treeEditing = false;
     return renderTree();
   }
-  if (!(await changeMoveAt(treeColor, n, uci))) return renderTreeBoard();
+  if (!(await changeMoveAt(treeColor, n, uci, () => loadTree(false)))) return renderTreeBoard();
   treeEditing = false;
   await loadTree(true);
 }
 
 /** Another move in one of your positions (asks first if moves after the old one go); true if changed. */
-async function changeMoveAt(color: Color, n: TreeNode, uci: string): Promise<boolean> {
+async function changeMoveAt(color: Color, n: TreeNode, uci: string, reload: () => unknown): Promise<boolean> {
   const args = { color, path: n.path, uci };
   try {
-    const gone = await invoke<number>("rep_change_move", { ...args, dry: true });
+    const gone = (await invoke<Changed>("rep_change_move", { ...args, dry: true })).count;
     if (
       gone &&
       !confirm(
@@ -1858,7 +1877,9 @@ async function changeMoveAt(color: Color, n: TreeNode, uci: string): Promise<boo
     ) {
       return false;
     }
-    await invoke("rep_change_move", { ...args, dry: false });
+    const done = await invoke<Changed>("rep_change_move", { ...args, dry: false });
+    const text = `${t("Zug geändert.")}${done.count ? ` ${tn(done.count, "1 Zug danach entfernt.", "{n} Züge danach entfernt.")}` : ""}`;
+    if (done.undo) undoToast(text, done.undo, reload);
     return true;
   } catch (e) {
     console.error(e);
@@ -1869,7 +1890,7 @@ async function changeMoveAt(color: Color, n: TreeNode, uci: string): Promise<boo
 /** Take the selected move and what only follows from it out of the repertoire. */
 async function deleteTreeMove(n: TreeNode) {
   const args = { color: treeColor, path: n.path };
-  const gone = await invoke<number>("rep_delete_move", { ...args, dry: true }).catch(() => 0);
+  const gone = await invoke<Changed>("rep_delete_move", { ...args, dry: true }).then((c) => c.count).catch(() => 0);
   if (!gone) return;
   const ok = confirm(
     gone > 1
@@ -1877,8 +1898,40 @@ async function deleteTreeMove(n: TreeNode) {
       : t("{mine} aus deinem Repertoire nehmen? Die Karte wird gelöscht.", { mine: fig(n.mine ?? "") }),
   );
   if (!ok) return;
-  await invoke("rep_delete_move", { ...args, dry: false });
+  const done = await invoke<Changed>("rep_delete_move", { ...args, dry: false });
+  if (done.undo) undoToast(tn(done.count, "1 Zug entfernt.", "{n} Züge entfernt."), done.undo, () => loadTree(false));
   await loadTree(false);
+}
+
+/** A change to your repertoire and how to undo it (see tree.rs). */
+interface Changed {
+  count: number;
+  undo: unknown;
+}
+
+let toastTimer: number | undefined;
+
+/** "Gelöscht · Rückgängig" for a few seconds after a change to your repertoire. */
+function undoToast(text: string, undo: unknown, reload: () => unknown) {
+  let el = document.getElementById("op-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "op-toast";
+    el.className = "op-toast";
+    el.setAttribute("role", "status");
+    document.body.appendChild(el);
+  }
+  const box = el;
+  box.innerHTML = `<span>${esc(text)}</span><button>${t("Rückgängig")}</button>`;
+  box.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (box.hidden = true), 8000);
+  box.querySelector("button")!.addEventListener("click", async () => {
+    clearTimeout(toastTimer);
+    box.hidden = true;
+    await invoke("rep_restore", { snapshot: undo }).catch(console.error);
+    await reload();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2215,7 +2268,7 @@ function renderPage() {
   });
   document.getElementById("opn-due")?.addEventListener("click", () => {
     fromPage = true;
-    startTrain("due", null);
+    startTrain("due", { color, family });
   });
   const repEl = document.getElementById("opn-reports");
   if (repEl) bindReports(repEl, pageReports(), renderPage);
@@ -2235,7 +2288,7 @@ function renderPage() {
     b.addEventListener("click", async () => {
       const n = v?.nodes.find((x) => x.id === b.dataset.weak);
       if (!n?.verdict?.bestUci) return;
-      if (await changeMoveAt(color, n, n.verdict.bestUci)) loadPage();
+      if (await changeMoveAt(color, n, n.verdict.bestUci, loadPage)) loadPage();
     }),
   );
   $("opn-tree").addEventListener("click", () => {

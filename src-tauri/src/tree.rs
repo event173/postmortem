@@ -311,6 +311,52 @@ fn orphans(color: &str, moves: &HashMap<String, RepMove>) -> Vec<String> {
     out
 }
 
+/// What a change removed, to put it back ("Rückgängig").
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub color: String,
+    /// Positions whose moves the change added (taken out again first).
+    pub added: Vec<String>,
+    pub moves: Vec<RepMove>,
+    pub cards: Vec<(String, LineProgress)>,
+}
+
+/// A change to the repertoire: how many moves go, and how to undo it (not for a dry run).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Changed {
+    pub count: usize,
+    pub undo: Option<Snapshot>,
+}
+
+/// Your moves in these positions with their cards, as they are now.
+fn snapshot(db: &Db, color: &str, epds: &[String], added: Vec<String>) -> Result<Snapshot, String> {
+    let moves = db.rep_moves(color)?;
+    let progress = db.opening_progress(color)?;
+    Ok(Snapshot {
+        color: color.to_string(),
+        added,
+        moves: epds.iter().filter_map(|e| moves.get(e).cloned()).collect(),
+        cards: epds.iter().filter_map(|e| progress.get(&card_id(e)).map(|p| (card_id(e), *p))).collect(),
+    })
+}
+
+/// Put back what a change removed.
+pub fn restore(db: &Db, s: &Snapshot) -> Result<(), String> {
+    db.delete_rep_moves(&s.color, &s.added)?;
+    for m in &s.moves {
+        db.set_rep_move(m)?;
+        if !m.note.is_empty() {
+            db.set_rep_note(&s.color, &m.epd, &m.note)?;
+        }
+    }
+    for (id, p) in &s.cards {
+        db.set_opening_progress(id, &s.color, p)?;
+    }
+    Ok(())
+}
+
 /// What adding a line by hand did.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -345,13 +391,13 @@ pub fn add_manual(db: &Db, color: &str, moves: &[String]) -> Result<Added, Strin
 
 /// Play another move in a position: the new one gets a new card, the moves
 /// that only followed the old one go. Returns how many go (`dry`: only counts).
-pub fn change_move(db: &Db, color: &str, path: &[String], uci: &str, dry: bool) -> Result<usize, String> {
+pub fn change_move(db: &Db, color: &str, path: &[String], uci: &str, dry: bool) -> Result<Changed, String> {
     let pos = own_position(color, path)?;
     let m = parse(&pos, uci).ok_or_else(|| format!("illegal move {uci}"))?;
     let key = epd(&pos);
     let mut moves = db.rep_moves(color)?;
     if moves.get(&key).is_some_and(|o| o.uci == uci) {
-        return Ok(0);
+        return Ok(Changed { count: 0, undo: None });
     }
     let rm = RepMove {
         color: color.to_string(),
@@ -365,44 +411,52 @@ pub fn change_move(db: &Db, color: &str, path: &[String], uci: &str, dry: bool) 
     };
     moves.insert(key.clone(), rm.clone());
     let gone = orphans(color, &moves);
+    let mut undo = None;
     if !dry {
+        let mut touched = gone.clone();
+        touched.push(key.clone());
+        undo = Some(snapshot(db, color, &touched, vec![key.clone()])?);
         db.delete_rep_moves(color, &gone)?;
         db.delete_rep_moves(color, std::slice::from_ref(&key))?;
         db.set_rep_move(&rm)?;
         db.set_opening_progress(&card_id(&key), color, &LineProgress { box_: 0, due: rm.added_at, attempts: 0, successes: 0 })?;
     }
-    Ok(gone.len())
+    Ok(Changed { count: gone.len(), undo })
 }
 
 /// Remove your move in a position and everything that only follows from it.
 /// Returns how many moves go (`dry`: only counts).
-pub fn delete_move(db: &Db, color: &str, path: &[String], dry: bool) -> Result<usize, String> {
+pub fn delete_move(db: &Db, color: &str, path: &[String], dry: bool) -> Result<Changed, String> {
     let key = epd(&own_position(color, path)?);
     let mut moves = db.rep_moves(color)?;
     if moves.remove(&key).is_none() {
-        return Ok(0);
+        return Ok(Changed { count: 0, undo: None });
     }
     let mut gone = orphans(color, &moves);
     gone.push(key);
-    if !dry {
-        db.delete_rep_moves(color, &gone)?;
+    remove(db, color, gone, dry)
+}
+
+/// Take these moves out (unless `dry`), keeping what's needed to undo it.
+fn remove(db: &Db, color: &str, gone: Vec<String>, dry: bool) -> Result<Changed, String> {
+    if dry {
+        return Ok(Changed { count: gone.len(), undo: None });
     }
-    Ok(gone.len())
+    let undo = snapshot(db, color, &gone, vec![])?;
+    db.delete_rep_moves(color, &gone)?;
+    Ok(Changed { count: gone.len(), undo: Some(undo) })
 }
 
 /// Remove the moves of one opening (and what only follows from them).
 /// Returns how many go (`dry`: only counts).
-pub fn delete_family(db: &Db, color: &str, family: &str, dry: bool) -> Result<usize, String> {
+pub fn delete_family(db: &Db, color: &str, family: &str, dry: bool) -> Result<Changed, String> {
     let mut moves = db.rep_moves(color)?;
     let mut gone: Vec<String> = moves.values().filter(|m| family_of_move(m).as_deref() == Some(family)).map(|m| m.epd.clone()).collect();
     for k in &gone {
         moves.remove(k);
     }
     gone.extend(orphans(color, &moves));
-    if !dry {
-        db.delete_rep_moves(color, &gone)?;
-    }
-    Ok(gone.len())
+    remove(db, color, gone, dry)
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,6 +1391,14 @@ mod tests {
         assert_eq!(db.rep_moves("black").unwrap()[&k].note, "Zentrum angreifen", "kept when lines come in");
         change_move(&db, "black", &ucis("e4 c6 d4"), "g7g6", false).unwrap();
         assert_eq!(db.rep_moves("black").unwrap()[&k].note, "", "a new move starts without");
+        // Undo brings back the old move, its card and its note.
+        db.set_rep_note("black", &k, "Fianchetto").unwrap();
+        let changed = change_move(&db, "black", &ucis("e4 c6 d4"), "d7d5", false).unwrap();
+        assert_eq!(db.rep_moves("black").unwrap()[&k].san, "d5");
+        restore(&db, &changed.undo.unwrap()).unwrap();
+        let back = &db.rep_moves("black").unwrap()[&k];
+        assert_eq!((back.san.as_str(), back.note.as_str()), ("g6", "Fianchetto"));
+        assert_eq!(db.opening_progress("black").unwrap()[&card_id(&k)].box_, 0);
     }
 
     #[test]
@@ -1356,9 +1418,10 @@ mod tests {
         assert_eq!(db.rep_moves("black").unwrap().len(), 5);
         let path = ucis("e4 c6 d4 d5 e5");
         // 3…c5 instead of 3…Bf5: 4…e6 goes with it.
-        assert_eq!(change_move(&db, "black", &path, "c6c5", true).unwrap(), 1);
+        assert_eq!(change_move(&db, "black", &path, "c6c5", true).unwrap().count, 1);
         assert_eq!(db.rep_moves("black").unwrap().len(), 5, "dry run changes nothing");
-        assert_eq!(change_move(&db, "black", &path, "c6c5", false).unwrap(), 1);
+        let changed = change_move(&db, "black", &path, "c6c5", false).unwrap();
+        assert_eq!(changed.count, 1);
         let moves = db.rep_moves("black").unwrap();
         assert_eq!(moves.len(), 4);
         let k = key("e4 c6 d4 d5 e5");
@@ -1372,7 +1435,7 @@ mod tests {
         let r = add_manual(&db, "black", &ucis("e4 c6 d4 d5 exd5 cxd5 c4 Nf6")).unwrap();
         assert_eq!((r.added, r.conflict), (1, None));
         // Same move again: nothing to do.
-        assert_eq!(change_move(&db, "black", &path, "c6c5", false).unwrap(), 0);
+        assert_eq!(change_move(&db, "black", &path, "c6c5", false).unwrap().count, 0);
     }
 
     #[test]
@@ -1382,11 +1445,16 @@ mod tests {
         add_line(&db, "black", &ucis("e4 c6 d4 d5 exd5 cxd5"), "line", None).unwrap();
         add_line(&db, "black", &ucis("d4 d5 c4 c6"), "line", None).unwrap();
         // 2…d5 goes, with both answers after it; the d4 lines stay.
-        assert_eq!(delete_move(&db, "black", &ucis("e4 c6 d4"), true).unwrap(), 3);
-        assert_eq!(delete_move(&db, "black", &ucis("e4 c6 d4"), false).unwrap(), 3);
+        assert_eq!(delete_move(&db, "black", &ucis("e4 c6 d4"), true).unwrap().count, 3);
+        let deleted = delete_move(&db, "black", &ucis("e4 c6 d4"), false).unwrap();
+        assert_eq!(deleted.count, 3);
+        // Undo puts the branch back.
+        restore(&db, deleted.undo.as_ref().unwrap()).unwrap();
+        assert_eq!(db.rep_moves("black").unwrap().len(), 6);
+        delete_move(&db, "black", &ucis("e4 c6 d4"), false).unwrap();
         assert_eq!(db.rep_moves("black").unwrap().len(), 3, "1…c6, 1…d5, 2…c6");
         // A whole opening: the Slav moves.
-        assert!(delete_family(&db, "black", "Slav Defense", false).unwrap() >= 1);
+        assert!(delete_family(&db, "black", "Slav Defense", false).unwrap().count >= 1);
         assert!(db.rep_moves("black").unwrap().contains_key(&key("e4")));
     }
 

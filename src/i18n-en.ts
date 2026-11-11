@@ -969,4 +969,11 @@ export const EN: Record<string, string> = {
   "Noch keine. Wähl oben „Neue Eröffnung“.": "None yet. Choose “New opening” above.",
   "Pro Eröffnung findest du das auch auf ihrer Seite – mit „Linie lernen“.": "For each opening you'll also find this on its page – with “Learn line”.",
   "So oft haben deine Partien dein Repertoire verlassen – Details auf der Seite der Eröffnung": "How often your games left your repertoire – details on the opening's page",
+  "1 Zug danach entfernt.": "1 move after it removed.",
+  "{n} Züge danach entfernt.": "{n} moves after it removed.",
+  "1 Zug entfernt.": "1 move removed.",
+  "{n} Züge entfernt.": "{n} moves removed.",
+  "Karteikasten: {family} als {side}": "Flashcards: {family} as {side}",
+  "Rückgängig": "Undo",
+  "Zug geändert.": "Move changed.",
 };

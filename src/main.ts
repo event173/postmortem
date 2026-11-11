@@ -14,7 +14,7 @@ import { $, badgeHtml, commentOf, esc, fig, platformLabel, speedLabel, store } f
 import { openingName } from "./opening-names";
 import { autoAnalyse, initStats, loadStats } from "./stats";
 import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "./sound";
-import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
+import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove, puzzleNav } from "./puzzles";
 import { enterPlay, initPlay, isPlayMode, leavePlay, playHome, playMove } from "./play";
 import { bindCardButton, type CardRequest } from "./cards";
 import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, openingsHome, showTheoryExits, startFocus } from "./openings";
@@ -1897,11 +1897,13 @@ function next() {
   showVar(state.varIndex + 1);
 }
 
-// In the openings' free play the same buttons step through the moves played there.
-$("btn-first").addEventListener("click", () => openingNav("first") || goto(0));
-$("btn-prev").addEventListener("click", () => openingNav("prev") || prev());
-$("btn-next").addEventListener("click", () => openingNav("next") || next());
-$("btn-last").addEventListener("click", () => openingNav("last") || goto(Infinity));
+// Puzzles step through a solved puzzle; elsewhere off the review they do nothing
+// (instead of moving the hidden game).
+const boardNav = (dir: "first" | "prev" | "next" | "last") => puzzleNav(dir) || openingNav(dir) || isPlayMode();
+$("btn-first").addEventListener("click", () => boardNav("first") || goto(0));
+$("btn-prev").addEventListener("click", () => boardNav("prev") || prev());
+$("btn-next").addEventListener("click", () => boardNav("next") || next());
+$("btn-last").addEventListener("click", () => boardNav("last") || goto(Infinity));
 $("btn-back").addEventListener("click", backToGame);
 $("btn-flip").addEventListener("click", flip);
 $("btn-mistake").addEventListener("click", nextMistake);

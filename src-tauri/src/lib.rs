@@ -766,7 +766,7 @@ fn rep_set_move(db: State<DbState>, color: String, path: Vec<String>, uci: Strin
 /// Play another move in a position of your repertoire (`dry`: only count
 /// the moves that would go with the old one).
 #[tauri::command]
-fn rep_change_move(db: State<DbState>, color: String, path: Vec<String>, uci: String, dry: bool) -> Result<usize, String> {
+fn rep_change_move(db: State<DbState>, color: String, path: Vec<String>, uci: String, dry: bool) -> Result<tree::Changed, String> {
     tree::change_move(&db.0.lock().unwrap(), &color, &path, &uci, dry)
 }
 
@@ -802,15 +802,21 @@ fn rep_add_line(db: State<DbState>, color: String, moves: Vec<String>) -> Result
     tree::add_manual(&db.0.lock().unwrap(), &color, &moves)
 }
 
+/// Undo a change to the repertoire (what `rep_change_move` / `rep_delete_move` returned).
+#[tauri::command]
+fn rep_restore(db: State<DbState>, snapshot: tree::Snapshot) -> Result<(), String> {
+    tree::restore(&db.0.lock().unwrap(), &snapshot)
+}
+
 /// Remove your move in a position and what only follows from it (`dry`: only count).
 #[tauri::command]
-fn rep_delete_move(db: State<DbState>, color: String, path: Vec<String>, dry: bool) -> Result<usize, String> {
+fn rep_delete_move(db: State<DbState>, color: String, path: Vec<String>, dry: bool) -> Result<tree::Changed, String> {
     tree::delete_move(&db.0.lock().unwrap(), &color, &path, dry)
 }
 
 /// Remove the moves of one opening from your repertoire (`dry`: only count).
 #[tauri::command]
-fn rep_delete_family(db: State<DbState>, color: String, family: String, dry: bool) -> Result<usize, String> {
+fn rep_delete_family(db: State<DbState>, color: String, family: String, dry: bool) -> Result<tree::Changed, String> {
     tree::delete_family(&db.0.lock().unwrap(), &color, &family, dry)
 }
 
@@ -1254,6 +1260,7 @@ pub fn run() {
             rep_notes,
             rep_set_depth,
             rep_delete_move,
+            rep_restore,
             rep_delete_family,
             rep_check_games,
             rep_deviations,

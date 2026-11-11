@@ -496,6 +496,14 @@ pub fn next(
     focus: Option<&Focus>,
 ) -> Result<Option<Drill>, String> {
     let mut rng = fastrand::Rng::new();
+    // The flashcards of one opening (from its page): only its due moves.
+    if mode == Mode::Due && let Some(f) = focus {
+        let mine = tree::due(db, &f.color, now_ms())?
+            .into_iter()
+            .filter(|(m, _)| tree::family_of_move(m).as_deref() == Some(f.family.as_str()))
+            .collect::<Vec<_>>();
+        return Ok((!mine.is_empty()).then(|| move_drill(&mine[rng.usize(..mine.len().min(3))].0, "due")));
+    }
     let mut rep = load(db);
     if let Some(f) = focus {
         rep = one(&f.color, &f.family);
@@ -1073,6 +1081,14 @@ mod tests {
         assert_eq!((m.kind.as_str(), m.ask_from), ("move", Some(0)));
         assert_eq!(m.moves, vec![first.uci.clone()]);
         assert_eq!(status(&db).unwrap().white.due, 1);
+        // From an opening's page: only that opening's cards.
+        let italian = Focus { color: "white".into(), family: "Italian Game".into(), variation: None, line: None };
+        let ruy = Focus { color: "white".into(), family: "Ruy Lopez".into(), variation: None, line: None };
+        let deep = tree::cards(&db, "white").unwrap().into_iter().map(|c| c.0).find(|m| tree::family_of_move(m).as_deref() == Some("Italian Game")).unwrap();
+        db.set_opening_progress(&tree::card_id(&deep.epd), "white", &LineProgress { box_: 1, due: 0, attempts: 1, successes: 1 }).unwrap();
+        db.set_opening_progress(&tree::card_id(&first.epd), "white", &LineProgress { box_: 2, due: i64::MAX, attempts: 1, successes: 1 }).unwrap();
+        assert_eq!(next(&db, &[], &[], Mode::Due, Some(&italian)).unwrap().unwrap().id, tree::card_id(&deep.epd));
+        assert!(next(&db, &[], &[], Mode::Due, Some(&ruy)).unwrap().is_none());
     }
 
 

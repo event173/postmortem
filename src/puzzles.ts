@@ -259,6 +259,16 @@ export function isPuzzleMode(): boolean {
   return active;
 }
 
+/** The buttons under the board: step through the solved puzzle (nothing while solving). */
+export function puzzleNav(dir: "first" | "prev" | "next" | "last"): boolean {
+  if (!active) return false;
+  if (!finished()) return true;
+  if (dir === "prev" || dir === "next") return stepView(dir === "prev" ? -1 : 1), true;
+  const n = positions().length;
+  stepView(dir === "first" ? -n : n);
+  return true;
+}
+
 export function enterPuzzles() {
   active = true;
   ($("pz-window") as HTMLSelectElement).value = gameWindow();
@@ -851,7 +861,7 @@ function renderText(error?: string) {
     actions.innerHTML = finished()
       ? `<span class="pz-nav">
            <button data-act="first" title="${t("Zur Ausgangsstellung")}" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><rect x="2.5" y="3" width="2" height="10" rx="0.5"/><path d="M13.5 3.6v8.8a.6.6 0 0 1-.9.5L6.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
-           <button data-act="back" title="${t("Zug zurück (←)")}" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M11.5 3.6v8.8a.6.6 0 0 1-.9.5L4.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
+           <button data-act="prev" title="${t("Zug zurück (←)")}" ${i === 0 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M11.5 3.6v8.8a.6.6 0 0 1-.9.5L4.3 8.5a.6.6 0 0 1 0-1l6.3-4.4a.6.6 0 0 1 .9.5Z"/></svg></button>
            <button data-act="fwd" title="${t("Zug vor (→)")}" ${i >= n - 1 ? "disabled" : ""}><svg class="ctl-icon" viewBox="0 0 16 16"><path d="M4.5 3.6v8.8a.6.6 0 0 0 .9.5l6.3-4.4a.6.6 0 0 0 0-1L5.4 3.1a.6.6 0 0 0-.9.5Z"/></svg></button>
          </span>
          <button data-act="engine" ${engineBusy ? "disabled" : ""}>${engineBusy ? t("Engine rechnet …") : t("Engine zieht")}</button>
@@ -913,7 +923,7 @@ function bindActions() {
             viewIndex = 0;
             render();
             break;
-          case "back":
+          case "prev":
             stepView(-1);
             break;
           case "fwd":

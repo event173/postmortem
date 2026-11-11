@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.5.2" date="2026-11-11">
+      <description>
+        <p>Fixes and comfort: "move back" in a solved puzzle works, the buttons under the board step through the puzzle or the course line instead of the hidden game, the flashcards button on an opening's page asks only that opening's cards, and changing or deleting moves in your repertoire can be undone.</p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-11-11">
       <description>
         <p>A tidier Learn tab: everything from your games sits in one folded block, the details per opening on its page (with the comparison with your repertoire). "New opening" leads to the same opening page. The repertoire tree shows its numbers as small badges, with actions and settings in their own rows. Consistent terms: line, gap, card.</p>
