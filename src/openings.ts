@@ -454,6 +454,8 @@ const WEAK: Class[] = ["inaccuracy", "mistake", "miss", "blunder"];
 /** Where your games left your repertoire, and the new ones since the app started. */
 let reports: GameReport[] = [];
 let reportsAll = false;
+/** "Alles aus deinen Partien" on the home page unfolded. */
+let gamesOpen = false;
 let freshDeviations = 0;
 const REPORTS_FOLDED = 4;
 /** Your ideas behind your repertoire moves, by colour and position (for the flashcards). */
@@ -526,6 +528,7 @@ export function leaveOpenings() {
 /** From the statistics: the Lernen page at "Hier verlässt du die Theorie". */
 export function showTheoryExits() {
   scrollToTheory = true;
+  gamesOpen = true;
   if (view !== "home") setView("home");
   else if (theory) renderHome();
 }
@@ -657,7 +660,7 @@ async function checkGames() {
 }
 
 async function loadReports() {
-  reports = await invoke<GameReport[]>("rep_deviations", { accounts: deps.accounts(), limit: 20 }).catch(() => []);
+  reports = await invoke<GameReport[]>("rep_deviations", { accounts: deps.accounts(), limit: 100 }).catch(() => []);
 }
 
 async function loadNotes() {
@@ -855,8 +858,7 @@ function renderHome() {
       ? t("Nächste Karte {when}", { when: relDays(nextDue) })
       : t("Noch leer");
   const ownText = ownCount ? `<b>${tn(ownCount, "1 Stellung offen", "{n} Stellungen offen")}</b>` : t("Gerade nichts offen");
-  const begun = Object.values(progress).filter((p) => p.started > 0).length;
-  const learnText = begun ? tn(begun, "1 begonnen", "{n} begonnen") : t("Eröffnung aussuchen");
+  const learnText = t("Eröffnung aussuchen");
   const tile = (go: string, icon: string, title: string, text: string, tip: string, opts: { hot?: boolean; off?: boolean } = {}) =>
     `<button class="op-tile ${opts.hot ? "hot" : ""}" data-go="${go}" title="${esc(tip)}" ${opts.off ? "disabled" : ""}>
       <span class="op-tile-icon">${icon}</span><b>${title}</b><span class="op-tile-text">${text}</span></button>`;
@@ -868,9 +870,9 @@ function renderHome() {
       <h2>${t("Lernen")}</h2>
     </div>
     <div class="op-tiles">
-      ${tile("due", ICON.due, t("Karteikasten"), dueText, t("Die Varianten und Karten wiederholen, die heute dran sind."), { hot: !!due, off: !due })}
+      ${tile("due", ICON.due, t("Karteikasten"), dueText, t("Die Karten wiederholen, die heute dran sind."), { hot: !!due, off: !due })}
       ${tile("own", ICON.own, t("Fehler aus deinen Partien"), ownText, t("Stellungen aus deinen Partien, in denen du in der Eröffnung danebengegriffen hast."), { off: !ownCount })}
-      ${tile("learn", ICON.learn, t("Eröffnungen lernen"), learnText, t("Eröffnung und Farbe aussuchen. Dann Zug für Zug, mit Erklärung zu jedem Zug."))}
+      ${tile("learn", ICON.learn, t("Neue Eröffnung"), learnText, t("Eine Eröffnung und Farbe aussuchen – dann lernst du sie Zug für Zug, mit Erklärung zu jedem Zug."))}
       ${tile("explore", ICON.explore, t("Erkunden"), t("Züge ausprobieren"), t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess."))}
       ${tile("tree", ICON.tree, t("Mein Repertoire"), t("Baum, Lücken, eigene Züge"), t("Für Fortgeschrittene: dein ganzes Repertoire als Baum – Lücken füllen, Züge ändern, Stockfish prüft deine Züge."))}
     </div>
@@ -898,11 +900,10 @@ function renderHome() {
         mine.length
           ? `<p class="panel-sub">${t("Was du lernst und was du spielst (ab 3 Partien). Oben steht, wo sich Lernen am meisten lohnt. Ein Klick öffnet die Eröffnung zum Lernen.")}</p>
              <div class="op-mine-list">${mine.map(openingRow).join("")}</div>`
-          : `<p class="muted">${t("Noch keine. Wähl oben „Eröffnungen lernen“.")}</p>`
+          : `<p class="muted">${t("Noch keine. Wähl oben „Neue Eröffnung“.")}</p>`
       }
     </div>
-    ${reportsHtml()}
-    ${theoryHtml()}
+    ${gamesBlockHtml()}
     <div class="op-home-mine op-home-cards">
       <button class="op-cards-toggle" ${cards.length ? "" : "disabled"}>${cards.length ? (cardsOpen ? "▾" : "▸") : ""} ${t("Deine Karten ({n})", { n: cards.length })}</button>
       ${
@@ -938,15 +939,9 @@ function renderHome() {
       theoryEl.scrollIntoView({ block: "start" });
     }
   }
-  home.querySelectorAll<HTMLElement>("[data-report]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const r = reports[Number(b.dataset.report)];
-      if (b.dataset.act === "game") deps.openGame(r.gameId, r.ply);
-      else openTree(r.color, r.family, r.epd);
-    }),
-  );
-  home.querySelector(".op-reports-more")?.addEventListener("click", () => {
-    reportsAll = !reportsAll;
+  bindReports(home, reports, renderHome);
+  home.querySelector(".op-games-toggle")?.addEventListener("click", () => {
+    gamesOpen = !gamesOpen;
     renderHome();
   });
   home.querySelector(".op-cards-toggle")?.addEventListener("click", () => {
@@ -1087,7 +1082,7 @@ function lineState(l: LineInfo): string {
 }
 
 const BOX_HELP = () =>
-  t("Wie Karteikarten: Jede Variante ist eine Karte. Spielst du sie richtig, rutscht sie ein Fach weiter und kommt später wieder (10 Min. → 1 Tag → 3 → 7 → 21 Tage). Ein Fehler schickt sie zurück in Fach 1. Ab Fach 3 sitzt sie.");
+  t("Wie Karteikarten: Jeder Zug deines Repertoires ist eine Karte. Spielst du ihn richtig, rutscht die Karte ein Fach weiter und kommt später wieder (10 Min. → 1 Tag → 3 → 7 → 21 Tage). Ein Fehler schickt sie zurück in Fach 1. Ab Fach 3 sitzt sie.");
 
 function renderList() {
   if (view !== "browse") return;
@@ -1135,7 +1130,7 @@ function renderList() {
         <div class="op-card-body">
           <div class="op-title" title="${esc(openingName(f.name))}">${esc(openingName(f.name))}</div>
           <div class="op-moves">${esc(fig(f.moves))}</div>
-          <div class="muted op-meta">${esc(f.eco)} · ${tn(f.lines, "1 Variante", "{n} Varianten")}</div>
+          <div class="muted op-meta">${esc(f.eco)} · ${tn(f.lines, "1 Linie", "{n} Linien")}</div>
           ${mineText}
           <div class="op-card-actions">${side("white")}${side("black")}</div>
         </div>
@@ -1144,7 +1139,7 @@ function renderList() {
     .join("");
   grid.querySelectorAll<HTMLElement>(".mini-board").forEach((el) => thumbObserver.observe(el));
   grid.querySelectorAll<HTMLElement>(".op-learn").forEach((b) =>
-    b.addEventListener("click", () => startFocus(b.dataset.color as Color, b.dataset.family!)),
+    b.addEventListener("click", () => openPage(b.dataset.color as Color, b.dataset.family!)),
   );
   grid.querySelectorAll<HTMLElement>(".op-remove").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -1373,16 +1368,14 @@ function renderTreePanel() {
   const v = tree;
   const cov = v.coverage;
   const f = fetching?.key === `${treeColor}|repertoire` ? fetching : null;
-  const status = treeFetching
-    ? `<p class="tree-status muted">${
-        f?.waiting
-          ? t("Lichess bittet um eine kurze Pause – in einer Minute geht es weiter …")
-          : `${t("Hole bei Lichess, was auf deinem Niveau gespielt wird …")}${f ? ` ${tn(f.done, "1 Stellung geholt", "{n} Stellungen geholt")}` : ""}`
-      }</p>`
+  const lichessStatus = treeFetching
+    ? f?.waiting
+      ? t("Lichess bittet um eine kurze Pause – in einer Minute geht es weiter …")
+      : `${t("Hole bei Lichess, was auf deinem Niveau gespielt wird …")}${f ? ` ${tn(f.done, "1 Stellung geholt", "{n} Stellungen geholt")}` : ""}`
     : v.error
-      ? `<p class="tree-status muted">${esc(v.error)}${
+      ? `${esc(v.error)}${
           v.ratings ? "" : ` <button class="link" id="tree-token">${t("Lichess-Schlüssel eintragen")}</button><br>${t("Ohne ihn siehst du deine Züge und die Lücken aus deinen Partien, aber keine Abdeckung.")}`
-        }</p>`
+        }`
       : "";
   const byId = new Map(v.nodes.map((n) => [n.id, n]));
   const visible = (n: TreeNode) => {
@@ -1400,12 +1393,12 @@ function renderTreePanel() {
           ? `<span class="tree-bar"><i class="${n.gap ? "gap" : ""}" style="width:${Math.min(100, n.reach * 100)}%"></i></span><span class="tree-pct">${pct(n.reach)}</span>`
           : `<span class="tree-pct muted">–</span>`;
       const state = n.gap
-        ? `<span class="tree-state gap">${n.games ? tn(n.games, "1× in deinen Partien", "{n}× in deinen Partien") : t("keine Antwort")}</span>`
+        ? `<span class="tree-state gap">${n.games ? tn(n.games, "1× in deinen Partien", "{n}× in deinen Partien") : ""}</span>`
         : `${pips(n.boxLevel)}<span class="tree-state ${n.due ? "due" : n.isNew ? "new" : ""}">${n.isNew ? t("neu") : n.due ? t("fällig") : n.boxLevel >= 3 ? t("sitzt") : t("im Lernen")}</span>`;
       return `<div class="tree-row ${n.id === treeSel ? "selected" : ""} ${n.verdict?.weak ? "weak" : ""}" style="padding-left:${n.depth * 14}px">
         ${n.hasChildren ? `<button class="tree-caret" data-toggle="${esc(n.id)}" aria-label="${open ? t("Zuklappen") : t("Aufklappen")}">${open ? "▾" : "▸"}</button>` : `<span class="tree-caret"></span>`}
         <button class="tree-move" data-sel="${esc(n.id)}">${n.opp ? `<span class="tree-opp">${esc(fig(n.opp))}</span>` : ""}${
-          n.gap ? `<span class="tree-gap">+ ${t("Antwort fehlt")}</span>` : `<b>${esc(fig(n.mine ?? ""))}</b>`
+          n.gap ? `<span class="tree-gap">+ ${t("Lücke")}</span>` : `<b>${esc(fig(n.mine ?? ""))}</b>`
  }${
           n.verdict?.weak
             ? `<span class="tree-weak" style="--c:${CLASSES[n.verdict.class].color}" title="${t("Stockfish hält diesen Zug für schwach")}">${CLASSES[n.verdict.class].symbol} ${CLASSES[n.verdict.class].label}</span>`
@@ -1428,26 +1421,33 @@ function renderTreePanel() {
           .map((c) => `<button data-tree-color="${c}" class="${c === treeColor ? "active" : ""}">${SIDE[c]}</button>`)
           .join("")}</span>`;
   const q = quality?.color === treeColor ? quality : null;
-  const qualityLine = q
-    ? `<p class="tree-status muted">${t("Stockfish prüft deine Züge … {done} von {total}", { done: q.done, total: q.total })}</p>`
-    : v.weak
-      ? `<p class="tree-status op-weak">${tn(v.weak, "Stockfish hält 1 deiner Züge für schwach.", "Stockfish hält {n} deiner Züge für schwach.")}</p>`
-      : "";
+  // One quiet status line for what's going on in the background.
+  const statusText = [lichessStatus, q ? t("Stockfish prüft deine Züge … {done} von {total}", { done: q.done, total: q.total }) : ""].filter(Boolean).join(" · ");
+  const status = statusText ? `<p class="tree-status muted">${statusText}</p>` : "";
+  const chip = (n: number, one: string, many: string, cls = "") => `<span class="tree-chip ${n ? cls : "zero"}">${tn(n, one, many)}</span>`;
   el.innerHTML = `
     <div class="tree-head">
       <div class="tree-cov-row"><span>${t("Abdeckung auf deinem Niveau")}</span><b>${cov != null ? pct(cov) : "–"}</b></div>
       <div class="tree-cov"><i style="width:${(cov ?? 0) * 100}%"></i></div>
-      <div class="muted tree-counts"><label class="tree-depth" title="${t("Lücken und Abdeckung zählen bis zu diesem Zug. Deine eigenen Züge danach bleiben im Baum.")}">${t("Bis Zug")}
-        <select id="tree-depth">${DEPTHS.map((d) => `<option value="${d}" ${d === v.depth ? "selected" : ""}>${d ? d : t("alle")}</option>`).join("")}</select></label> · ${tn(v.gaps, "1 Lücke", "{n} Lücken")} · ${tn(v.cards, "1 Karte", "{n} Karten")} · ${t("{n} fällig", { n: v.due })}${v.ratings ? ` · Lichess ${esc(v.ratings)}` : ""}</div>
-      ${status}
-      ${qualityLine}
+      <div class="tree-chips">
+        ${chip(v.gaps, "1 Lücke", "{n} Lücken", "gap")}
+        ${chip(v.weak, "1 schwacher Zug", "{n} schwache Züge", "weak")}
+        ${chip(v.due, "1 Karte fällig", "{n} Karten fällig", "due")}
+        <span class="tree-chip">${tn(v.cards, "1 Karte", "{n} Karten")}</span>
+      </div>
       <div class="tree-actions">
         ${v.gaps ? `<button class="primary" id="tree-next-gap">${t("Nächste Lücke")} →</button>` : `<span class="tree-ok">${t("Keine Lücken über 3 % ✓")}</span>`}
         ${v.weak ? `<button id="tree-next-weak" class="tree-weak-btn">${t("Schwacher Zug")} →</button>` : ""}
         ${v.cards ? `<button id="tree-spar" title="${t("Der Gegner spielt nach Häufigkeit durch deinen Baum, du antwortest mit deinen Zügen")}">${t("Sparring")} ▶</button>` : ""}
         ${treeHome ? `<button id="tree-course" title="${t("Die Eröffnung Zug für Zug mit Erklärungen lernen – was du lernst, kommt in dein Repertoire")}">${t("Mit dem Kurs lernen")}</button>` : ""}
-        ${other}
       </div>
+      <div class="tree-settings muted">
+        <label class="tree-depth" title="${t("Lücken und Abdeckung zählen bis zu diesem Zug. Deine eigenen Züge danach bleiben im Baum.")}">${t("Bis Zug")}
+          <select id="tree-depth">${DEPTHS.map((d) => `<option value="${d}" ${d === v.depth ? "selected" : ""}>${d ? d : t("alle")}</option>`).join("")}</select></label>
+        ${other}
+        ${v.ratings ? `<span>Lichess ${esc(v.ratings)}</span>` : ""}
+      </div>
+      ${status}
     </div>
     <div class="tree-rows">${rows || `<p class="muted">${t("Noch nichts in deinem Repertoire.")}</p>`}</div>
     <p class="panel-sub tree-legend">${t("Fett: dein Zug, einer pro Stellung. Davor der Zug des Gegners und wie oft er auf deinem Niveau kommt (Lichess). Kästchen: Fach im Karteikasten – eine Karte pro Zug.")}</p>
@@ -2080,7 +2080,7 @@ async function loadPage() {
   const p = page;
   if (!p) return;
   const args = { accounts: deps.accounts(), color: p.color, family: p.family };
-  await Promise.all([loadProgress(), theory ? null : loadTheory(), insights.length ? null : loadRecs()]);
+  await Promise.all([loadProgress(), theory ? null : loadTheory(), insights.length ? null : loadRecs(), reports.length ? null : loadReports()]);
   try {
     pageTree = await invoke<TreeView>("rep_tree", args);
   } catch (e) {
@@ -2104,6 +2104,11 @@ function pageExits(): { costly: TheoryExit[]; harmless: TheoryExit[] } {
   // Like the verdict in the list: anything but "Hält" (analysed games only).
   const costly = all.filter((x) => x.analysed > 0 && (x.errorsAfter > 0 || (x.avgLoss ?? 0) >= COSTLY_LOSS));
   return { costly, harmless: all.filter((x) => !costly.includes(x)) };
+}
+
+/** Where your games in this opening left your repertoire. */
+function pageReports(): GameReport[] {
+  return page ? reports.filter((r) => r.color === page!.color && r.family === page!.family) : [];
 }
 
 /** Average loss of winning chances (percentage points) from which leaving theory counts as bad. */
@@ -2183,6 +2188,11 @@ function renderPage() {
           : ""
       }
     </div>
+    ${
+      pageReports().length
+        ? `<div id="opn-reports">${reportsHtml(pageReports(), false)}</div>`
+        : ""
+    }
     <div class="opn-foot">
       ${q ? `<span class="muted">${t("Stockfish prüft deine Züge … {done} von {total}", { done: q.done, total: q.total })}</span>` : v?.cards && !weak.length && v.checked ? `<span class="muted">✓ ${t("Stockfish hat deine Züge geprüft – keine schwachen dabei.")}</span>` : ""}
       <button class="link" id="opn-tree">${t("Repertoire-Baum ansehen")}</button>
@@ -2207,6 +2217,8 @@ function renderPage() {
     fromPage = true;
     startTrain("due", null);
   });
+  const repEl = document.getElementById("opn-reports");
+  if (repEl) bindReports(repEl, pageReports(), renderPage);
   const exitsEl = $("opn-exits");
   bindTheoryList(exitsEl, {
     openGame: deps.openGame,
@@ -2295,13 +2307,49 @@ function gamesCell(color: Color, family: string): string {
   const errors = g.theoryErrors
     ? ` · <span class="${g.theoryErrors >= 2 ? "op-games-bad" : ""}" title="${t("Analysierte Partien, in denen du zuerst die Theorie verlassen und kurz danach einen Fehler gemacht hast")}">${t("{n}× aus der Theorie gefallen", { n: g.theoryErrors })}</span>`
     : "";
-  return `<span class="op-games muted">${tn(g.games, "1 Partie", "{n} Partien")}${errors}</span>`;
+  const devs = reports.filter((r) => r.color === color && r.family === family).reduce((a, r) => a + r.times, 0);
+  const off = devs ? ` · <span title="${t("So oft haben deine Partien dein Repertoire verlassen – Details auf der Seite der Eröffnung")}">${tn(devs, "1× abgewichen", "{n}× abgewichen")}</span>` : "";
+  return `<span class="op-games muted">${tn(g.games, "1 Partie", "{n} Partien")}${errors}${off}</span>`;
 }
 
-/** "Abgleich mit deinen Partien": where your games left your repertoire. */
-function reportsHtml(): string {
-  if (!reports.length) return "";
-  const shown = reportsAll ? reports : reports.slice(0, REPORTS_FOLDED);
+/** Home: everything from your games in one folded block (details live on the opening pages). */
+function gamesBlockHtml(): string {
+  const exits = theory?.positions.length ?? 0;
+  if (!exits && !reports.length) return "";
+  const summary = [
+    exits ? tn(exits, "1 Stelle, an der du die Theorie verlässt", "{n} Stellen, an denen du die Theorie verlässt") : "",
+    reports.length ? tn(reports.length, "1 Abweichung von deinem Repertoire", "{n} Abweichungen von deinem Repertoire") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return `<div class="op-home-mine op-games-block">
+      <button class="op-cards-toggle op-games-toggle">${gamesOpen ? "▾" : "▸"} ${t("Alles aus deinen Partien")} <span class="muted">· ${summary}</span></button>
+      ${gamesOpen ? `${reportsHtml(reports, true)}${theoryHtml()}` : `<p class="panel-sub">${t("Pro Eröffnung findest du das auch auf ihrer Seite – mit „Linie lernen“.")}</p>`}
+    </div>`;
+}
+
+/** Wire the buttons of a list made by `reportsHtml`. */
+function bindReports(el: HTMLElement, list: GameReport[], rerender: () => void) {
+  el.querySelectorAll<HTMLElement>("[data-report]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const r = list[Number(b.dataset.report)];
+      if (b.dataset.act === "game") deps.openGame(r.gameId, r.ply);
+      else {
+        if (view === "opening") fromPage = true;
+        openTree(r.color, r.family, r.epd);
+      }
+    }),
+  );
+  el.querySelector(".op-reports-more")?.addEventListener("click", () => {
+    reportsAll = !reportsAll;
+    rerender();
+  });
+}
+
+/** "Abgleich mit deinen Partien": where your games left your repertoire (`withOpening`: name each opening). */
+function reportsHtml(list: GameReport[], withOpening: boolean): string {
+  if (!list.length) return "";
+  const shown = reportsAll ? list : list.slice(0, REPORTS_FOLDED);
   const rows = shown
     .map((r, i) => {
       const what =
@@ -2316,8 +2364,10 @@ function reportsHtml(): string {
               played: esc(fig(r.played ?? "–")),
             });
       return `<div class="op-mine-row op-report">
-        <span class="pdot ${r.color}"></span>
-        <span class="op-mine-name">${r.opening ? `<b>${esc(openingName(r.opening))}</b> ` : ""}<span class="muted">${t("als {side}", { side: SIDE[r.color] })}</span><br><span class="op-report-what">${what}</span></span>
+        ${withOpening ? `<span class="pdot ${r.color}"></span>` : ""}
+        <span class="op-mine-name">${
+          withOpening ? `${r.opening ? `<b>${esc(openingName(r.opening))}</b> ` : ""}<span class="muted">${t("als {side}", { side: SIDE[r.color] })}</span><br>` : ""
+        }<span class="op-report-what">${what}</span></span>
         <span class="op-games muted">${tn(r.times, "1 Partie", "{n} Partien")} · ${relAgo(r.createdAt)}</span>
         <button data-report="${i}" data-act="tree">${r.kind === "gap" ? t("Lücke füllen") : t("Im Baum")}</button>
         <button data-report="${i}" data-act="game" class="link">${t("Partie")}</button>
@@ -2325,8 +2375,8 @@ function reportsHtml(): string {
     })
     .join("");
   const more =
-    reports.length > REPORTS_FOLDED
-      ? `<button class="link op-reports-more">${reportsAll ? t("Weniger zeigen") : t("Alle {n} zeigen", { n: reports.length })}</button>`
+    list.length > REPORTS_FOLDED
+      ? `<button class="link op-reports-more">${reportsAll ? t("Weniger zeigen") : t("Alle {n} zeigen", { n: list.length })}</button>`
       : "";
   return `<div class="op-home-mine">
       <h3>${t("Abgleich mit deinen Partien")}</h3>
@@ -2904,7 +2954,7 @@ function renderText(error?: string) {
       actions.innerHTML = "";
       return;
     }
-    head.innerHTML = `<span class="muted">${t("Bereite die nächste Variante vor …")}</span>`;
+    head.innerHTML = `<span class="muted">${t("Bereite die nächste Linie vor …")}</span>`;
     text.innerHTML = "";
     actions.innerHTML = "";
     return;
@@ -2969,7 +3019,7 @@ function renderText(error?: string) {
       } else if (learning()) {
         text.innerHTML = `${t("<b>Du bist dran:</b> spiel den grünen Pfeil nach.")}<br>${lineProgress(d)}`;
       } else if (d.status === "practice") {
-        text.innerHTML = `${t("<b>Jetzt ohne Pfeile:</b> spiel die Variante, die du gerade gelernt hast.")}<br>${lineProgress(d)}`;
+        text.innerHTML = `${t("<b>Jetzt ohne Pfeile:</b> spiel die Linie, die du gerade gelernt hast.")}<br>${lineProgress(d)}`;
       } else {
         text.innerHTML = `<b>${t("{side} am Zug.", { side })}</b> ${t("Welcher Zug gehört zu deinem Repertoire?")}${d.status === "early" ? ` <span class="muted">${t("(vorgezogen)")}</span>` : ""}<br>${lineProgress(d)}`;
       }
@@ -2986,7 +3036,7 @@ function renderText(error?: string) {
       } else if (d.kind === "line" && learning()) {
         text.innerHTML = t("Das ist nicht der markierte Zug – spiel den grünen Pfeil nach.");
       } else if (d.kind === "line") {
-        text.innerHTML = t("{move} gehört nicht zu dieser Variante. Der grüne Pfeil zeigt den richtigen Zug – spiel ihn nach.", {
+        text.innerHTML = t("{move} gehört nicht zu dieser Linie. Der grüne Pfeil zeigt den richtigen Zug – spiel ihn nach.", {
           move: `<b>${esc(fig(wrongTry?.san ?? ""))}</b>`,
         });
       } else {
@@ -3001,16 +3051,16 @@ function renderText(error?: string) {
           ? failed
             ? t("Noch nicht ganz – <b>nochmal</b>. Zweimal fehlerfrei hintereinander, dann hast du sie drin.")
             : enteredBox
-              ? t("<b class=\"ok\">Fehlerfrei!</b> Die Variante liegt jetzt in Fach 1 deines Karteikastens. Noch einmal zum Festigen.")
+              ? t("<b class=\"ok\">Fehlerfrei!</b> Die Linie ist jetzt in deinem Karteikasten. Noch einmal zum Festigen.")
               : t("<b class=\"ok\">Fehlerfrei!</b> Noch einmal, dann hast du sie drin.")
           : endedInBox
             ? t("<b class=\"ok\">Eingeprägt.</b> Die Karte liegt jetzt in Fach 1 deines Karteikastens und kommt in 10 Minuten wieder.")
-            : t("<b>Noch nicht drin.</b> Die Variante kommt noch nicht in den Karteikasten – beim nächsten Mal lernst du sie noch einmal mit Pfeilen.");
+            : t("<b>Noch nicht drin.</b> Die Linie kommt noch nicht in den Karteikasten – beim nächsten Mal lernst du sie noch einmal mit Pfeilen.");
       } else if (learning()) {
         text.innerHTML =
           d.status === "new"
-            ? t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile. Klappt sie einmal ohne Fehler, kommt sie in den Karteikasten.")
-            : t("<b class=\"ok\">Variante gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander klappt.");
+            ? t("<b class=\"ok\">Linie gezeigt.</b> Jetzt spielst du sie ohne Pfeile. Klappt sie einmal ohne Fehler, kommt sie in den Karteikasten.")
+            : t("<b class=\"ok\">Linie gezeigt.</b> Jetzt spielst du sie ohne Pfeile, bis sie zweimal hintereinander klappt.");
       } else {
         const when = resultDue ? relDays(resultDue) : "";
         text.innerHTML = failed
@@ -3042,7 +3092,7 @@ function renderText(error?: string) {
     phase === "done"
       ? `${backBtn}${game}${wholeLine}${d.kind === "line" && !learning() && failed ? `<button data-act="relearn">${t("Mit Pfeilen neu lernen")}</button>` : ""}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
       : `${backBtn}${learning() ? "" : `<button data-act="hint" ${hint || phase !== "solve" ? "disabled" : ""}>${t("Tipp")}</button>`}
-         ${learning() || d.kind !== "line" ? "" : `<button data-act="relearn" title="${t("Die Variante von vorn mit allen Pfeilen zeigen. Die Karte kommt zurück in Fach 1.")}">${t("Mit Pfeilen neu lernen")}</button>`}
+         ${learning() || d.kind !== "line" ? "" : `<button data-act="relearn" title="${t("Die Linie von vorn mit allen Pfeilen zeigen. Die Karte kommt zurück in Fach 1.")}">${t("Mit Pfeilen neu lernen")}</button>`}
          ${learning() ? "" : `<button data-act="show" ${phase === "solve" || phase === "wrong" ? "" : "disabled"}>${sequential(d) ? t("Zug zeigen") : t("Lösung zeigen")}</button>`}
          ${game}
          <button data-act="skip" class="end">${t("Überspringen")}</button>`;

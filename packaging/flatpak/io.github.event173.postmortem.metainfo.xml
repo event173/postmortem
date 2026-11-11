@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.5.1" date="2026-11-11">
+      <description>
+        <p>A tidier Learn tab: everything from your games sits in one folded block, the details per opening on its page (with the comparison with your repertoire). "New opening" leads to the same opening page. The repertoire tree shows its numbers as small badges, with actions and settings in their own rows. Consistent terms: line, gap, card.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-11-11">
       <description>
         <p>Learning comes first: each opening has its own page with a big button to learn or continue the course, and the spots where you dropped out of theory in your games and it cost you – each with a button to learn the line behind it. New sparring mode: the opponent plays through your repertoire by how often moves come up at your level. Stockfish checks the moves of your repertoire and reports weak ones with a better move; gaps get one recommended theory move. New games are compared with your repertoire, and a card you played differently is due again. Write a short idea for each move, shown with its flashcard. More opening texts in German.</p>

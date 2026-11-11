@@ -4098,6 +4098,49 @@ body[data-board] cg-board {
   display: inline-flex;
 }
 
+.tree-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.tree-chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.tree-chip.zero {
+  display: none;
+}
+
+.tree-chip.gap {
+  color: #e8c27a;
+  border-color: rgba(232, 194, 122, 0.5);
+}
+
+.tree-chip.weak {
+  color: #e5862a;
+  border-color: rgba(229, 134, 42, 0.6);
+}
+
+.tree-chip.due {
+  color: var(--accent);
+  border-color: rgba(124, 173, 63, 0.5);
+}
+
+.tree-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
 .tree-rec {
   display: grid;
   grid-template-columns: auto 1fr auto;
