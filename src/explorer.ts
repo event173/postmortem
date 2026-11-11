@@ -1,8 +1,10 @@
 // "Erkunden" in the learning tab (see explorer.rs): play an opening freely
-// and see which moves can come – from your own games, the opening theory and
-// (with a personal token) the Lichess opening explorer. A click on a move plays
-// it; "Gegner zieht realistisch" lets the app pick the opponent's moves by how
-// often they are played.
+// and see which moves can come – the opening on the board, Stockfish's best
+// moves, your own games and the opening theory. The Lichess opening explorer
+// (personal token) is only asked on request, per position: it rate-limits
+// quick series of requests. A click on a move plays it; "Gegner zieht
+// realistisch" lets the app pick the opponent's moves by how often they are
+// played.
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Api } from "chessground/api";
@@ -10,8 +12,8 @@ import type { Key } from "chessground/types";
 
 import { t, tn } from "./i18n";
 import { moveSound, setupSound } from "./sound";
-import type { Account, MoveReview, PlayedMove, PositionInfo } from "./types";
-import { $, badgeHtml, esc, fig, store } from "./util";
+import type { Account, BestMove, PlayedMove, PositionInfo } from "./types";
+import { $, esc, fig, scoreText, store } from "./util";
 import { openingName } from "./opening-names";
 import { bindCardButton, CARD_BUTTON_LABEL } from "./cards";
 
@@ -78,13 +80,11 @@ export interface ExplorerDeps {
 }
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-const EVAL_MAX = 6;
 
 let deps: ExplorerDeps;
 let running = false;
 let color: Color = store.get("ex-color") === "black" ? "black" : "white";
 let realistic = store.get("ex-realistic") === "1";
-let evalOn = store.get("ex-eval") === "1";
 
 /** The moves played so far; `cursor` of them are on the board (the rest can be redone with "vor"). */
 let line: PlayedMove[] = [];
@@ -120,10 +120,15 @@ async function addToRepertoire() {
   }
   renderPanel();
 }
+/** The Lichess numbers of the position on the board (asked on request only). */
 let lichess: LichessData | null = null;
 let lichessState: "off" | "loading" | "ok" | "error" = "off";
 let lichessError = "";
-const evals = new Map<string, MoveReview | "busy">();
+/** Stockfish's best moves in the position on the board. */
+let best: BestMove[] | null = null;
+let bestError = "";
+const BEST_N = 3;
+const BEST_DEPTH = 14;
 /** Bumped on every position change: answers for an old position are dropped. */
 let gen = 0;
 let timer: number | undefined;
@@ -199,6 +204,8 @@ function reset() {
   inBook = true;
   moves = null;
   lichess = null;
+  lichessState = "off";
+  best = null;
   setupSound();
   deps.showTheory(null);
   load(true);
@@ -213,7 +220,10 @@ async function load(auto = false) {
   repNote = null;
   clearTimeout(timer);
   lichess = null;
-  lichessState = "loading";
+  lichessState = "off";
+  best = null;
+  bestError = "";
+  lichessError = "";
   try {
     moves = await invoke<Moves>("explorer_moves", { fen });
   } catch {
@@ -223,24 +233,39 @@ async function load(auto = false) {
   names[cursor] = moves?.opening ?? null;
   inBook = moves?.inBook ?? false;
   render();
-  const lichessDone = invoke<LichessData | null>("explorer_lichess", { fen, accounts: deps.accounts() })
-    .then((d) => {
-      if (g !== gen) return;
-      lichess = d;
-      lichessState = d ? "ok" : "off";
+  const bestDone = invoke<BestMove[]>("best_moves", { fen, n: BEST_N, depth: BEST_DEPTH })
+    .then((b) => {
+      if (g === gen) best = b;
     })
     .catch((e) => {
-      if (g !== gen) return;
-      lichessState = "error";
-      lichessError = String(e);
+      if (g === gen) bestError = String(e);
     })
     .finally(() => g === gen && running && render());
-  if (evalOn) evaluate(g);
   if (auto && realistic && sideOf(fen) !== color) {
-    await lichessDone;
+    // Your games and the theory decide; Stockfish only where they know nothing.
+    if (!rows().length) await bestDone;
     if (g !== gen || !running) return;
     timer = window.setTimeout(() => g === gen && opponentMove(), cursor ? deps.animMs() + 300 : 500);
   }
+}
+
+/** Ask the Lichess opening explorer about the position on the board (on request only). */
+async function askLichess() {
+  const g = gen;
+  lichessState = "loading";
+  renderPanel();
+  try {
+    const d = await invoke<LichessData | null>("explorer_lichess", { fen, accounts: deps.accounts() });
+    if (g !== gen) return;
+    lichess = d;
+    lichessState = d ? "ok" : "off";
+    if (!d) lichessError = t("Ohne Lichess-Schlüssel geht das nicht (Einstellungen → Lichess).");
+  } catch (e) {
+    if (g !== gen) return;
+    lichessState = "error";
+    lichessError = String(e);
+  }
+  if (running) renderPanel();
 }
 
 /** All moves of the position from all sources, most played first. */
@@ -266,7 +291,7 @@ function opponentMove() {
   const weight = (r: Row, i: number) => r.lichess || (r.own?.games ?? 0) * 3 + (r.book ? 1 / (i + 1) : 0);
   const weights = list.map(weight);
   const sum = weights.reduce((a, b) => a + b, 0);
-  if (!sum) return render();
+  if (!sum) return best?.length ? playUci(best[0].uci) : render();
   let x = Math.random() * sum;
   const pick = list.find((_, i) => (x -= weights[i]) <= 0) ?? list[0];
   playUci(pick.uci);
@@ -306,22 +331,6 @@ function applyMove(played: PlayedMove) {
   load(true);
 }
 
-/** Stockfish's verdict on the candidates (the first few), one after the other. */
-async function evaluate(g: number) {
-  for (const r of rows().slice(0, EVAL_MAX)) {
-    const key = `${fen}|${r.uci}`;
-    if (evals.has(key)) continue;
-    evals.set(key, "busy");
-    try {
-      evals.set(key, await invoke<MoveReview>("evaluate_move", { fen, uci: r.uci }));
-    } catch {
-      evals.delete(key);
-    }
-    if (g !== gen || !running) return;
-    render();
-  }
-}
-
 // ---------------------------------------------------------------------------
 
 function render() {
@@ -334,7 +343,7 @@ function render() {
     check: false,
     movable: { color: undefined, dests: new Map() },
   });
-  deps.board.setAutoShapes([]);
+  deps.board.setAutoShapes(best?.length ? [{ orig: sq(best[0].uci, true), dest: sq(best[0].uci, false), brush: "green" }] : []);
   const g = gen;
   invoke<PositionInfo>("position_info", { fen }).then((info) => {
     if (g !== gen || !running) return;
@@ -359,6 +368,25 @@ function openingHeading(): string {
   return `<div class="ex-opening"><span class="ex-offbook">${t("Außerhalb der bekannten Theorie")}</span>${last ? `<br><span class="muted">${t("zuletzt: {name}", { name: esc(openingName(last)) })}</span>` : ""}</div>`;
 }
 
+/** Stockfish's best moves for the side to move (a click plays one). */
+function bestHtml(): string {
+  const yourTurn = sideOf(fen) === color;
+  const title = yourTurn ? t("Gute Züge") : t("Beste Antworten des Gegners");
+  const body = bestError
+    ? `<span class="error">${esc(bestError)}</span>`
+    : !best
+      ? `<span class="muted">${t("Stockfish rechnet …")}</span>`
+      : !best.length
+        ? `<span class="muted">${t("Kein Zug mehr möglich.")}</span>`
+        : best
+            .map(
+              (b) => `<button class="ex-best-move" data-best="${b.uci}" title="${esc(fig(b.line))}">
+                <b>${esc(fig(b.san))}</b> <span class="muted">${scoreText(b.score)}</span></button>`,
+            )
+            .join("");
+  return `<div class="ex-best"><span class="ex-best-title">${title} <span class="muted">(Stockfish)</span></span>${body}</div>`;
+}
+
 function ownCell(o: OwnStats | null): string {
   if (!o) return `<span class="muted">–</span>`;
   const who = o.byYou === o.games ? t("von dir") : o.byYou === 0 ? t("gegen dich") : t("{n}× von dir", { n: o.byYou });
@@ -373,19 +401,12 @@ function renderPanel() {
   const list = rows();
   const turn = sideOf(fen);
   const yourTurn = turn === color;
-  const lichessNote =
-    lichessState === "ok" && lichess
-      ? t("Lichess ({ratings}): {n} Partien", { ratings: esc(lichess.ratings), n: lichess.total.toLocaleString() })
-      : lichessState === "loading"
-        ? t("Lichess wird gefragt …")
-        : lichessState === "error"
-          ? `<span class="error">${esc(lichessError)}</span>`
-          : t("Ohne Lichess-Schlüssel nur deine Partien und die Theorie (Einstellungen → Lichess).");
-  const evalCell = (r: Row) => {
-    if (!evalOn) return "";
-    const e = evals.get(`${fen}|${r.uci}`);
-    return `<span class="ex-eval">${e === "busy" ? `<span class="muted">…</span>` : e ? badgeHtml(e.classification) : ""}</span>`;
-  };
+  const withLichess = lichessState === "ok" && !!lichess;
+  const lichessNote = withLichess
+    ? t("Lichess ({ratings}): {n} Partien", { ratings: esc(lichess!.ratings), n: lichess!.total.toLocaleString() })
+    : lichessState === "loading"
+      ? t("Lichess wird gefragt …")
+      : `${lichessState === "off" && !lichessError ? "" : `<span class="error">${esc(lichessError)}</span> `}<button class="link" id="ex-lichess">${t("Lichess fragen: Was wird hier gespielt?")}</button>`;
 
   box.innerHTML = `
     <div class="ex-head">
@@ -400,20 +421,20 @@ function renderPanel() {
       )}">${repNote ?? t("Ins Repertoire")}</button>
     </div>
     <label class="ex-opt"><input type="checkbox" id="ex-realistic" ${realistic ? "checked" : ""}/> ${t("Gegner zieht realistisch")}
-      <small>${t("Die App wählt die Züge deines Gegners nach Häufigkeit.")}</small></label>
-    <label class="ex-opt"><input type="checkbox" id="ex-evalon" ${evalOn ? "checked" : ""}/> ${t("Stockfish bewertet die Züge")}</label>
+      <small>${t("Die App wählt die Züge deines Gegners nach deinen Partien und der Theorie.")}</small></label>
     ${openingHeading()}
     <div class="ex-line">${moveList()}</div>
+    ${bestHtml()}
     <h3>${yourTurn ? t("Deine Möglichkeiten") : t("Was kann der Gegner spielen?")}</h3>
     ${
       list.length
-        ? `<div class="ex-table">
-            <div class="ex-row ex-th"><span>${t("Zug")}</span><span>${t("Lichess")}</span><span>${t("Deine Partien")}</span><span>${t("Theorie")}</span></div>
+        ? `<div class="ex-table ${withLichess ? "" : "no-lichess"}">
+            <div class="ex-row ex-th"><span>${t("Zug")}</span>${withLichess ? `<span>${t("Lichess")}</span>` : ""}<span>${t("Deine Partien")}</span><span>${t("Theorie")}</span></div>
             ${list
               .map(
                 (r) => `<div class="ex-row" data-uci="${r.uci}" role="button" tabindex="0" title="${t("Diesen Zug spielen")}">
-                  <span class="ex-san">${esc(fig(r.san))}${evalCell(r)}</span>
-                  <span class="ex-share">${r.lichess ? `<span class="ex-bar"><i style="width:${Math.max(2, r.share * 100)}%"></i></span>${Math.round(r.share * 100)} %` : `<span class="muted">–</span>`}</span>
+                  <span class="ex-san">${esc(fig(r.san))}</span>
+                  ${withLichess ? `<span class="ex-share">${r.lichess ? `<span class="ex-bar"><i style="width:${Math.max(2, r.share * 100)}%"></i></span>${Math.round(r.share * 100)} %` : `<span class="muted">–</span>`}</span>` : ""}
                   <span class="ex-own">${ownCell(r.own)}</span>
                   <span class="ex-book">${r.book ? `<span class="ex-booktag" title="${esc(openingName(r.name ?? ""))}">${t("Buch")}</span>${r.name ? ` <span class="muted ex-name">${esc(openingName(r.name.split(":").slice(1).join(":").trim() || r.name))}</span>` : ""}` : ""}</span>
                 </div>`,
@@ -433,18 +454,14 @@ function renderPanel() {
     }),
   );
   $("ex-reset").addEventListener("click", reset);
+  document.getElementById("ex-lichess")?.addEventListener("click", askLichess);
+  box.querySelectorAll<HTMLElement>("[data-best]").forEach((b) => b.addEventListener("click", () => playUci(b.dataset.best!)));
   $("ex-rep").addEventListener("click", addToRepertoire);
   $("ex-card-slot").appendChild(cardButton());
   ($("ex-realistic") as HTMLInputElement).addEventListener("change", (e) => {
     realistic = (e.target as HTMLInputElement).checked;
     store.set("ex-realistic", realistic ? "1" : "0");
     load(true);
-  });
-  ($("ex-evalon") as HTMLInputElement).addEventListener("change", (e) => {
-    evalOn = (e.target as HTMLInputElement).checked;
-    store.set("ex-eval", evalOn ? "1" : "0");
-    if (evalOn) evaluate(gen);
-    renderPanel();
   });
   box.querySelectorAll<HTMLElement>(".ex-row[data-uci]").forEach((row) => {
     const go = () => playUci(row.dataset.uci!);

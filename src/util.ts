@@ -1,6 +1,6 @@
 import { lang, t } from "./i18n";
 import { openingInComment } from "./opening-names";
-import { CLASSES, type Class, type MoveReview, type Platform } from "./types";
+import { type BestMove, CLASSES, type Class, type MoveReview, type Platform } from "./types";
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -109,4 +109,13 @@ export function commentOf(m: Comments, mine = true): string {
   const de = mine ? m.comment : (m.commentOther ?? m.comment);
   const en = mine ? m.commentEn : (m.commentOtherEn ?? m.commentEn);
   return lang === "en" && en ? en : openingInComment(de);
+}
+
+/** Evaluation from the mover's point of view: "+0,4", "−1,2", "Matt in 3". */
+export function scoreText(s: BestMove["score"]): string {
+  if (s.kind === "mate") return (s.value ?? 0) > 0 ? t("Matt in {n}", { n: s.value ?? 0 }) : t("wird matt in {n}", { n: -(s.value ?? 0) });
+  if (s.kind === "won") return t("Matt");
+  if (s.kind === "mated") return t("matt");
+  const v = (s.value ?? 0) / 100;
+  return `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
 }

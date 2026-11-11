@@ -20,9 +20,9 @@ import type { DrawShape } from "chessground/draw";
 import type { Key } from "chessground/types";
 
 import { windowLast } from "./stats";
-import { CLASSES, type Account, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
+import { CLASSES, type Account, type BestMove, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
 import { playerName, t, tn } from "./i18n";
-import { $, badgeHtml, commentOf, esc, fig, miniPieces, store } from "./util";
+import { $, badgeHtml, commentOf, esc, fig, miniPieces, scoreText, store } from "./util";
 import { openingName } from "./opening-names";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 import { explorerKey, explorerMove, explorerNav, startExplorer, stopExplorer } from "./explorer";
@@ -59,14 +59,6 @@ interface Drill {
   card: Card | null;
   /** Kind "move": the moves up to this index are played for you, then you're asked. */
   askFrom?: number;
-}
-
-interface BestMove {
-  uci: string;
-  san: string;
-  /** From your point of view. */
-  score: { kind: "cp" | "mate" | "mated" | "won"; value?: number };
-  line: string;
 }
 
 interface Card {
@@ -419,6 +411,8 @@ let summaries: Record<string, { coverage: number | null; gaps: number; cards: nu
 let page: { color: Color; family: string } | null = null;
 let pageTree: TreeView | null = null;
 let pageHarmless = false;
+/** Rating groups of the stored Lichess numbers of the page's opening ("" = none, null = not loaded). */
+let pageRatings: string | null = null;
 /** Training started from the opening page: "← back" goes there. */
 let fromPage = false;
 /** Stockfish checking your moves: progress by colour. */
@@ -505,7 +499,7 @@ export function initOpenings(d: OpeningDeps) {
   listen<{ color: Color; family: string; done: number; waiting: boolean }>("relevance-progress", (e) => {
     fetching = { key: `${e.payload.color}|${e.payload.family}`, done: e.payload.done, waiting: e.payload.waiting };
     if (trainMode === "tree" && view === "train") renderTreePanel();
-    else if (phase === "loading") renderText();
+    else if (view === "opening") renderPage();
   });
 }
 
@@ -615,10 +609,7 @@ function setView(v: View) {
     checkGames()
       .then(() => Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards(), loadRecs(), loadTheory(), loadReports(), loadRepProgress()]))
       .then(loadSummaries)
-      .then(() => {
-        renderHome();
-        prepareInBackground();
-      });
+      .then(renderHome);
   } else if (v === "browse") {
     renderList();
     Promise.all([loadProgress(), loadRepertoire()]).then(renderList);
@@ -764,31 +755,6 @@ function prepareRelevance(color: Color, family: string): Promise<Prepared | null
   return p;
 }
 
-/** In the background: the numbers for the openings you've started (this also
- *  takes rare, barely started lines out of the flashcards once) and for the
- *  suggestions (so they count the common lines, not all of them). */
-async function prepareInBackground() {
-  const keys = new Set([
-    ...Object.entries(progress)
-      .filter(([, p]) => p.started > 0)
-      .map(([key]) => key),
-    ...myOpenings()
-      .filter((o) => o.recommended && o.r && !o.r.numbers)
-      .map((o) => `${o.color}|${o.family}`),
-  ]);
-  let changed = false;
-  for (const key of keys) {
-    if (prepared.has(key)) continue;
-    const [color, family] = key.split("|") as [Color, string];
-    const r = await prepareRelevance(color, family);
-    changed ||= !!r && (r.removed > 0 || r.state !== "noToken");
-  }
-  if (!changed) return;
-  await Promise.all([loadRepertoire(), loadProgress(), loadRecs()]);
-  await loadSummaries();
-  renderHome();
-}
-
 /** Add a family to the repertoire (also used by "Üben" in the statistics). */
 export async function addToRepertoire(color: Color, family: string) {
   const rep = await invoke<Repertoire>("repertoire_get");
@@ -808,18 +774,9 @@ async function setFocus(f: Focus | null) {
   focus = f;
   consolidate = null;
   if (f) {
+    // The theory moves right away: which lines are common at your level is
+    // fetched only on request (opening page) – until then the course has them all.
     await addToRepertoire(f.color, f.family);
-    if (!prepared.has(`${f.color}|${f.family}`)) {
-      // First time this session: which lines are common at your level?
-      const ready = prepareRelevance(f.color, f.family);
-      token++;
-      drill = null;
-      phase = "loading";
-      renderSidebar();
-      render();
-      await ready;
-      if (focus !== f) return;
-    }
   }
   await Promise.all([loadVariations(), loadProgress()]);
   renderSidebar();
@@ -905,8 +862,8 @@ function renderHome() {
     <div class="op-tiles">
       ${tile("due", ICON.due, t("Karteikasten"), dueText, t("Die Karten wiederholen, die heute dran sind."), { hot: !!due, off: !due })}
       ${tile("own", ICON.own, t("Fehler aus deinen Partien"), ownText, t("Stellungen aus deinen Partien, in denen du in der Eröffnung danebengegriffen hast."), { off: !ownCount })}
-      ${tile("learn", ICON.learn, t("Neue Eröffnung"), learnText, t("Eine Eröffnung und Farbe aussuchen – dann lernst du sie Zug für Zug, mit Erklärung zu jedem Zug."))}
-      ${tile("explore", ICON.explore, t("Erkunden"), t("Züge ausprobieren"), t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess."))}
+      ${tile("learn", ICON.learn, t("Eröffnung"), learnText, t("Eine Eröffnung und Farbe aussuchen – dann lernst du sie Zug für Zug, mit Erklärung zu jedem Zug."))}
+      ${tile("explore", ICON.explore, t("Erkunden"), t("Züge ausprobieren"), t("Welche Züge sind hier gut, welche spielst du? Zug für Zug durchprobieren – mit Stockfish, deinen Partien und der Theorie."))}
       ${tile("tree", ICON.tree, t("Mein Repertoire"), t("Baum, Lücken, eigene Züge"), t("Für Fortgeschrittene: dein ganzes Repertoire als Baum – Lücken füllen, Züge ändern, Stockfish prüft deine Züge."))}
     </div>
     ${
@@ -933,7 +890,7 @@ function renderHome() {
         mine.length
           ? `<p class="panel-sub">${t("Was du lernst und was du spielst (ab 3 Partien). Oben steht, wo sich Lernen am meisten lohnt. Ein Klick öffnet die Eröffnung zum Lernen.")}</p>
              <div class="op-mine-list">${mine.map(openingRow).join("")}</div>`
-          : `<p class="muted">${t("Noch keine. Wähl oben „Neue Eröffnung“.")}</p>`
+          : `<p class="muted">${t("Noch keine. Wähl oben „Eröffnung“.")}</p>`
       }
     </div>
     ${gamesBlockHtml()}
@@ -2150,6 +2107,7 @@ export function openPage(color: Color, family: string) {
   page = { color, family };
   pageTree = null;
   pageHarmless = false;
+  pageRatings = null;
   setView("opening");
 }
 
@@ -2160,7 +2118,12 @@ async function loadPage() {
   const args = { accounts: deps.accounts(), color: p.color, family: p.family };
   await Promise.all([loadProgress(), theory ? null : loadTheory(), insights.length ? null : loadRecs(), reports.length ? null : loadReports()]);
   try {
-    pageTree = await invoke<TreeView>("rep_tree", args);
+    const [tv, detail] = await Promise.all([
+      invoke<TreeView>("rep_tree", args),
+      invoke<FamilyDetail>("opening_family_detail", { color: p.color, family: p.family }).catch(() => null),
+    ]);
+    pageTree = tv;
+    pageRatings = detail?.ratings ?? "";
   } catch (e) {
     console.error(e);
   }
@@ -2187,6 +2150,29 @@ function pageExits(): { costly: TheoryExit[]; harmless: TheoryExit[] } {
 /** Where your games in this opening left your repertoire. */
 function pageReports(): GameReport[] {
   return page ? reports.filter((r) => r.color === page!.color && r.family === page!.family) : [];
+}
+
+/**
+ * The course has every theory line until you ask Lichess what is played at
+ * your level (then rare sidelines leave the course): the button for that.
+ */
+function levelHtml(key: string): string {
+  const r = prepared.get(key);
+  const row = (text: string, button = "") => `<div class="opn-level"><span class="muted">${text}</span>${button}</div>`;
+  if (preparing.has(key)) {
+    const f = fetching?.key === key ? fetching : null;
+    return row(
+      f?.waiting
+        ? t("Lichess bittet um eine kurze Pause – in einer Minute geht es weiter …")
+        : `${t("Ich frage bei Lichess nach, welche Antworten deine Gegner hier wirklich spielen …")}${f ? ` ${tn(f.done, "1 Stellung geholt", "{n} Stellungen geholt")}` : ""}`,
+    );
+  }
+  if (r?.state === "noToken") return row(t("Dafür braucht es einen Lichess-Schlüssel."), `<button class="link" id="opn-token">${t("Einstellungen")}</button>`);
+  if (pageRatings) {
+    const note = r?.state === "partial" && r.error ? ` ${esc(r.error)}` : "";
+    return row(t("Kurs auf dein Niveau zugeschnitten (Lichess {ratings}).", { ratings: esc(pageRatings) }) + note);
+  }
+  return row(t("Der Kurs enthält alle Theorielinien."), `<button id="opn-level">${t("Was wird auf meinem Niveau gespielt?")}</button>`);
 }
 
 /** Average loss of winning chances (percentage points) from which leaving theory counts as bad. */
@@ -2233,6 +2219,7 @@ function renderPage() {
           : ""
       }
     </div>
+    ${levelHtml(key)}
     ${
       weak.length
         ? `<div class="op-home-mine opn-weak">
@@ -2294,6 +2281,16 @@ function renderPage() {
   document.getElementById("opn-due")?.addEventListener("click", () => {
     fromPage = true;
     startTrain("due", { color, family });
+  });
+  document.getElementById("opn-token")?.addEventListener("click", () => {
+    prepared.delete(key);
+    document.getElementById("btn-settings")?.click();
+  });
+  document.getElementById("opn-level")?.addEventListener("click", async () => {
+    const r = prepareRelevance(color, family);
+    renderPage();
+    await r;
+    if (page?.color === color && page.family === family) loadPage();
   });
   const repEl = document.getElementById("opn-reports");
   if (repEl) bindReports(repEl, pageReports(), renderPage);
@@ -3210,15 +3207,6 @@ function lineProgress(d: Drill): string {
   return `<span class="muted">${t("Zug {i} von {n}", { i: Math.min(done + 1, mine), n: mine })}${mark}</span>`;
 }
 
-/** Evaluation from your point of view: "+0,4", "−1,2", "Matt in 3". */
-function scoreText(s: BestMove["score"]): string {
-  if (s.kind === "mate") return (s.value ?? 0) > 0 ? t("Matt in {n}", { n: s.value ?? 0 }) : t("wird matt in {n}", { n: -(s.value ?? 0) });
-  if (s.kind === "won") return t("Matt");
-  if (s.kind === "mated") return t("matt");
-  const v = (s.value ?? 0) / 100;
-  return `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
-}
-
 /** Where a card comes from. */
 function cardOrigin(c: Card): string {
   const date = new Date(c.createdAt).toLocaleDateString(undefined, { day: "2-digit", month: "2-digit" });
@@ -3247,19 +3235,6 @@ function renderText(error?: string) {
   const d = drill;
 
   if (phase === "loading") {
-    const key = focus ? `${focus.color}|${focus.family}` : "";
-    if (focus && preparing.has(key)) {
-      // First lesson of an opening this session: the numbers from Lichess.
-      const f = fetching?.key === key ? fetching : null;
-      head.innerHTML = `<span class="coach-title">${t("Was wird auf deinem Niveau gespielt?")}</span>`;
-      text.innerHTML = f?.waiting
-        ? t("Lichess bittet um eine kurze Pause – in einer Minute geht es weiter …")
-        : `${t("Ich frage bei Lichess nach, welche Antworten deine Gegner hier wirklich spielen. Beim ersten Mal dauert das etwas, danach geht es sofort.")}${
-            f ? `<br><span class="muted">${tn(f.done, "1 Stellung geholt", "{n} Stellungen geholt")}</span>` : ""
-          }`;
-      actions.innerHTML = "";
-      return;
-    }
     head.innerHTML = `<span class="muted">${t("Bereite die nächste Linie vor …")}</span>`;
     text.innerHTML = "";
     actions.innerHTML = "";

@@ -4465,3 +4465,33 @@ body[data-board] cg-board {
 .layout.games-collapsed .games-resizer {
   display: none;
 }
+
+.ex-table.no-lichess .ex-row {
+  grid-template-columns: 74px minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.ex-best {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 10px 0 4px;
+}
+
+.ex-best-title {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.ex-best-move {
+  padding: 4px 10px;
+}
+
+.opn-level {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: -6px 0 18px;
+  font-size: 13px;
+}

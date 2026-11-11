@@ -275,3 +275,13 @@ export interface BatchProgress {
   current: string | null;
   finished: boolean;
 }
+
+/** One of Stockfish's best moves in a position (cards, "Erkunden"). */
+export interface BestMove {
+  uci: string;
+  san: string;
+  /** From the point of view of the side to move. */
+  score: { kind: "cp" | "mate" | "mated" | "won"; value?: number };
+  /** The move and Stockfish's continuation, e.g. "14. Nf3 Qxf2+ 15. Kh1". */
+  line: string;
+}

@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "postmortem"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "fastrand",
  "libc",

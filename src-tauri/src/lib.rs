@@ -952,6 +952,15 @@ async fn refutation(fen: String, uci: String, depth: Option<u32>) -> Result<expl
         .map_err(|e| e.to_string())?
 }
 
+/// Stockfish's best moves in a position (for "Erkunden").
+#[tauri::command]
+async fn best_moves(fen: String, n: Option<usize>, depth: Option<u32>) -> Result<Vec<cards::BestMove>, String> {
+    let (n, depth) = (n.unwrap_or(3).clamp(1, 5), depth.unwrap_or(16).clamp(8, 24));
+    tauri::async_runtime::spawn_blocking(move || cards::best_moves(&analysis::parse_fen(&fen)?, n, depth))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// The engine's best line from a position (for "Engine zieht").
 #[tauri::command]
 async fn engine_line(fen: String, depth: Option<u32>, plies: Option<usize>) -> Result<explore::Refutation, String> {
@@ -1265,6 +1274,7 @@ pub fn run() {
             opening_progress,
             opening_family_detail,
             opening_relevance_prepare,
+            best_moves,
             opening_recommendations,
             opening_line_for_game,
             rep_tree,

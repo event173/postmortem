@@ -549,8 +549,8 @@ pub fn next(
         }
     }
 
-    // Learning lines (a course): new lines first, then practising ahead.
-    let mut due: Vec<(i64, &Line, &str)> = Vec::new();
+    // Learning lines (a course): new lines first, then practising ahead
+    // (due cards are moves, see above – lines are never "due").
     let mut new: Vec<(&Line, &str)> = Vec::new();
     let mut later: Vec<(i64, &Line, &str)> = Vec::new();
     for color in ["white", "black"] {
@@ -566,17 +566,12 @@ pub fn next(
         }
     }
 
-    let take_own = mode == Mode::Mixed && (rng.f64() < OWN_SHARE || (due.is_empty() && new.is_empty()));
+    let take_own = mode == Mode::Mixed && (rng.f64() < OWN_SHARE || new.is_empty());
     if !own.is_empty() && take_own {
         return Ok(Some(own[rng.usize(..own.len())].clone()));
     }
     let pick = |len: usize, rng: &mut fastrand::Rng| if focus.is_some() { 0 } else { rng.usize(..len.min(3)) };
-    let mut drill = if !due.is_empty() {
-        due.sort_by_key(|(d, ..)| *d);
-        // A little randomness among the most overdue so the order isn't rigid.
-        let (_, line, color) = due[pick(due.len(), &mut rng)];
-        Some(line_drill(line, color, "due"))
-    } else if !new.is_empty() {
+    let mut drill = if !new.is_empty() {
         // Follow the move tree (a parent line before its sub-lines, siblings
         // together) instead of jumping across the opening.
         new.sort_by_cached_key(|(l, _)| main_line_key(l));

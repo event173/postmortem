@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.6.2" date="2026-11-11">
+      <description>
+        <p>Learning an opening starts right away with the theory moves; which lines are common at your level is asked from Lichess only on request, and no longer in the background. "Explore" shows Stockfish's three best moves in every position and the opening on the board; Lichess numbers only on click. The tile "New opening" is now called "Opening".</p>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-11-11">
       <description>
         <p>In the review, "Show best move" goes back before your mistake and shows Stockfish's move; step through its line move by move, and "Got it" takes you back to your mistake. Optionally the solution stays hidden until you tried yourself. Shortcuts B, V and Shift+N. Background analyses are quick ones (depth 10); the deep analysis is offered when you open a game. The game list shows the kind of game with an icon and can be dragged wider.</p>

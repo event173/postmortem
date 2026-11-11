@@ -72,23 +72,33 @@ fn card_id(pos: &shakmaty::Chess) -> String {
     format!("{:016x}", h.finish())
 }
 
+/// Stockfish's `n` best moves in a position (fewer if there are fewer legal moves).
+pub fn best_moves(pos: &shakmaty::Chess, n: usize, depth: u32) -> Result<Vec<BestMove>, String> {
+    use shakmaty::Position;
+    let n = n.min(pos.legal_moves().len());
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let path = engine::find_stockfish().ok_or_else(crate::i18n::no_stockfish)?;
+    let mut sf = engine::Engine::start(&path, engine::threads(true), 64, n)?;
+    let lines = sf.analyse(&analysis::fen(pos), depth)?;
+    Ok(lines
+        .into_iter()
+        .filter_map(|l| {
+            let first = l.pv.first()?.clone();
+            let m = coach::parse_uci(pos, &first)?;
+            Some(BestMove { san: coach::san(pos, m), score: l.score, line: coach::san_line(pos, &l.pv, LINE_PLIES), uci: first })
+        })
+        .collect())
+}
+
 /// Analyse the position and build a card (doesn't store it; this takes a few seconds).
 pub fn build(fen: &str, played: Option<&str>, source: &str, game_id: Option<String>, ply: Option<usize>) -> Result<Card, String> {
     let pos = analysis::parse_fen(fen)?;
     if pos.legal_moves().is_empty() {
         return Err(crate::tr!("In dieser Stellung gibt es keinen Zug mehr.", "There is no move left in this position."));
     }
-    let path = engine::find_stockfish().ok_or_else(crate::i18n::no_stockfish)?;
-    let mut sf = engine::Engine::start(&path, engine::threads(true), 64, BEST)?;
-    let lines = sf.analyse(&analysis::fen(&pos), DEPTH)?;
-    let best = lines
-        .into_iter()
-        .filter_map(|l| {
-            let first = l.pv.first()?.clone();
-            let m = coach::parse_uci(&pos, &first)?;
-            Some(BestMove { san: coach::san(&pos, m), score: l.score, line: coach::san_line(&pos, &l.pv, LINE_PLIES), uci: first })
-        })
-        .collect::<Vec<_>>();
+    let best = best_moves(&pos, BEST, DEPTH)?;
     if best.is_empty() {
         return Err(crate::tr!("Stockfish hat keinen Zug gefunden.", "Stockfish found no move."));
     }
