@@ -1,7 +1,8 @@
 // "Lernen" tab (openings, flashcards, mistakes, exploring; see repertoire.rs):
-// - home (no board): "Was möchtest du tun?" – learn a new opening, review the
-//   due cards, or practise the opening mistakes from your own games – plus your
-//   openings with their flashcard progress
+// - home (no board): four tiles (due flashcards, mistakes from your games,
+//   learning an opening, exploring), one list of your openings – what
+//   you learn and what you play, the ones most worth learning first (see
+//   recommend.rs) – and your own cards (folded)
 // - opening list (full width, board thumbnails): pick an opening and a colour
 // - learning: a guided lesson – intro, then move by move ("Weiter" shows the
 //   opponent's move, you play your own after the green arrow), each with its
@@ -25,6 +26,7 @@ import { $, badgeHtml, commentOf, esc, fig, miniPieces } from "./util";
 import { openingName } from "./opening-names";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
 import { explorerKey, explorerMove, explorerNav, startExplorer, stopExplorer } from "./explorer";
+import { bindTheoryList, theoryListHtml, type TheoryReport } from "./theory-exits";
 
 type Color = "white" | "black";
 
@@ -164,6 +166,35 @@ interface Prepared {
   error: string | null;
 }
 
+/** Where you most often leave theory in an opening and go wrong soon after. */
+interface CostlyExit {
+  ply: number;
+  played: string;
+  book: string[];
+  times: number;
+  /** One of those games (to find the line behind it). */
+  gameId: string;
+}
+
+/** What your games say about one opening with one colour (see recommend.rs). */
+interface Insight {
+  color: Color;
+  family: string;
+  games: number;
+  known: number;
+  total: number;
+  /** The course is based on Lichess numbers (else: every line). */
+  numbers: boolean;
+  variation: string | null;
+  variationGames: number;
+  /** Analysed games; in how many you left theory first and went wrong soon after. */
+  reviewed: number;
+  theoryErrors: number;
+  exit: CostlyExit | null;
+  /** Worth suggesting (> 0), higher first. */
+  score: number;
+}
+
 interface VariationGroup {
   name: string;
   total: number;
@@ -277,6 +308,19 @@ let sort: Sort = "popular";
 let ownCount = 0;
 /** Your own flashcards (home view). */
 let cards: CardInfo[] = [];
+/** Your openings as your games show them, best suggestions first (home view). */
+let insights: Insight[] = [];
+/** The same by "color|family". */
+let insightOf: Record<string, Insight> = {};
+/** "Deine Karten" unfolded on the home view. */
+let cardsOpen = false;
+/** Where you leave theory (home view), all of it shown, and scroll there once loaded. */
+let theory: TheoryReport | null = null;
+let theoryAll = false;
+let scrollToTheory = false;
+/** "Hier verlässt du die Theorie" shows this many positions folded. */
+const THEORY_FOLDED = 3;
+
 let focus: Focus | null = null;
 
 const sideOf = (f: string): Color => (f.split(" ")[1] === "w" ? "white" : "black");
@@ -326,6 +370,13 @@ export function leaveOpenings() {
   document.querySelector(".layout")!.classList.remove("op-browse-mode", "explore-mode");
   $("op-browse-view").hidden = true;
   $("op-home").hidden = true;
+}
+
+/** From the statistics: the Lernen page at "Hier verlässt du die Theorie". */
+export function showTheoryExits() {
+  scrollToTheory = true;
+  if (view !== "home") setView("home");
+  else if (theory) renderHome();
 }
 
 /** The "Lernen" tab clicked again: back to the choice. */
@@ -379,9 +430,9 @@ function setView(v: View) {
   }
   if (v === "home") {
     renderHome();
-    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards()]).then(() => {
+    Promise.all([loadRepertoire(), loadProgress(), loadOwnCount(), loadCards(), loadRecs(), loadTheory()]).then(() => {
       renderHome();
-      prepareStarted();
+      prepareInBackground();
     });
   } else if (v === "browse") {
     renderList();
@@ -416,6 +467,15 @@ async function loadProgress() {
 
 async function loadCards() {
   cards = await invoke<CardInfo[]>("cards_list").catch(() => []);
+}
+
+async function loadRecs() {
+  insights = await invoke<Insight[]>("opening_recommendations", { accounts: deps.accounts() }).catch(() => []);
+  insightOf = Object.fromEntries(insights.map((r) => [`${r.color}|${r.family}`, r]));
+}
+
+async function loadTheory() {
+  theory = await invoke<TheoryReport>("theory_report", { accounts: deps.accounts(), last: windowLast() }).catch(() => null);
 }
 
 async function loadOwnCount() {
@@ -484,19 +544,26 @@ function prepareRelevance(color: Color, family: string): Promise<Prepared | null
 }
 
 /** In the background: the numbers for the openings you've started (this also
- *  takes rare, barely started lines out of the flashcards once). */
-async function prepareStarted() {
-  const keys = Object.entries(progress)
-    .filter(([key, p]) => p.started > 0 && !prepared.has(key))
-    .map(([key]) => key);
+ *  takes rare, barely started lines out of the flashcards once) and for the
+ *  suggestions (so they count the common lines, not all of them). */
+async function prepareInBackground() {
+  const keys = new Set([
+    ...Object.entries(progress)
+      .filter(([, p]) => p.started > 0)
+      .map(([key]) => key),
+    ...myOpenings()
+      .filter((o) => o.recommended && o.r && !o.r.numbers)
+      .map((o) => `${o.color}|${o.family}`),
+  ]);
   let changed = false;
   for (const key of keys) {
+    if (prepared.has(key)) continue;
     const [color, family] = key.split("|") as [Color, string];
     const r = await prepareRelevance(color, family);
     changed ||= !!r && (r.removed > 0 || r.state !== "noToken");
   }
   if (!changed) return;
-  await Promise.all([loadRepertoire(), loadProgress()]);
+  await Promise.all([loadRepertoire(), loadProgress(), loadRecs()]);
   renderHome();
 }
 
@@ -560,6 +627,18 @@ export async function startFocus(color: Color, family: string) {
   await startTrain("learn", { color, family });
 }
 
+/**
+ * Learn the whole opening line behind a moment of one of your games (a
+ * mistake, leaving theory) – not just the position. Falls back to the
+ * opening `family` if no line leads there.
+ */
+export async function learnLineForGame(gameId: string, ply: number, color: Color, family?: string | null) {
+  const f = await invoke<Focus | null>("opening_line_for_game", { gameId, ply, color }).catch(() => null);
+  if (f) return startTrain("learn", f);
+  if (family) return startTrain("learn", { color, family });
+  alert(t("Zu dieser Stellung gibt es keine bekannte Eröffnungslinie."));
+}
+
 // ---------------------------------------------------------------------------
 // home: what do you want to do?
 
@@ -576,47 +655,28 @@ function renderHome() {
   const nexts = [status?.white.nextDue, status?.black.nextDue, status?.cardsNextDue].filter((x): x is number => !!x);
   const nextDue = nexts.length ? Math.min(...nexts) : null;
   const dueText = due
-    ? tn(due, "<b>1 Karte</b> ist heute dran.", "<b>{n} Karten</b> sind heute dran.")
+    ? `<b>${tn(due, "1 Karte fällig", "{n} Karten fällig")}</b>`
     : nextDue
-      ? t("Alles erledigt – die nächste Karte kommt {when}.", { when: relDays(nextDue) })
-      : t("Noch nichts zu wiederholen – lern zuerst eine Eröffnung.");
-  const ownText = ownCount
-    ? tn(ownCount, "<b>1 Stellung</b>, in der du in der Eröffnung danebengegriffen hast.", "<b>{n} Stellungen</b>, in denen du in der Eröffnung danebengegriffen hast.")
-    : t("Gerade nichts offen. Neue Fehler kommen aus deinen analysierten Partien.");
+      ? t("Nächste Karte {when}", { when: relDays(nextDue) })
+      : t("Noch leer");
+  const ownText = ownCount ? `<b>${tn(ownCount, "1 Stellung offen", "{n} Stellungen offen")}</b>` : t("Gerade nichts offen");
+  const begun = Object.values(progress).filter((p) => p.started > 0).length;
+  const learnText = begun ? tn(begun, "1 begonnen", "{n} begonnen") : t("Eröffnung aussuchen");
+  const tile = (go: string, icon: string, title: string, text: string, tip: string, opts: { hot?: boolean; off?: boolean } = {}) =>
+    `<button class="op-tile ${opts.hot ? "hot" : ""}" data-go="${go}" title="${esc(tip)}" ${opts.off ? "disabled" : ""}>
+      <span class="op-tile-icon">${icon}</span><b>${title}</b><span class="op-tile-text">${text}</span></button>`;
 
-  const mine = Object.entries(progress)
-    .map(([key, p]) => {
-      const [color, family] = key.split("|") as [Color, string];
-      return { color, family, p };
-    })
-    .sort((a, b) => b.p.due - a.p.due || b.p.started - a.p.started || openingName(a.family).localeCompare(openingName(b.family)));
+  const mine = myOpenings();
 
   $("op-home").innerHTML = `
     <div class="op-home-head">
       <h2>${t("Lernen")}</h2>
-      <p class="muted">${t("Was möchtest du tun?")}</p>
     </div>
-    <div class="op-choices">
-      <button class="op-choice" data-go="learn">
-        <span class="op-choice-icon">${ICON.learn}</span>
-        <b>${t("Neue Eröffnung lernen")}</b>
-        <span>${t("Eröffnung und Farbe aussuchen. Dann Zug für Zug, mit Erklärung zu jedem Zug.")}</span>
-      </button>
-      <button class="op-choice ${due ? "hot" : ""}" data-go="due" ${due ? "" : "disabled"}>
-        <span class="op-choice-icon">${ICON.due}</span>
-        <b>${t("Karteikasten")}</b>
-        <span>${dueText}</span>
-      </button>
-      <button class="op-choice" data-go="own" ${ownCount ? "" : "disabled"}>
-        <span class="op-choice-icon">${ICON.own}</span>
-        <b>${t("Fehler aus deinen Partien")}</b>
-        <span>${ownText}</span>
-      </button>
-      <button class="op-choice" data-go="explore">
-        <span class="op-choice-icon">${ICON.explore}</span>
-        <b>${t("Erkunden")}</b>
-        <span>${t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess.")}</span>
-      </button>
+    <div class="op-tiles">
+      ${tile("due", ICON.due, t("Karteikasten"), dueText, t("Die Varianten und Karten wiederholen, die heute dran sind."), { hot: !!due, off: !due })}
+      ${tile("own", ICON.own, t("Fehler aus deinen Partien"), ownText, t("Stellungen aus deinen Partien, in denen du in der Eröffnung danebengegriffen hast."), { off: !ownCount })}
+      ${tile("learn", ICON.learn, t("Eröffnungen lernen"), learnText, t("Eröffnung und Farbe aussuchen. Dann Zug für Zug, mit Erklärung zu jedem Zug."))}
+      ${tile("explore", ICON.explore, t("Erkunden"), t("Züge ausprobieren"), t("Welche Züge werden hier gespielt? Zug für Zug durchprobieren – mit deinen Partien, der Theorie und Lichess."))}
     </div>
     ${
       removedRare
@@ -631,27 +691,18 @@ function renderHome() {
       <h3>${t("Deine Eröffnungen")}</h3>
       ${
         mine.length
-          ? `<p class="panel-sub">${BOX_HELP()}</p>
-             <div class="op-mine-list">${mine
-               .map(
-                 ({ color, family, p }) => `<div class="op-mine-row">
-                   <span class="pdot ${color}"></span>
-                   <span class="op-mine-name"><b>${esc(openingName(family))}</b> <span class="muted">${t("als {side}", { side: SIDE[color] })}</span></span>
-                   ${progressBar(p.lines, p.started, p.learned)}
-                   <span class="op-progress-text">${cardSummary(p.lines, p.started, p.learned, p.due)}</span>
-                   <button class="op-mine-go" data-color="${color}" data-family="${esc(family)}">${p.started ? t("Weiterlernen") : t("Anfangen")}</button>
-                   ${p.started ? `<button class="op-reset" data-color="${color}" data-family="${esc(family)}" title="${t("Lernstand zurücksetzen – alle Varianten wieder neu")}">⟲</button>` : ""}
-                   <button class="op-remove" data-color="${color}" data-family="${esc(family)}" title="${t("Aus dem Repertoire nehmen (Lernstand bleibt)")}">✕</button>
-                 </div>`,
-               )
-               .join("")}</div>`
-          : `<p class="muted">${t("Noch keine. Wähl oben „Neue Eröffnung lernen“.")}</p>`
+          ? `<p class="panel-sub">${t("Was du lernst und was du spielst (ab 3 Partien). Oben steht, wo sich Lernen am meisten lohnt.")} ${BOX_HELP()}</p>
+             <div class="op-mine-list">${mine.map(openingRow).join("")}</div>`
+          : `<p class="muted">${t("Noch keine. Wähl oben „Eröffnungen lernen“.")}</p>`
       }
     </div>
-    <div class="op-home-mine">
-      <h3>${t("Deine Karten")}</h3>
+    ${theoryHtml()}
+    <div class="op-home-mine op-home-cards">
+      <button class="op-cards-toggle" ${cards.length ? "" : "disabled"}>${cards.length ? (cardsOpen ? "▾" : "▸") : ""} ${t("Deine Karten ({n})", { n: cards.length })}</button>
       ${
-        cards.length
+        cards.length && !cardsOpen
+          ? ""
+          : cards.length
           ? `<p class="panel-sub">${t("Stellungen, die du mit „In den Karteikasten“ gesammelt hast – aus Reviews, „Erkunden“ und Partien gegen Stockfish. Sie kommen im Karteikasten dran.")}</p>
              <div class="op-mine-list">${cards
                .map(
@@ -669,12 +720,36 @@ function renderHome() {
       }
     </div>`;
   const home = $("op-home");
-  home.querySelectorAll<HTMLButtonElement>(".op-choice").forEach((b) =>
+  const theoryEl = document.getElementById("op-theory-exits");
+  if (theoryEl) {
+    bindTheoryList(theoryEl, { openGame: deps.openGame, learnLine: (g, ply, color, family) => learnLineForGame(g, ply, color, family) });
+    theoryEl.querySelector(".op-theory-more")?.addEventListener("click", () => {
+      theoryAll = !theoryAll;
+      renderHome();
+    });
+    if (scrollToTheory && theory) {
+      scrollToTheory = false;
+      theoryEl.scrollIntoView({ block: "start" });
+    }
+  }
+  home.querySelector(".op-cards-toggle")?.addEventListener("click", () => {
+    cardsOpen = !cardsOpen;
+    renderHome();
+  });
+  home.querySelectorAll<HTMLButtonElement>("[data-go]").forEach((b) =>
     b.addEventListener("click", () => {
       const go = b.dataset.go;
       if (go === "learn") setView("browse");
       else startTrain(go as TrainMode, null);
     }),
+  );
+  home.querySelectorAll<HTMLElement>(".op-learn-var").forEach((b) =>
+    b.addEventListener("click", () =>
+      startTrain("learn", { color: b.dataset.color as Color, family: b.dataset.family!, variation: b.dataset.variation! }),
+    ),
+  );
+  home.querySelectorAll<HTMLElement>(".op-learn-exit").forEach((b) =>
+    b.addEventListener("click", () => learnLineForGame(b.dataset.game!, Number(b.dataset.ply), b.dataset.color as Color, b.dataset.family!)),
   );
   home.querySelectorAll<HTMLElement>(".op-mine-go").forEach((b) =>
     b.addEventListener("click", () => startFocus(b.dataset.color as Color, b.dataset.family!)),
@@ -972,6 +1047,143 @@ function renderSidebar() {
 
 // ---------------------------------------------------------------------------
 // drills
+
+/** "3…f6" / "12. Nf3" – a move with its number (figurines). */
+function numbered(ply: number, san: string): string {
+  const n = Math.ceil(ply / 2);
+  return `${n}${ply % 2 ? ". " : "…"}${fig(san)}`;
+}
+
+/** Leaving theory and going wrong soon after: how often, and where mostly. */
+function theoryNotes(r: Insight): string {
+  if (!r.theoryErrors) return "";
+  const count =
+    r.theoryErrors >= 2
+      ? t("In {n} von {m} analysierten Partien hast du zuerst die Theorie verlassen und kurz danach einen Fehler gemacht.", { n: r.theoryErrors, m: r.reviewed })
+      : "";
+  const e = r.exit;
+  const where =
+    e && e.book.length
+      ? (() => {
+          const vars = {
+            n: Math.ceil(e.ply / 2),
+            move: `<b>${esc(numbered(e.ply, e.played))}</b>`,
+            book: e.book.map((b) => `<b>${esc(numbered(e.ply, b))}</b>`).join(` ${t("oder")} `),
+          };
+          return e.times >= 2 ? t("Meist im {n}. Zug: {move} statt {book}.", vars) : t("Zum Beispiel im {n}. Zug: {move} statt {book}.", vars);
+        })()
+      : "";
+  return [count, where].filter(Boolean).join(" ");
+}
+
+/** The variation you meet most and haven't learned. */
+function variationNote(r: Insight): string {
+  return r.variation
+    ? t("Am häufigsten kam: {variation} ({n}×) – die fehlt dir noch.", { variation: `<b>${esc(varName(r.variation))}</b>`, n: r.variationGames })
+    : "";
+}
+
+/** Games and costly theory exits in an opening (row of "Deine Eröffnungen"). */
+function gamesCell(color: Color, family: string): string {
+  const g = insightOf[`${color}|${family}`];
+  if (!g) return `<span class="op-games muted">–</span>`;
+  const errors = g.theoryErrors
+    ? ` · <span class="${g.theoryErrors >= 2 ? "op-games-bad" : ""}" title="${t("Analysierte Partien, in denen du zuerst die Theorie verlassen und kurz danach einen Fehler gemacht hast")}">${t("{n}× aus der Theorie gefallen", { n: g.theoryErrors })}</span>`
+    : "";
+  return `<span class="op-games muted">${tn(g.games, "1 Partie", "{n} Partien")}${errors}</span>`;
+}
+
+/** "Hier verlässt du die Theorie": the positions where you keep leaving the known lines. */
+function theoryHtml(): string {
+  const positions = theory?.positions ?? [];
+  if (!positions.length) return "";
+  const more =
+    positions.length > THEORY_FOLDED
+      ? `<button class="link op-theory-more">${theoryAll ? t("Weniger zeigen") : t("Alle {n} zeigen", { n: positions.length })}</button>`
+      : "";
+  return `<div class="op-home-mine" id="op-theory-exits">
+      <h3>${t("Hier verlässt du die Theorie")}</h3>
+      <p class="panel-sub">${t("Stellungen, in denen du immer wieder als Erster die bekannten Eröffnungslinien verlässt. Abweichen ist nicht automatisch schlecht – entscheidend ist, ob es dich etwas kostet (dafür müssen die Partien analysiert sein).")} ${t("Mit „Linie lernen“ lernst du die ganze Eröffnung bis zu dieser Stellung.")}</p>
+      ${theoryListHtml(positions, theoryAll ? positions.length : THEORY_FOLDED)}
+      ${more}
+    </div>`;
+}
+
+/** Openings recommended to learn: the top ones by what your games say. */
+const MAX_RECOMMENDED = 3;
+
+interface MyOpening {
+  color: Color;
+  family: string;
+  /** Learning progress (openings you learn or have started). */
+  p: FamilyProgress | null;
+  /** What your games say (openings you play). */
+  r: Insight | null;
+  recommended: boolean;
+}
+
+/** One list for what you learn and what you play (from 3 games): the ones most
+ *  worth learning first, then the rest by what's due and how far you are. */
+function myOpenings(): MyOpening[] {
+  const recommended = new Set(
+    insights
+      .filter((r) => r.score > 0)
+      .slice(0, MAX_RECOMMENDED)
+      .map((r) => `${r.color}|${r.family}`),
+  );
+  const keys = new Set([...Object.keys(progress), ...insights.filter((r) => r.games >= 3).map((r) => `${r.color}|${r.family}`)]);
+  return [...keys]
+    .map((key) => {
+      const [color, family] = key.split("|") as [Color, string];
+      return { color, family, p: progress[key] ?? null, r: insightOf[key] ?? null, recommended: recommended.has(key) };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.recommended) - Number(a.recommended) ||
+        (b.recommended ? (b.r?.score ?? 0) - (a.r?.score ?? 0) : 0) ||
+        (b.p?.due ?? 0) - (a.p?.due ?? 0) ||
+        (b.p?.started ?? 0) - (a.p?.started ?? 0) ||
+        (b.r?.games ?? 0) - (a.r?.games ?? 0) ||
+        openingName(a.family).localeCompare(openingName(b.family)),
+    );
+}
+
+function openingRow({ color, family, p, r, recommended }: MyOpening): string {
+  const data = `data-color="${color}" data-family="${esc(family)}"`;
+  const lines = p ? p.lines : (r?.total ?? 0);
+  const progressHtml = p
+    ? `${progressBar(p.lines, p.started, p.learned)}<span class="op-progress-text">${cardSummary(p.lines, p.started, p.learned, p.due)}</span>`
+    : `${progressBar(lines, 0, 0)}<span class="op-progress-text">${tn(lines, "1 Linie, noch nicht angefangen", "{n} Linien, noch nicht angefangen")}</span>`;
+  const inRepertoire = repertoire[color].includes(family);
+  return `<div class="op-mine-row ${recommended ? "recommended" : ""}">
+    <span class="pdot ${color}"></span>
+    <span class="op-mine-name"><b>${esc(openingName(family))}</b> <span class="muted">${t("als {side}", { side: SIDE[color] })}</span>${
+      recommended ? ` <span class="op-badge" title="${t("Kommt in deinen Partien oft vor und du kennst noch wenig davon – oder du fällst hier oft aus der Theorie.")}">${t("Empfohlen")}</span>` : ""
+    }</span>
+    ${progressHtml}
+    ${gamesCell(color, family)}
+    <button class="op-mine-go ${recommended ? "primary" : ""}" ${data}>${p?.started ? t("Weiterlernen") : t("Lernen")}</button>
+    ${p?.started ? `<button class="op-reset" ${data} title="${t("Lernstand zurücksetzen – alle Varianten wieder neu")}">⟲</button>` : ""}
+    ${inRepertoire ? `<button class="op-remove" ${data} title="${t("Aus dem Repertoire nehmen (Lernstand bleibt)")}">✕</button>` : ""}
+    ${r && r.games >= 3 ? rowNotes(r) : ""}
+  </div>`;
+}
+
+/** What your games say about an opening, under its row – with a way to learn exactly that. */
+function rowNotes(r: Insight): string {
+  const data = `data-color="${r.color}" data-family="${esc(r.family)}"`;
+  const variation = variationNote(r);
+  const theory = theoryNotes(r);
+  const notes = [
+    variation ? `${variation} <button class="link op-learn-var" ${data} data-variation="${esc(r.variation!)}">${t("Diese Variante lernen")}</button>` : "",
+    theory
+      ? `${theory}${
+          r.exit ? ` <button class="link op-learn-exit" ${data} data-game="${esc(r.exit.gameId)}" data-ply="${r.exit.ply}">${t("Die Linie dazu lernen")}</button>` : ""
+        }`
+      : "",
+  ].filter(Boolean);
+  return notes.length ? `<div class="op-mine-notes">${notes.map((n) => `<p>${n}</p>`).join("")}</div>` : "";
+}
 
 /** "2,5 %" – how often a line comes up at your level. */
 function pct(reach: number): string {
@@ -1561,6 +1773,8 @@ function renderText(error?: string) {
   }
 
   const game = d.own || d.card?.gameId ? `<button data-act="game">${t("Partie öffnen")}</button>` : "";
+  // A mistake from your game: learn the whole opening line that leads there.
+  const wholeLine = d.own && phase === "done" ? `<button data-act="line" title="${t("Die Eröffnungslinie bis zu dieser Stellung von Anfang an lernen")}">${t("Ganze Linie lernen")}</button>` : "";
   const backBtn =
     d.kind === "line"
       ? `<button data-act="back" title="${t("Deinen letzten Zug zurücknehmen (←)")}" ${backTarget() >= 0 && phase !== "checking" ? "" : "disabled"}>← ${t("Zurück")}</button>`
@@ -1572,7 +1786,7 @@ function renderText(error?: string) {
   }
   actions.innerHTML =
     phase === "done"
-      ? `${backBtn}${game}${d.kind === "line" && !learning() && failed ? `<button data-act="relearn">${t("Mit Pfeilen neu lernen")}</button>` : ""}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
+      ? `${backBtn}${game}${wholeLine}${d.kind === "line" && !learning() && failed ? `<button data-act="relearn">${t("Mit Pfeilen neu lernen")}</button>` : ""}<button data-act="next" class="primary end">${t("Weiter")} →</button>`
       : `${backBtn}${learning() ? "" : `<button data-act="hint" ${hint || phase !== "solve" ? "disabled" : ""}>${t("Tipp")}</button>`}
          ${learning() || d.kind !== "line" ? "" : `<button data-act="relearn" title="${t("Die Variante von vorn mit allen Pfeilen zeigen. Die Karte kommt zurück in Fach 1.")}">${t("Mit Pfeilen neu lernen")}</button>`}
          ${learning() ? "" : `<button data-act="show" ${phase === "solve" || phase === "wrong" ? "" : "disabled"}>${d.kind === "line" ? t("Zug zeigen") : t("Lösung zeigen")}</button>`}
@@ -1613,6 +1827,9 @@ function bindActions(d: Drill | null) {
             break;
           case "advance":
             advance();
+            break;
+          case "line":
+            if (d?.own) learnLineForGame(d.own.gameId, d.own.ply, d.color, d.name ? familyOf(d) : null);
             break;
           case "home":
             setView("home");

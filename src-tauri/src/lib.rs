@@ -17,6 +17,7 @@ mod opening_texts;
 mod openings;
 mod pgn;
 mod puzzles;
+mod recommend;
 mod relevance;
 mod repertoire;
 mod stats;
@@ -722,6 +723,21 @@ async fn opening_own_count(app: AppHandle, accounts: Vec<Account>, last: Option<
     with_db(app, move |db, _| repertoire::own_due_count(db, &accounts, &window(db, &accounts, last)?)).await
 }
 
+/// The opening line behind a moment of one of your games (to learn the whole
+/// opening, not just the position).
+#[tauri::command]
+fn opening_line_for_game(db: State<DbState>, game_id: String, ply: usize, color: String) -> Result<Option<repertoire::Focus>, String> {
+    let db = db.0.lock().unwrap();
+    let Some(game) = db.game(&game_id)? else { return Ok(None) };
+    Ok(repertoire::line_for_game(&db, &game, ply, &color))
+}
+
+/// What your games say about your openings ("Für dich", "Deine Eröffnungen").
+#[tauri::command]
+async fn opening_recommendations(app: AppHandle, accounts: Vec<Account>) -> Result<Vec<recommend::Insight>, String> {
+    with_db(app, move |db, _| recommend::insights(db, &accounts, &window(db, &accounts, None)?)).await
+}
+
 /// How often the lines of an opening come up at your level (Lichess explorer,
 /// your games): fetches what's missing, then the course knows its main lines.
 #[tauri::command]
@@ -1127,6 +1143,8 @@ pub fn run() {
             opening_progress,
             opening_family_detail,
             opening_relevance_prepare,
+            opening_recommendations,
+            opening_line_for_game,
             sound_available,
             sound_register,
             sound_play,

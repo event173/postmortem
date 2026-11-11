@@ -7,8 +7,9 @@ import { listen } from "@tauri-apps/api/event";
 
 import { locale, playerName, t, tn } from "./i18n";
 import type { Account, BatchProgress, ClockBucket, Phase, PhaseStat, Platform, Theme, ThemeStat, TrendPoint, WeaknessStats } from "./types";
-import { $, badgeHtml, esc, fig, miniPieces, platformLabel, speedLabel, store } from "./util";
+import { $, badgeHtml, esc, fig, platformLabel, speedLabel, store } from "./util";
 import { openingName } from "./opening-names";
+import type { TheoryReport } from "./theory-exits";
 
 /** Shared with the puzzle trainer: how many recent games to base things on. */
 export type GameWindow = "10" | "20" | "50" | "all";
@@ -34,8 +35,10 @@ export interface StatsDeps {
   openGame: (gameId: string, ply: number) => void;
   /** Called after the batch analysed a game (to refresh "analysed" markers). */
   onGamesAnalysed: () => void;
-  /** "Üben" on an opening: add it to the repertoire and open the trainer. */
+  /** "Lernen" on an opening: add it to the repertoire and open the trainer. */
   practiceOpening: (color: "white" | "black", family: string) => void;
+  /** "Hier verlässt du die Theorie" in the Lernen tab. */
+  showTheoryExits: () => void;
 }
 
 interface OpeningStat {
@@ -60,33 +63,6 @@ interface GameSummary {
   opponent: string;
   opponentRating: number | null;
   result: "win" | "loss" | "draw";
-}
-
-interface TheoryExit {
-  color: "white" | "black";
-  fen: string;
-  ply: number;
-  opening: string | null;
-  family: string | null;
-  games: number;
-  wins: number;
-  draws: number;
-  losses: number;
-  played: { san: string; count: number }[];
-  book: string[];
-  best: string | null;
-  analysed: number;
-  avgLoss: number | null;
-  errorsAfter: number;
-  gameId: string;
-}
-
-interface TheoryReport {
-  games: number;
-  youFirst: number;
-  opponentFirst: number;
-  avgExitMove: number | null;
-  positions: TheoryExit[];
 }
 
 export const THEMES: Record<Theme, { label: string; tip: string }> = {
@@ -258,8 +234,8 @@ function render() {
     ${rating}
     ${theory}
     <div class="panel openings-panel">
-      <h3>${t("Deine Eröffnungen")}</h3>
-      <p class="panel-sub">${t("Ergebnis, Genauigkeit und Fehler in den ersten 12 Zügen – mit „Üben“ kommt die Eröffnung in dein Repertoire.")}</p>
+      <h3>${t("Eröffnungen in deinen Partien")}</h3>
+      <p class="panel-sub">${t("Ergebnis und Fehler in den ersten 12 Zügen. Lernen kannst du sie im Reiter „Lernen“ – dort steht auch, was dir jeweils noch fehlt.")}</p>
       <div id="openings-report" class="openings-report"></div>
     </div>`;
 
@@ -366,7 +342,7 @@ function renderOpenings(list: OpeningStat[]) {
             <td class="num">${o.games}</td>
             <td class="num" title="${t("{w} Siege, {d} Remis, {l} Niederlagen", { w: o.wins, d: o.draws, l: o.losses })}">${score} %<span class="muted"> · ${o.wins}/${o.draws}/${o.losses}</span></td>
             <td class="num ${errPct >= 50 ? "bad" : ""}" title="${t("{e} Fehler in {g} von {n} Partien", { e: o.openingErrors, g: o.gamesWithError, n: o.games })}">${errPct} %</td>
-            <td><button class="op-practice" data-color="${o.color}" data-family="${esc(o.family)}">${t("Üben")}</button></td>
+            <td><button class="op-practice" data-color="${o.color}" data-family="${esc(o.family)}">${t("Lernen")} →</button></td>
           </tr>`;
         })
         .join("")}
@@ -824,11 +800,11 @@ function renderActivity(games: GameSummary[], range: RatingRange) {
 
 // --- where you leave opening theory --------------------------------------------
 
+/** Only the numbers here – the positions themselves are learned in "Lernen". */
 function renderTheory(r: TheoryReport) {
   const el = document.getElementById("theory-panel");
   if (!el) return;
-  const head = `<h3>${t("Hier verlässt du die Theorie")}</h3>
-    <p class="panel-sub">${t("Stellungen, in denen du immer wieder als Erster die bekannten Eröffnungslinien verlässt. Abweichen ist nicht automatisch schlecht – entscheidend ist, ob es dich etwas kostet (dafür müssen die Partien analysiert sein).")}</p>`;
+  const head = `<h3>${t("Hier verlässt du die Theorie")}</h3>`;
   if (!r.games) {
     el.innerHTML = `${head}<p class="muted">${t("Noch keine eigenen Partien gespeichert.")}</p>`;
     return;
@@ -839,47 +815,11 @@ function renderTheory(r: TheoryReport) {
         r.avgExitMove ? ` ${t("Im Schnitt in Zug {m}.", { m: fmt(r.avgExitMove) })}` : ""
       }</p>`
     : "";
-  if (!r.positions.length) {
-    el.innerHTML = `${head}${summary}<p class="muted">${t("Noch keine Stellung, in der du mehrmals abweichst – mit mehr Partien wird das hier aussagekräftiger.")}</p>`;
-    return;
-  }
-  el.innerHTML = `${head}${summary}<div class="theory-list">${r.positions.map(theoryRow).join("")}</div>`;
-  el.querySelectorAll<HTMLElement>("[data-open]").forEach((b) => (b.onclick = () => deps.openGame(b.dataset.open!, Number(b.dataset.ply) - 1)));
-  el.querySelectorAll<HTMLElement>("[data-practice]").forEach(
-    (b) => (b.onclick = () => deps.practiceOpening(b.dataset.color as "white" | "black", b.dataset.practice!)),
-  );
-}
-
-function theoryRow(p: TheoryExit): string {
-  const num = Math.ceil(p.ply / 2) + (p.ply % 2 ? "." : "...");
-  const played = p.played
-    .map((m) => `<b>${num} ${esc(fig(m.san))}</b>${p.played.length > 1 || m.count > 1 ? ` <span class="muted">${m.count}×</span>` : ""}`)
-    .join(", ");
-  const book = p.book.length ? p.book.map((s) => esc(fig(s))).join(", ") : "–";
-  // Did leaving theory cost you something? Only with analysed games.
-  let verdict = `<span class="verdict muted">${t("Noch nicht analysiert")}</span>`;
-  if (p.analysed) {
-    const bad = (p.avgLoss ?? 0) >= 8 || p.errorsAfter * 2 >= p.analysed;
-    const ok = (p.avgLoss ?? 0) < 3 && p.errorsAfter === 0;
-    const parts = [t("Ø −{n} % Gewinnchance durch deinen Zug", { n: fmt(p.avgLoss ?? 0) })];
-    if (p.errorsAfter) parts.push(t("in {e} von {n} Partien folgt bald ein Fehler", { e: p.errorsAfter, n: p.analysed }));
-    verdict = `<span class="verdict ${bad ? "bad" : ok ? "ok" : ""}">${bad ? t("Kostet dich") : ok ? t("Hält") : t("Etwas ungenau")}</span>
-      <span class="muted">${parts.join(" · ")}${p.analysed < p.games ? ` · ${t("{a} von {n} analysiert", { a: p.analysed, n: p.games })}` : ""}</span>`;
-  }
-  const best = p.best && !p.book.includes(p.best) ? ` · ${t("Engine: {m}", { m: `<b>${esc(fig(p.best))}</b>` })}` : "";
-  return `<div class="theory-row">
-    <div class="mini-board cg-wrap" title="${esc(openingName(p.opening ?? ""))}">${miniPieces(p.fen, p.color === "black")}</div>
-    <div class="theory-info">
-      <div class="theory-title">${esc(p.opening ? openingName(p.opening) : t("Unbekannte Eröffnung"))}</div>
-      <div>${t("Du spielst {moves}", { moves: played })} <span class="muted">· ${p.color === "white" ? t("als Weiß") : t("als Schwarz")} · ${tn(p.games, "1 Partie", "{n} Partien")} · ${p.wins}/${p.draws}/${p.losses}</span></div>
-      <div class="muted">${t("Bekannte Linien: {moves}", { moves: `<span class="theory-book">${book}</span>` })}${best}</div>
-      <div class="theory-verdict">${verdict}</div>
-    </div>
-    <div class="theory-actions">
-      <button data-open="${p.gameId}" data-ply="${p.ply}" title="${t("Letzte Partie mit dieser Stellung öffnen")}">${t("Ansehen")}</button>
-      ${p.family ? `<button data-practice="${esc(p.family)}" data-color="${p.color}" title="${t("Die Eröffnung im Trainer üben")}">${t("Üben")}</button>` : ""}
-    </div>
-  </div>`;
+  const link = r.positions.length
+    ? `<p>${tn(r.positions.length, "1 Stellung, in der du immer wieder abweichst.", "{n} Stellungen, in denen du immer wieder abweichst.")} <button id="theory-learn" class="link">${t("Im Reiter „Lernen“ ansehen und die Linien dazu lernen")} →</button></p>`
+    : `<p class="muted">${t("Noch keine Stellung, in der du mehrmals abweichst – mit mehr Partien wird das hier aussagekräftiger.")}</p>`;
+  el.innerHTML = `${head}${summary}${link}`;
+  document.getElementById("theory-learn")?.addEventListener("click", () => deps.showTheoryExits());
 }
 
 // --- batch analysis ------------------------------------------------------------

@@ -58,6 +58,15 @@ pub struct Line {
     pub moves: Vec<String>,
 }
 
+/// Variation group of an opening name ("Caro-Kann Defense: Advance Variation,
+/// Short Variation" -> "Advance Variation"; no sub-name: the main line).
+pub fn variation_of(name: &str) -> &str {
+    match name.split_once(':') {
+        Some((_, rest)) => rest.split(',').next().unwrap_or(rest).trim(),
+        None => MAIN_LINE,
+    }
+}
+
 /// Family name of an opening name ("Sicilian Defense: Najdorf" -> "Sicilian Defense").
 pub fn family_of(name: &str) -> &str {
     name.split(':').next().unwrap_or(name).trim()
@@ -67,10 +76,7 @@ impl Line {
     /// Variation group: "Caro-Kann Defense: Advance Variation, Short Variation"
     /// -> "Advance Variation"; lines without a sub-name are the main line.
     pub fn variation(&self) -> &str {
-        match self.name.split_once(':') {
-            Some((_, rest)) => rest.split(',').next().unwrap_or(rest).trim(),
-            None => MAIN_LINE,
-        }
+        variation_of(&self.name)
     }
 
     /// Name without the family, e.g. "Advance Variation, Short Variation".

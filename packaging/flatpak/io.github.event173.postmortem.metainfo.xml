@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.3.2" date="2026-11-11">
+      <description>
+        <p>The Learn tab brings everything together: four tiles (flashcards, mistakes from your games, learning, exploring), one list of the openings you learn and play with recommendations from your games, and the positions where you leave theory. From a mistake you can now learn the whole opening line that leads to it.</p>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-11-11">
       <description>
         <p>Opening courses focus on what is played at your level: lines that come up in at least 3 in 100 games in your Lichess rating group (via the Lichess opening explorer) and lines from your own games; rare sidelines are listed apart. A new line enters the flashcards only after one run without arrows and without mistakes.</p>

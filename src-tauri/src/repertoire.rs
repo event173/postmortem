@@ -395,7 +395,7 @@ fn main_line_key(line: &Line) -> Vec<usize> {
 }
 
 /// Learn one opening for one colour (the "Lernen" buttons in the opening list).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Focus {
     pub color: String,
@@ -414,6 +414,37 @@ impl Focus {
             && self.variation.as_deref().is_none_or(|v| l.variation() == v)
             && self.line.as_deref().is_none_or(|id| l.id == id)
     }
+}
+
+/// The opening line behind a moment of your game ("die ganze Eröffnung zu
+/// meinem Fehler"): of the lines for `color`, the ones that follow the game
+/// longest – up to the position before ply `ply` – and go on from there; of
+/// those the common one (Lichess numbers), main line first. None if the game
+/// leaves theory within the first two moves.
+pub fn line_for_game(db: &Db, game: &GameInfo, ply: usize, color: &str) -> Option<Focus> {
+    use shakmaty::{san::San, uci::UciMove, CastlingMode, Chess, Position};
+    let mut pos = Chess::default();
+    let mut played: Vec<String> = Vec::new();
+    for san in game.moves.iter().take(ply.saturating_sub(1)) {
+        let Some(m) = san.parse::<San>().ok().and_then(|s| s.to_move(&pos).ok()) else { break };
+        played.push(UciMove::from_move(m, CastlingMode::Standard).to_string());
+        pos.play_unchecked(m);
+    }
+    let rel = relevance::all(db);
+    let trainable = |l: &Line| if color == "white" { !l.moves.is_empty() } else { l.moves.len() >= 2 };
+    let shared = |l: &Line| l.moves.iter().zip(&played).take_while(|(a, b)| a == b).count();
+    let best = openings::lines()
+        .iter()
+        .filter(|l| trainable(l))
+        .map(|l| (shared(l), l))
+        // The line has to go on where the game is (or where it left the line).
+        .filter(|(n, l)| *n >= 4 && l.moves.len() > *n)
+        .max_by_key(|(n, l)| {
+            let common = relevance::is_common(rel.get(&format!("{color}|{}", l.family)), &l.id);
+            (*n, common, std::cmp::Reverse(main_line_key(l)))
+        })?
+        .1;
+    Some(Focus { color: color.to_string(), family: best.family.clone(), variation: None, line: Some(best.id.clone()) })
 }
 
 /// Opening mistakes from your games that are due for practice (the third card).
@@ -853,6 +884,36 @@ mod tests {
         save(&db, &Repertoire { white: vec![], black: vec!["Caro-Kann Defense".into()] }).unwrap();
         let s = status(&db).unwrap();
         assert_eq!((s.black.lines, s.black.new), (2, 0));
+    }
+
+    #[test]
+    fn line_behind_a_moment_of_your_game() {
+        let db = Db::in_memory();
+        let game = |moves: &str| GameInfo {
+            id: "g".into(),
+            source: crate::lichess::Source::Lichess,
+            url: None,
+            white: crate::lichess::Player { name: "x".into(), rating: None },
+            black: crate::lichess::Player { name: "me".into(), rating: None },
+            winner: None,
+            status: "draw".into(),
+            speed: "rapid".into(),
+            rated: true,
+            time_control: None,
+            created_at: 0,
+            opening: None,
+            moves: moves.split_whitespace().map(String::from).collect(),
+            clocks: None,
+        };
+        // Caro-Kann, advance variation; at ply 6 you played 3…f6?! instead of 3…Bf5.
+        let g = game("e4 c6 d4 d5 e5 f6 f4");
+        let f = line_for_game(&db, &g, 6, "black").unwrap();
+        assert_eq!(f.family, "Caro-Kann Defense");
+        let line = openings::lines().iter().find(|l| Some(&l.id) == f.line.as_ref()).unwrap();
+        let start: Vec<&str> = line.moves.iter().take(5).map(String::as_str).collect();
+        assert_eq!(start, ["e2e4", "c7c6", "d2d4", "d7d5", "e4e5"], "follows the game: {}", line.name);
+        assert!(line.moves.len() > 5, "and shows what comes next");
+        assert!(line_for_game(&db, &game("a3 h6 h3"), 3, "black").is_none(), "no theory there");
     }
 
     #[test]

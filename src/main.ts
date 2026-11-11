@@ -17,7 +17,7 @@ import { errorSound, moveSound, preloadSounds, setupSound, successSound } from "
 import { enterPuzzles, initPuzzles, isPuzzleMode, leavePuzzles, puzzleKey, puzzleMove } from "./puzzles";
 import { enterPlay, initPlay, isPlayMode, leavePlay, playHome, playMove } from "./play";
 import { bindCardButton, type CardRequest } from "./cards";
-import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, openingsHome, startFocus } from "./openings";
+import { enterOpenings, initOpenings, isOpeningMode, leaveOpenings, openingKey, openingMove, openingNav, openingsHome, showTheoryExits, startFocus } from "./openings";
 import { autoAnalysePref, displayPrefs, initSettings, refinePref } from "./settings";
 
 import {
@@ -404,6 +404,10 @@ initStats({
   practiceOpening: (color, family) => {
     showTab("openings");
     startFocus(color, family);
+  },
+  showTheoryExits: () => {
+    showTab("openings");
+    showTheoryExits();
   },
 });
 

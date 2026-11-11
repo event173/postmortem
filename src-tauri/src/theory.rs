@@ -17,7 +17,7 @@ use crate::repertoire::my_color;
 /// Theory in the dataset rarely goes deeper than this.
 const MAX_PLIES: usize = 40;
 /// Your errors within this many plies after leaving theory count as "it went wrong".
-const AFTER_PLIES: usize = 10;
+pub(crate) const AFTER_PLIES: usize = 10;
 const MAX_POSITIONS: usize = 8;
 /// Book moves shown as "theory would be".
 const MAX_BOOK: usize = 4;
@@ -72,16 +72,16 @@ pub struct TheoryReport {
     pub positions: Vec<TheoryExit>,
 }
 
-struct Exit {
-    key: String,
-    fen: String,
-    ply: usize,
-    uci: String,
-    san: String,
+pub(crate) struct Exit {
+    pub key: String,
+    pub fen: String,
+    pub ply: usize,
+    pub uci: String,
+    pub san: String,
 }
 
 /// The first move of the game that leaves theory, if the game ever does.
-fn first_exit(game: &GameInfo) -> Option<(usize, Exit, &'static str)> {
+pub(crate) fn first_exit(game: &GameInfo) -> Option<(usize, Exit, &'static str)> {
     let book = book();
     let mut pos = Chess::default();
     for (i, san) in game.moves.iter().take(MAX_PLIES).enumerate() {

@@ -3258,60 +3258,139 @@ body[data-board] cg-board {
   font-size: 15px;
 }
 
-.op-choices {
+/* The four ways in: flashcards, mistakes, learning, exploring. */
+.op-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
 }
 
-.op-choice {
+.op-tile {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  min-height: 150px;
-  padding: 18px;
+  gap: 4px;
+  padding: 14px 16px;
   text-align: left;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
-.op-choice b {
-  font-size: 17px;
+.op-tile b {
+  font-size: 15px;
 }
 
-.op-choice > span:last-child {
-  color: var(--muted);
-}
-
-.op-choice-icon {
+.op-tile-icon {
+  display: flex;
+  margin-bottom: 4px;
   color: var(--accent);
 }
 
-.op-choice:hover:not(:disabled) {
+.op-tile-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.op-tile-text {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.op-tile-text b {
+  color: var(--text);
+}
+
+.op-tile:hover:not(:disabled) {
   background: var(--panel-2);
   border-color: var(--accent);
 }
 
-.op-choice.hot {
+.op-tile.hot {
   border-color: rgba(124, 173, 63, 0.7);
+  box-shadow: inset 0 3px 0 var(--accent);
 }
 
-.op-choice:disabled {
+.op-tile:disabled {
   cursor: default;
   opacity: 0.65;
 }
 
-.op-choice:disabled .op-choice-icon {
+.op-tile:disabled .op-tile-icon {
   color: var(--muted);
+}
+
+/* Games and early mistakes in a row of "Deine Eröffnungen". */
+.op-games {
+  flex: none;
+  min-width: 130px;
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-games-bad {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.op-mine-notes {
+  flex-basis: 100%;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.op-mine-notes p {
+  margin: 2px 0 0;
+}
+
+.op-mine-notes .link {
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+/* Worth learning first (from your games). */
+.op-mine-row.recommended {
+  border-color: rgba(124, 173, 63, 0.6);
+}
+
+.op-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(124, 173, 63, 0.18);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.op-cards-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.op-cards-toggle:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.op-home-cards .panel-sub {
+  margin-top: 6px;
 }
 
 .op-home-mine h3 {
   margin: 0 0 4px;
   font-size: 15px;
 }
+
 
 .op-mine-list {
   display: flex;

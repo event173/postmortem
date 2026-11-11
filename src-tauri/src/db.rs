@@ -311,6 +311,16 @@ impl Db {
     }
 
     /// All games of the accounts that have a current review (deepest one), newest first.
+    /// One stored game.
+    pub fn game(&self, id: &str) -> Result<Option<GameInfo>, String> {
+        let data: Option<String> = self
+            .conn
+            .query_row("SELECT data FROM games WHERE id = ?1", [id], |r| r.get(0))
+            .optional()
+            .map_err(sql_err)?;
+        data.map(|d| serde_json::from_str(&d).map_err(|e| e.to_string())).transpose()
+    }
+
     pub fn reviewed_games_of(&self, accounts: &[Account]) -> Result<Vec<(GameInfo, GameReview)>, String> {
         let (filter, mut args) = account_filter(accounts, 2);
         args.insert(0, REVIEW_VERSION.to_string());
