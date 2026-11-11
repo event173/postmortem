@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.4.0" date="2026-11-11">
+      <description>
+        <p>Your own opening repertoire as a tree: one move per position, the opponent's replies with how often they come up at your level, coverage, gaps you can fill by playing on the board, and your theory mistakes marked at the move. Flashcards now ask one move at a time; courses add what you learn to your repertoire. Learned lines are carried over (with a backup of the database first).</p>
+      </description>
+    </release>
     <release version="0.3.2" date="2026-11-11">
       <description>
         <p>The Learn tab brings everything together: four tiles (flashcards, mistakes from your games, learning, exploring), one list of the openings you learn and play with recommendations from your games, and the positions where you leave theory. From a mistake you can now learn the whole opening line that leads to it.</p>
