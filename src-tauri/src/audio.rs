@@ -54,6 +54,11 @@ impl Audio {
         self.mixer.is_some()
     }
 
+    /// The output, for sources that aren't registered sounds (the reading voice).
+    pub fn mixer(&self) -> Option<Mixer> {
+        self.mixer.clone()
+    }
+
     /// Store a sound (WAV bytes) under a name; checks that it decodes.
     pub fn register(&self, name: &str, wav: Vec<u8>) -> Result<(), String> {
         let data: Arc<[u8]> = wav.into();

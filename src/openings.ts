@@ -19,9 +19,10 @@ import type { Api } from "chessground/api";
 import type { DrawShape } from "chessground/draw";
 import type { Key } from "chessground/types";
 
+import { cancelVoiceInstall, installVoice, onSpeechChange, speak, speakingKey, speechStatus, stopSpeech, type SpeechLang } from "./speech";
 import { windowLast } from "./stats";
 import { CLASSES, type Account, type BestMove, type Class, type MoveReview, type PlayedMove, type PositionInfo } from "./types";
-import { playerName, t, tn } from "./i18n";
+import { lang, playerName, t, tn } from "./i18n";
 import { $, badgeHtml, commentOf, esc, fig, miniPieces, scoreText, store } from "./util";
 import { openingName } from "./opening-names";
 import { errorSound, moveSound, setupSound, successSound } from "./sound";
@@ -517,6 +518,7 @@ export function enterOpenings() {
 
 export function leaveOpenings() {
   active = false;
+  stopSpeech();
   clearTimeout(timer);
   // A running free play must not move pieces on the review board later.
   stopExplorer();
@@ -3107,6 +3109,7 @@ async function showTheory(f: string | null, fallback?: string) {
   theoryFen = f;
   const box = $("op-theory");
   if (!f) {
+    stopSpeech();
     box.hidden = true;
     return;
   }
@@ -3118,15 +3121,20 @@ async function showTheory(f: string | null, fallback?: string) {
   if (theoryFen !== f) return;
   if (!text) {
     if (fallback) {
+      stopSpeech();
       box.innerHTML = `<h3>${t("Eröffnungstheorie")}</h3><div class="op-theory-text"><p>${fallback}</p></div>`;
       box.hidden = false;
     }
     // Otherwise keep the previous text: it still describes the line.
     return;
   }
+  // Reading aloud is about the text on screen: another text stops it.
+  if (speakingKey() !== f) stopSpeech();
   const [first, ...rest] = text.paragraphs.map((p) => `<p>${esc(fig(p))}</p>`);
   box.innerHTML = `
-    <h3>${t("Eröffnungstheorie")}${text.untranslated ? ` <span class="muted">${t("(englisch)")}</span>` : ""}</h3>
+    <h3><span>${t("Eröffnungstheorie")}${text.untranslated ? ` <span class="muted">${t("(englisch)")}</span>` : ""}</span>
+      <button class="op-speak" hidden></button></h3>
+    <div class="op-speak-offer" hidden></div>
     <div class="op-theory-text">${first ?? ""}${rest.length ? `<details><summary>${t("mehr dazu")}</summary>${rest.join("")}</details>` : ""}</div>
     <p class="op-theory-source">${t("Quelle:")} <a href="#" data-url="${esc(text.url)}">Wikibooks – Chess Opening Theory</a> · CC BY-SA 4.0</p>`;
   box.hidden = false;
@@ -3135,7 +3143,159 @@ async function showTheory(f: string | null, fallback?: string) {
     e.preventDefault();
     invoke("open_opening_source", { url: text.url }).catch(console.error);
   });
+  const speakBtn = box.querySelector<HTMLButtonElement>(".op-speak")!;
+  speakBtn.dataset.key = f;
+  speakBtn.addEventListener("click", () => {
+    if (speakingKey() === f) stopSpeech();
+    else readAloud(f, text, false);
+  });
+  renderSpeakButton();
+  renderSpeakOffer();
+  if (await speechUsable()) speakBtn.hidden = false;
 }
+
+// --- reading the theory text aloud -------------------------------------------
+
+/** The question "download the natural voice?" and the download (null: nothing to show). */
+let speakOffer:
+  | null
+  | { state: "ask"; lang: SpeechLang; mb: number; voice: string; system: boolean }
+  | { state: "download"; lang: SpeechLang; done: number; total: number }
+  | { state: "error"; lang: SpeechLang; message: string; system: boolean } = null;
+/** "Use the system voice" was chosen (until the app restarts). */
+let useSystemVoice = false;
+let usable: Promise<boolean> | null = null;
+
+/** Can anything read aloud here (a natural voice to download, or a system voice)? Asked once. */
+function speechUsable(): Promise<boolean> {
+  usable ??= speechStatus("de")
+    .then((st) => st.piper.supported || st.system)
+    .catch(() => false);
+  return usable;
+}
+
+/** What the box shows: the first paragraph, the rest only if "mehr dazu" is open. */
+function visibleParagraphs(text: OpeningText): string[] {
+  const open = document.querySelector<HTMLDetailsElement>("#op-theory .op-theory-text details")?.open ?? false;
+  return open ? text.paragraphs : text.paragraphs.slice(0, 1);
+}
+
+function textLang(text: OpeningText): SpeechLang {
+  return text.untranslated || lang === "en" ? "en" : "de";
+}
+
+/**
+ * Read the text aloud with the natural voice if it's downloaded; else offer
+ * the download (or use the system voice, if chosen). `afterDownload`: never ask again.
+ */
+async function readAloud(f: string, text: OpeningText, afterDownload: boolean) {
+  const language = textLang(text);
+  const st = await speechStatus(language).catch(() => null);
+  if (!st) return;
+  const engine = st.piper.installed ? "piper" : (useSystemVoice || !st.piper.supported || afterDownload) && st.system ? "system" : null;
+  if (engine) {
+    speakOffer = null;
+    renderSpeakOffer();
+    speak(f, visibleParagraphs(text).join("\n"), language, engine).catch((e) => {
+      speakOffer = { state: "error", lang: language, message: String(e), system: st.system && engine === "piper" };
+      renderSpeakOffer();
+    });
+    return;
+  }
+  if (!st.piper.supported) return;
+  speakOffer = { state: "ask", lang: language, mb: Math.ceil(st.piper.downloadSize / 1e6), voice: st.piper.voice, system: st.system };
+  renderSpeakOffer();
+}
+
+async function downloadVoice(language: SpeechLang) {
+  speakOffer = { state: "download", lang: language, done: 0, total: 0 };
+  renderSpeakOffer();
+  try {
+    await installVoice(language, (done, total) => {
+      if (speakOffer?.state !== "download") return;
+      speakOffer.done = done;
+      speakOffer.total = total;
+      renderSpeakOffer();
+    });
+  } catch (e) {
+    const message = String(e);
+    speakOffer = message === "cancelled" ? null : { state: "error", lang: language, message, system: false };
+    renderSpeakOffer();
+    return;
+  }
+  speakOffer = null;
+  renderSpeakOffer();
+  // Read the text that is on screen now.
+  const f = theoryFen;
+  const text = f ? theoryCache.get(f) : null;
+  if (f && text && textLang(text) === language) readAloud(f, text, true);
+}
+
+function renderSpeakOffer() {
+  const box = document.querySelector<HTMLElement>("#op-theory .op-speak-offer");
+  if (!box) return;
+  const o = speakOffer;
+  box.hidden = !o;
+  if (!o) {
+    box.innerHTML = "";
+    return;
+  }
+  const systemBtn = (show: boolean) => (show ? `<button data-act="system">${t("Systemstimme verwenden")}</button>` : "");
+  if (o.state === "ask") {
+    box.innerHTML = `
+      <p>${t("Für eine natürliche Vorlesestimme („{voice}“) werden einmalig ca. <b>{mb} MB</b> heruntergeladen.", { voice: esc(o.voice), mb: o.mb })}</p>
+      <div class="op-speak-actions">
+        <button class="primary" data-act="download">${t("Herunterladen")}</button>
+        ${systemBtn(o.system)}
+        <button class="link" data-act="close">${t("Abbrechen")}</button>
+      </div>`;
+  } else if (o.state === "download") {
+    const mb = (b: number) => Math.round(b / 1e6);
+    box.innerHTML = `
+      <p>${o.total ? t("Stimme wird heruntergeladen … {done} von {total} MB", { done: mb(o.done), total: mb(o.total) }) : t("Stimme wird heruntergeladen …")}</p>
+      <div class="op-speak-actions">
+        <progress max="${o.total || 1}" value="${o.done}"></progress>
+        <button class="link" data-act="cancel">${t("Abbrechen")}</button>
+      </div>`;
+  } else {
+    box.innerHTML = `
+      <p class="error">${esc(o.message)}</p>
+      <div class="op-speak-actions">
+        <button data-act="download">${t("Nochmal versuchen")}</button>
+        ${systemBtn(o.system)}
+        <button class="link" data-act="close">${t("Schließen")}</button>
+      </div>`;
+  }
+  box.querySelectorAll<HTMLButtonElement>("button[data-act]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const act = b.dataset.act;
+      if (act === "download") downloadVoice(o.lang);
+      else if (act === "cancel") cancelVoiceInstall();
+      else {
+        speakOffer = null;
+        renderSpeakOffer();
+        if (act === "system") {
+          useSystemVoice = true;
+          const f = theoryFen;
+          const text = f ? theoryCache.get(f) : null;
+          if (f && text) readAloud(f, text, false);
+        }
+      }
+    }),
+  );
+}
+
+/** 🔊 / ⏹ on the theory text, depending on whether it is being read. */
+function renderSpeakButton() {
+  const btn = document.querySelector<HTMLButtonElement>("#op-theory .op-speak");
+  if (!btn) return;
+  const on = speakingKey() !== null && speakingKey() === btn.dataset.key;
+  btn.textContent = on ? "⏹" : "🔊";
+  btn.title = on ? t("Vorlesen beenden") : t("Vorlesen");
+  btn.classList.toggle("on", on);
+}
+
+onSpeechChange(renderSpeakButton);
 
 function showTry(played: PlayedMove) {
   deps.board.set({

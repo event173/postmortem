@@ -2571,8 +2571,54 @@ button.link:hover {
 }
 
 .op-theory h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 6px;
   font-size: 14px;
+}
+
+.op-speak {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.op-speak:hover,
+.op-speak.on {
+  opacity: 1;
+  border-color: var(--muted);
+}
+
+.op-speak-offer {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12);
+  font-size: 13px;
+}
+
+.op-speak-offer p {
+  margin: 0 0 6px;
+}
+
+.op-speak-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.op-speak-actions progress {
+  flex: 1;
+  min-width: 120px;
 }
 
 .op-theory-text {

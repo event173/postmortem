@@ -19,7 +19,9 @@ mod pgn;
 mod puzzles;
 mod recommend;
 mod relevance;
+mod piper;
 mod repertoire;
+mod speech;
 mod stats;
 mod theory;
 mod trainer;
@@ -50,6 +52,12 @@ struct DataDir(std::path::PathBuf);
 /// Cancellation flag of a running puzzle-database download/import.
 #[derive(Default)]
 struct PuzzleInstall {
+    cancel: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+/// Cancellation flag of a running voice download.
+#[derive(Default)]
+struct VoiceInstall {
     cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
@@ -988,6 +996,92 @@ fn sound_play(audio: State<audio::Audio>, name: String, volume: f32) -> Result<(
     audio.play(&name, volume)
 }
 
+/// What reading aloud can use: the system voice, and Piper (installed / to download).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeechStatus {
+    system: bool,
+    piper: piper::Status,
+}
+
+fn speech_lang(lang: &str) -> &'static str {
+    if lang == "de" { "de" } else { "en" }
+}
+
+#[tauri::command]
+async fn speech_status(app: AppHandle, lang: String) -> SpeechStatus {
+    let lang = speech_lang(&lang);
+    // Connecting may start speech-dispatcher: off the main thread.
+    let system = {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || app.state::<speech::Speech>().system_available(&app))
+            .await
+            .unwrap_or(false)
+    };
+    let piper = piper::status(&app.state::<DataDir>().0, lang);
+    SpeechStatus { system, piper }
+}
+
+/// Read a text aloud ("de"/"en") with Piper or the system voice ("system");
+/// returns the id the `speech-end` event carries.
+#[tauri::command]
+async fn speech_speak(app: AppHandle, text: String, lang: String, engine: String) -> Result<u64, String> {
+    let lang = speech_lang(&lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let speech = app.state::<speech::Speech>();
+        if engine == "system" {
+            return speech.speak_system(&app, &text, lang);
+        }
+        speech.stop_system();
+        let mixer = app
+            .state::<audio::Audio>()
+            .mixer()
+            .ok_or_else(|| tr!("Keine Audio-Ausgabe gefunden.", "No audio output found."))?;
+        speech.piper.speak(&app, mixer, &app.state::<DataDir>().0, &text, lang)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn speech_stop(speech: State<speech::Speech>) {
+    speech.stop();
+}
+
+/// Download Piper and the voice for `lang` (progress via `voice-progress` events).
+#[tauri::command]
+async fn voice_install(app: AppHandle, lang: String, install: State<'_, VoiceInstall>) -> Result<piper::Status, String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = install.cancel.lock().unwrap();
+        if running.is_some() {
+            return Err(tr!("Der Download läuft bereits.", "The download is already running."));
+        }
+        *running = Some(cancel.clone());
+    }
+    let dir = app.state::<DataDir>().0.clone();
+    let result = piper::install(&app, &dir, speech_lang(&lang), &cancel).await;
+    *install.cancel.lock().unwrap() = None;
+    result
+}
+
+#[tauri::command]
+fn voice_cancel(install: State<VoiceInstall>) {
+    if let Some(flag) = install.cancel.lock().unwrap().as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Delete the downloaded voices (not while downloading).
+#[tauri::command]
+fn voice_delete(app: AppHandle, install: State<VoiceInstall>) -> Result<(), String> {
+    if install.cancel.lock().unwrap().is_some() {
+        return Err(tr!("Erst den laufenden Download abbrechen.", "Cancel the running download first."));
+    }
+    app.state::<speech::Speech>().piper.stop();
+    piper::delete(&app.state::<DataDir>().0)
+}
+
 #[tauri::command]
 fn bot_levels() -> Vec<bot::Level> {
     bot::levels()
@@ -1185,10 +1279,12 @@ pub fn run() {
         .manage(AnalysisState::default())
         .manage(BatchState::default())
         .manage(PuzzleInstall::default())
+        .manage(VoiceInstall::default())
         .manage(live::Live::default())
         .manage(bot::Bot::default())
         .manage(audio::Audio::open())
         .manage(explorer::Explorer::default())
+        .manage(speech::Speech::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -1298,13 +1394,25 @@ pub fn run() {
             sound_available,
             sound_register,
             sound_play,
+            speech_status,
+            speech_speak,
+            speech_stop,
+            voice_install,
+            voice_cancel,
+            voice_delete,
             bot_levels,
             bot_move,
             game_status,
             save_bot_game
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // speech-dispatcher would otherwise go on reading after the app is closed.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<speech::Speech>().stop();
+            }
+        });
 }
 
 #[cfg(test)]

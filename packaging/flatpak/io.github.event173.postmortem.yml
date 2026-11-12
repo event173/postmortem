@@ -21,6 +21,8 @@ finish-args:
   - --device=dri
   # Move sounds (native output through ALSA → PipeWire/PulseAudio)
   - --socket=pulseaudio
+  # Reading opening texts aloud (the host's speech-dispatcher)
+  - --filesystem=xdg-run/speech-dispatcher:ro
   # Lichess / chess.com APIs and the puzzle database download
   - --share=network
 

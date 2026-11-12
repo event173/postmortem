@@ -591,6 +591,13 @@ export const EN: Record<string, string> = {
   "Eröffnungstheorie": "Opening theory",
   "(englisch)": "(English)",
   "Quelle:": "Source:",
+  "Vorlesen": "Read aloud",
+  "Vorlesen beenden": "Stop reading",
+  "Für eine natürliche Vorlesestimme („{voice}“) werden einmalig ca. <b>{mb} MB</b> heruntergeladen.": "For a natural reading voice (“{voice}”), about <b>{mb} MB</b> are downloaded once.",
+  "Systemstimme verwenden": "Use system voice",
+  "Stimme wird heruntergeladen … {done} von {total} MB": "Downloading the voice … {done} of {total} MB",
+  "Stimme wird heruntergeladen …": "Downloading the voice …",
+  "Schließen": "Close",
   "Deinen letzten Zug zurücknehmen (←)": "Take back your last move (←)",
   // --- flashcard box (opening training) ---------------------------------------
   "{l} sitzen, {s} im Lernen, {n} neu": "{l} learned, {s} learning, {n} new",

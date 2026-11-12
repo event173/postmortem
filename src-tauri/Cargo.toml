@@ -1,6 +1,6 @@
 [package]
 name = "postmortem"
-version = "0.6.2"
+version = "0.6.3"
 description = "Review your Lichess games with Stockfish and a rule-based coach"
 authors = ["event173"]
 license = "GPL-3.0-or-later"
@@ -30,6 +30,8 @@ zstd = "0.14.3"
 fastrand = "2.5.0"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav"] }
 tauri-plugin-dialog = "2"
+sha2 = "0.10.9"
+hex = "0.4.3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -42,3 +44,11 @@ strip = true
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.191"
+
+[target."cfg(windows)".dependencies]
+tts = "0.26.3"
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+flate2 = "1.1.11"
+tar = "0.4.46"

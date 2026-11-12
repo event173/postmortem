@@ -42,6 +42,11 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.6.3" date="2026-11-12">
+      <description>
+        <p>The opening explanations can be read aloud: a speaker button reads what the box shows. On first use the app offers to download a natural offline voice (Piper, about 90 MB); the system voice works too.</p>
+      </description>
+    </release>
     <release version="0.6.2" date="2026-11-11">
       <description>
         <p>Learning an opening starts right away with the theory moves; which lines are common at your level is asked from Lichess only on request, and no longer in the background. "Explore" shows Stockfish's three best moves in every position and the opening on the board; Lichess numbers only on click. The tile "New opening" is now called "Opening".</p>
